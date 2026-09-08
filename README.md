@@ -83,6 +83,13 @@ ZS-BRAND-006 交付的品牌/代码命名残留门禁：扫描全部跟踪文件
 
 ## 文档同步规则
 
+文档一致性检查器（ZS-GOV-001）入口，任何文档变更后必须运行：
+
+```bash
+node --test scripts/gov/verify-docs.test.mjs
+node scripts/gov/verify-docs.mjs
+```
+
 以下规则由主台账中的 `FND-DOC-001～003` 统一约束。任何架构、数据库、模块、身份权限、业务链、外部集成或验收状态发生变化时，必须在同一次变更中检查并同步：
 
 1. 本 README 的阶段和决策摘要；
