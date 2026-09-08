@@ -7,8 +7,11 @@ import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackagePa
 import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackageSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
 import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
+import cn.zszj.module.system.service.permission.MenuService;
 import jakarta.annotation.Resource;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -44,6 +47,46 @@ public class TenantPackageServiceImplTest extends BaseDbUnitTest {
 
     @MockitoBean
     private TenantService tenantService;
+
+    @MockitoBean
+    private MenuService menuService;
+
+    @BeforeEach
+    public void setUpMenuService() {
+        // 默认桩：菜单清单为空 → 模块校验放行（ZS-CFG-003.A 校验在专属用例中单独验证）
+        when(menuService.getMenuList(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
+    }
+
+    @Test
+    public void testCreateTenantPackage_menuModuleDisabled() {
+        // mock：套餐菜单包含未启用模块（bpm）的功能入口（ZS-CFG-003.A）
+        MenuDO menu = new MenuDO();
+        menu.setId(100200L);
+        menu.setName("工作流菜单");
+        menu.setPermission("bpm:task:query");
+        when(menuService.getMenuList(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(menu));
+        // 准备参数
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class, o -> { o.setId(null); o.setStatus(randomCommonStatus()); });
+        // 调用并断言
+        assertServiceException(() -> tenantPackageService.createTenantPackage(reqVO),
+                TENANT_PACKAGE_MENU_MODULE_DISABLED, menu.getName(), "bpm");
+    }
+
+    @Test
+    public void testCreateTenantPackage_menuModuleEnabled() {
+        // mock：启用模块（system）的菜单 → 校验放行
+        MenuDO menu = new MenuDO();
+        menu.setId(100201L);
+        menu.setName("系统菜单");
+        menu.setPermission("system:user:query");
+        when(menuService.getMenuList(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(menu));
+        // 准备参数
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class, o -> { o.setId(null); o.setStatus(randomCommonStatus()); });
+        // 调用
+        Long tenantPackageId = tenantPackageService.createTenantPackage(reqVO);
+        // 断言
+        assertNotNull(tenantPackageId);
+    }
 
     @Test
     public void testCreateTenantPackage_success() {
@@ -141,7 +184,7 @@ public class TenantPackageServiceImplTest extends BaseDbUnitTest {
     public void testGetTenantPackagePage() {
        // mock 数据
        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class, o -> { // 等会查询到
-           o.setName("芋道源码");
+           o.setName("众墅之家");
            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
            o.setRemark("源码解析");
            o.setCreateTime(buildTime(2022, 10, 10));
