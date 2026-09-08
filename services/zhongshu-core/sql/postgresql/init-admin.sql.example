@@ -1,0 +1,19 @@
+-- =====================================================================
+-- 初始管理员安全初始化（ZS-DB-004）
+-- V1 基线迁移不包含任何用户账号；初始管理员由部署方通过本模板建立，
+-- 不复用上游演示凭据。使用步骤：
+--   1. 生成 bcrypt 哈希（ cost >= 10 ），例如用 Spring Security 的
+--      new BCryptPasswordEncoder().encode("<新口令>") 生成；
+--   2. 将下方 :hash 替换为该哈希（或用 psql -v hash='...' 注入），
+--      并按需修改管理员昵称/手机号/邮箱；
+--   3. psql -d <目标库> -f init-admin.sql.example（先删除本说明头）；
+--   4. 首次登录后立即修改口令；本文件不得提交任何真实哈希。
+-- =====================================================================
+
+-- 1. 初始管理员（挂载到租户 1 与根部门）
+INSERT INTO system_users (id, username, password, nickname, remark, dept_id, post_ids, email, mobile, sex, avatar, status, login_ip, login_date, creator, create_time, updater, update_time, deleted, tenant_id)
+VALUES (1, 'admin', :'hash', '系统管理员', '初始管理员', 100, '[1]', '', '', 0, '', 0, '', NULL, '1', now(), '1', now(), '0', 1);
+
+-- 2. 绑定超级管理员角色（role_id=1 来自 V1 基线种子）
+INSERT INTO system_user_role (id, user_id, role_id, creator, create_time, updater, update_time, deleted, tenant_id)
+VALUES (1, 1, 1, '1', now(), '1', now(), '0', 1);

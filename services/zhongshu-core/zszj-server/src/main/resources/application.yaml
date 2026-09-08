@@ -385,4 +385,4 @@ spring:
     validate-on-migrate: true # 已执行脚本被篡改（校验和失配）即阻止启动
     clean-disabled: true # 全环境禁用 clean；测试库清理由 ZS-DB-019 临时实例负责
     baseline-on-migrate: true # 既有旧库首次接入时吸收为基线，不重放 V1
-    baseline-version: 1
+    baseline-version: 20260909.001 # 与 V1 基线迁移版本一致：既有旧库吸收后不重放 V1，新空库正常执行 V1
