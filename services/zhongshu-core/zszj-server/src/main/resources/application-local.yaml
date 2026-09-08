@@ -220,7 +220,7 @@ zszj:
   captcha:
     enable: false # 本地环境，暂时关闭图片验证码，方便登录等接口的测试；
   security:
-    mock-enable: true
+    mock-enable: ${ZSZJ_APPLICATION_LOCAL_SECURITY_MOCK_ENABLE:false} # 默认禁用模拟认证（ZS-ENG-004）；如需本地调试，经环境变量显式开启
   pay:
     order-notify-url: ${ZSZJ_APPLICATION_LOCAL_PAY_ORDER_NOTIFY_URL:} # 支付渠道的【支付】回调地址
     refund-notify-url: ${ZSZJ_APPLICATION_LOCAL_PAY_REFUND_NOTIFY_URL:} # 支付渠道的【退款】回调地址

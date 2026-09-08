@@ -43,6 +43,12 @@ management:
 # Spring Boot Admin 客户端默认关闭；如需启用另行评估账号与网络边界
 spring.boot.admin.client.enabled: false
 
+--- #################### 安全（ZS-ENG-004） ####################
+
+zszj:
+  security:
+    mock-enable: false # 部署环境显式禁用模拟认证旁路（框架默认即为 false，此处显式声明防误配）
+
 --- #################### 定时任务（ZS-ENG-006 边界） ####################
 
 spring:

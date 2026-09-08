@@ -1,10 +1,7 @@
 package cn.zszj.server.controller;
 
 import cn.zszj.framework.common.pojo.CommonResult;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.server.ModuleWhitelist;
-import jakarta.annotation.security.PermitAll;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -100,23 +97,6 @@ public class DefaultController {
         return CommonResult.error(NOT_IMPLEMENTED.getCode(),
                 "[" + displayName + " zszj-module-" + module + " - 未启用]"
                         + "[启用需在 zszj-server/pom.xml 引入依赖并经底座批次验收，当前启用模块：" + enabled + "]");
-    }
-
-    /**
-     * 测试接口：打印 query、header、body
-     *
-     * ZS-ENG-004 将移除或显式限制该调试端点（匿名可访问且记录请求原文，存在凭据泄露风险）。
-     */
-    @RequestMapping(value = {"/test"})
-    @PermitAll
-    public CommonResult<Boolean> test(HttpServletRequest request) {
-        // 打印查询参数
-        log.info("Query: {}", ServletUtils.getParamMap(request));
-        // 打印请求头
-        log.info("Header: {}", ServletUtils.getHeaderMap(request));
-        // 打印请求体
-        log.info("Body: {}", ServletUtils.getBody(request));
-        return CommonResult.success(true);
     }
 
 }
