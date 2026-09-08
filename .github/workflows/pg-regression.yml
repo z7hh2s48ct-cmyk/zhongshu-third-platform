@@ -1,0 +1,22 @@
+name: pg-regression
+
+# ZS-DB-019.B 地基：PG 技术回归套件（一次性 PG17 容器，验后自动清理）。
+# 与本地 `node scripts/db/run-pg-regression.mjs` 同一规则。
+# 覆盖：ZS-DB-006 序列/批量/续号、007 字段映射与逻辑删除、008 事务与锁、
+#       CFG-002.A 字典唯一约束、DB-011~015 有界删除、DB-016/017 结构级验证。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pg-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 运行 PG 技术回归套件
+        run: node scripts/db/run-pg-regression.mjs
