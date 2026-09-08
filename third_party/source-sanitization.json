@@ -1,0 +1,531 @@
+{
+  "schemaVersion": 1,
+  "policy": "Only target copies changed. No credential validity checks, external calls, rotation, database import or production changes. Full feature code and SQL schema retained; demo credentials are not production configuration.",
+  "changes": [
+    {
+      "path": "apps/zhongshu-admin-web/.env",
+      "sourceId": "yudao-ui-admin-vue3",
+      "sourceBlob": "5a7a24a21fa845a17c34aa37d2d6ab929fc15877",
+      "importedBlob": "3406a98d36805c844b5ca57e3a57061e269977f2",
+      "reason": "Empty upstream demo password, encryption and map keys; environment template retained"
+    },
+    {
+      "path": "apps/zhongshu-miniapp/env/.env",
+      "sourceId": "yudao-ui-admin-uniapp",
+      "sourceBlob": "de3edefa48c50e6b6000705b39e2881d7c1738c7",
+      "importedBlob": "30ad17fb63980ceb37ee1acf16688e32dce3d841",
+      "reason": "Empty upstream demo password, encryption and map keys; environment template retained"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application.yaml",
+      "sourceId": "zhongshu-design-donor",
+      "sourceBlob": "e059b34431148ddb4464c2b1fde9d3ef720b2761",
+      "importedBlob": "2287d04eb5c171d1b3d41ff40ad42b8cd02074a5",
+      "reason": "Replace upstream demo credential literals with explicit environment placeholders"
+    },
+    {
+      "path": "services/zhongshu-core/sql/dm/ruoyi-vue-pro-dm8.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "d313d90b4d0efc1c92a582df12470f3a2b712649",
+      "importedBlob": "7a586d35132f98719ccff4308c0b03163a2a821c",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/highgo/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "da51825e66c3fcd11854952a41fdb2fd225a8b57",
+      "importedBlob": "e7e88e6161d9c93628c0dbdf2f6b7b3c615bf20d",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/kingbase/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "2668337e94c4af729c79357a4546648c469b7b54",
+      "importedBlob": "39196461557631df21fd42dfd068765b56a94d72",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/mysql/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "ba7ffceed6e9e4e2932f018294d07f90a04b14cf",
+      "importedBlob": "2d4d11da5e67745c69f8771614e977bde3f38e76",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/opengauss/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "16d158747faf0be5633d90c001bfde7cb5a36250",
+      "importedBlob": "ff9e02c12ee9ef8da1f73184d31a6ed58ef8397e",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/oracle/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "37e66ec9545be332fb5440251cca555106993430",
+      "importedBlob": "d370f2a4bfa452d4b62e149fa2b7e4ed4500d607",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/postgresql/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "ddac201eadd6f4f1b31680677c35820ebe7f131c",
+      "importedBlob": "09b6af321d6e16280320bdbc0c8b2443a11b3aff",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/sql/sqlserver/ruoyi-vue-pro.sql",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "a85f451fa57e93cf97e875740ecdefb47e960048",
+      "importedBlob": "f40907afb8032cb181ee9a0a186638a472b0707d",
+      "reason": "Omit external-provider demo credential seed statements; keep schema and other business seed data"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/chat/AnthropicChatModelTest.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "bbcc055a263725f0a7ff1c724774fc7b9dbf5485",
+      "importedBlob": "21f4bfe0b1ea7b19a2007c9b934b1adeb19f7d3b",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/chat/OpenAIChatModelTests.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "5bae6c694140a29c2e263a7ca61eb9d38d5d5c08",
+      "importedBlob": "edf257c9f237d0fef1d091513f8d9ca55e8f2123",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/chat/SiliconFlowChatModelTests.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "3bb58e68ef4a3978dfc202b8b46f535ac3d190c0",
+      "importedBlob": "834a473ae926b77b442934b96ec65e4c6ca5ea9b",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/chat/TongYiChatModelTests.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "056709d4b688413a2f6c1c26734a277faf4d645d",
+      "importedBlob": "7497c8f7980574fa07cc1fe4476fd54794deb6f4",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/image/MidjourneyApiTests.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "90bd2973d04330cc163c6b66a87f007b3c4871c1",
+      "importedBlob": "25aeb7912f2f3348b500e80228393e9bd095d0c9",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/image/SiliconFlowImageModelTests.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "5e58c405a946e406fb16f09b4ae5dba275a66865",
+      "importedBlob": "d1e014f0d8fc705095de699178e541091f86436b",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/image/StabilityAiImageModelTests.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "8cf556d9f8fe41b5474f394deca3d8bacea23e12",
+      "importedBlob": "73c521e8d529fe510973ad7ae33a8a5bf9606888",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/model/image/TongYiImagesModelTest.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "a556f79226f011cc902537590407f953aca40420",
+      "importedBlob": "c592158510d3d4d7fe30b7980e50e942cd7c3a77",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-ai/src/test/java/cn/iocoder/yudao/module/ai/framework/ai/core/websearch/AiBoChaWebSearchClientTest.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "e947e0fe3b4a9afb736c265c418b5d66168c01f8",
+      "importedBlob": "5c9f90b0857a903073eaaf9147acf353adf09b09",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-iot/yudao-module-iot-gateway/src/main/resources/application.yaml",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "6ddecc3a87e70b66b28763fc8d6a288c31cd5edf",
+      "importedBlob": "6bd3826b73f0e4bf26eacf1f5a941fa3503045a1",
+      "reason": "Replace upstream demo credential literals with explicit environment placeholders"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-mall/yudao-module-trade/src/test/java/cn/iocoder/yudao/module/trade/framework/delivery/core/client/impl/KdNiaoExpressClientIntegrationTest.java",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "a270c4b848b6bf261813150c912fa1d74509ac50",
+      "importedBlob": "2f147bb837b1ca9810921b53bc2d4ffb2629de6b",
+      "reason": "Redact upstream external-provider credential literals in integration-test examples"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "ce4d787f2a3de249c9b4da2e05e0592e700c6244",
+      "importedBlob": "40fa8825dbeb52981bde04071cf7a768ca1bfb5d",
+      "reason": "Replace upstream demo credential literals with explicit environment placeholders"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "c8d424492e10d1d8c1616530232df413168a9056",
+      "importedBlob": "5d172e731387ff5c338ac3f1e62fd794290408d5",
+      "reason": "Replace upstream demo credential literals with explicit environment placeholders"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application.yaml",
+      "sourceId": "ruoyi-vue-pro-jdk17",
+      "sourceBlob": "e51ee2231704d0279c4d2b05e4a284c171452fa9",
+      "importedBlob": "1d7b466d2018a5379eace38aeb19ef7064d214c6",
+      "reason": "Replace upstream demo credential literals with explicit environment placeholders"
+    }
+  ],
+  "environmentVariables": [
+    {
+      "path": "services/zhongshu-core/yudao-module-iot/yudao-module-iot-gateway/src/main/resources/application.yaml",
+      "line": 45,
+      "variable": "ZS_APPLICATION_YUDAO_IOT_GATEWAY_TOKEN_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 52,
+      "variable": "ZS_APPLICATION_DEV_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 57,
+      "variable": "ZS_APPLICATION_DEV_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_SLAVE_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 110,
+      "variable": "ZS_APPLICATION_DEV_SPRING_RABBITMQ_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 142,
+      "variable": "ZS_APPLICATION_DEV_SPRING_BOOT_ADMIN_CLIENT_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 156,
+      "variable": "ZS_APPLICATION_DEV_WX_MP_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 164,
+      "variable": "ZS_APPLICATION_DEV_WX_MINIAPP_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 179,
+      "variable": "ZS_APPLICATION_DEV_YUDAO_TENCENT_LBS_KEY"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 186,
+      "variable": "ZS_APPLICATION_DEV_JUSTAUTH_TYPE_DINGTALK_CLIENT_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 190,
+      "variable": "ZS_APPLICATION_DEV_JUSTAUTH_TYPE_WECHAT_ENTERPRISE_CLIENT_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-dev.yaml",
+      "line": 205,
+      "variable": "ZS_APPLICATION_DEV_JUSTAUTH_TYPE_ALIPAY_CLIENT_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 60,
+      "variable": "ZS_APPLICATION_LOCAL_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 73,
+      "variable": "ZS_APPLICATION_LOCAL_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_SLAVE_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 134,
+      "variable": "ZS_APPLICATION_LOCAL_SPRING_RABBITMQ_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 166,
+      "variable": "ZS_APPLICATION_LOCAL_SPRING_BOOT_ADMIN_CLIENT_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 213,
+      "variable": "ZS_APPLICATION_LOCAL_WX_MP_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 225,
+      "variable": "ZS_APPLICATION_LOCAL_WX_MINIAPP_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 252,
+      "variable": "ZS_APPLICATION_LOCAL_YUDAO_TENCENT_LBS_KEY"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 259,
+      "variable": "ZS_APPLICATION_LOCAL_JUSTAUTH_TYPE_DINGTALK_CLIENT_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 263,
+      "variable": "ZS_APPLICATION_LOCAL_JUSTAUTH_TYPE_WECHAT_ENTERPRISE_CLIENT_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application-local.yaml",
+      "line": 278,
+      "variable": "ZS_APPLICATION_LOCAL_JUSTAUTH_TYPE_ALIPAY_CLIENT_SECRET"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application.yaml",
+      "line": 81,
+      "variable": "ZS_APPLICATION_MYBATIS_PLUS_ENCRYPTOR_PASSWORD"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application.yaml",
+      "line": 293,
+      "variable": "ZS_REQUEST_KEY"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application.yaml",
+      "line": 294,
+      "variable": "ZS_RESPONSE_KEY"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application.yaml",
+      "line": 359,
+      "variable": "ZS_APPLICATION_YUDAO_TRADE_EXPRESS_KD_NIAO_API_KEY"
+    },
+    {
+      "path": "services/zhongshu-core/yudao-server/src/main/resources/application.yaml",
+      "line": 363,
+      "variable": "ZS_SOURCE_EXAMPLE_KEY"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 11,
+      "variable": "ZS_PG_URL"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 12,
+      "variable": "ZS_PG_USERNAME"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 13,
+      "variable": "ZS_PG_PASSWORD"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 38,
+      "variable": "ZS_PG_URL"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 39,
+      "variable": "ZS_PG_USERNAME"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 40,
+      "variable": "ZS_PG_PASSWORD"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 49,
+      "variable": "ZS_INTERNAL_SECRET"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 50,
+      "variable": "ZS_INTERNAL_REPLAY_WINDOW"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 52,
+      "variable": "ZS_WX_APPID"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 53,
+      "variable": "ZS_ACCESS_CODE_PEPPER"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 54,
+      "variable": "ZS_ACCESS_CODE_PEPPER_VERSION"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 55,
+      "variable": "ZS_ACCESS_CODE_ARTIFACT_KEY"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 57,
+      "variable": "ZS_SEED_DEV_DATA"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 59,
+      "variable": "ZS_DRIVER_ENABLED"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-pg.yaml",
+      "line": 61,
+      "variable": "ZS_DEV_CONTENT_ENDPOINT"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 13,
+      "variable": "ZS_INTERNAL_SECRET"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 14,
+      "variable": "ZS_INTERNAL_REPLAY_WINDOW"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 17,
+      "variable": "ZS_WX_APPID"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 18,
+      "variable": "ZS_ACCESS_CODE_PEPPER"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 19,
+      "variable": "ZS_ACCESS_CODE_PEPPER_VERSION"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 20,
+      "variable": "ZS_ACCESS_CODE_ARTIFACT_KEY"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 23,
+      "variable": "ZS_SEED_DEV_DATA"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 25,
+      "variable": "ZS_DRIVER_ENABLED"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 27,
+      "variable": "ZS_EXPORT_WORKER_ENABLED"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 28,
+      "variable": "ZS_CANCEL_GRACE_MINUTES"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 29,
+      "variable": "ZS_NO_RUNTIME_GRACE_MINUTES"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application-zsdev.yaml",
+      "line": 33,
+      "variable": "ZS_DEV_CONTENT_ENDPOINT"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application.yaml",
+      "line": 85,
+      "variable": "ZS_DONOR_APPLICATION_MYBATIS_PLUS_ENCRYPTOR_PASSWORD"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application.yaml",
+      "line": 297,
+      "variable": "ZS_REQUEST_KEY"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application.yaml",
+      "line": 298,
+      "variable": "ZS_RESPONSE_KEY"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application.yaml",
+      "line": 363,
+      "variable": "ZS_DONOR_APPLICATION_YUDAO_TRADE_EXPRESS_KD_NIAO_API_KEY"
+    },
+    {
+      "path": "reference/donors/zhongshu-design/yudao-server/src/main/resources/application.yaml",
+      "line": 367,
+      "variable": "ZS_SOURCE_EXAMPLE_KEY"
+    }
+  ],
+  "sqlValidation": [
+    {
+      "path": "services/zhongshu-core/sql/dm/ruoyi-vue-pro-dm8.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/highgo/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/kingbase/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/mysql/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/opengauss/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/oracle/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/postgresql/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    },
+    {
+      "path": "services/zhongshu-core/sql/sqlserver/ruoyi-vue-pro.sql",
+      "providerDemoStatementsOmitted": 26,
+      "ddlLinesUnchanged": true,
+      "nonProviderInsertsUnchanged": true,
+      "allNonProviderLinesUnchanged": true
+    }
+  ]
+}
