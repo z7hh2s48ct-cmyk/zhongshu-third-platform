@@ -40,10 +40,10 @@ server:
 
 springdoc:
   api-docs:
-    enabled: true
+    enabled: false # ZS-ENG-005：接口文档默认不暴露，仅 local 环境显式开启
     path: /v3/api-docs
   swagger-ui:
-    enabled: true
+    enabled: false # ZS-ENG-005：同上
     path: /swagger-ui
   default-flat-param-object: true # 参见 https://doc.xiaominfo.com/docs/faq/v4/knife4j-parameterobject-flat-param 文档
 
@@ -367,3 +367,12 @@ zszj:
       type: redis # 消息总线的类型
 
 debug: false
+
+--- #################### 管理端点（ZS-ENG-005：默认仅健康检查） ####################
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health

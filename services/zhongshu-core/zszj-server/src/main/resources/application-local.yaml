@@ -15,7 +15,7 @@ spring:
       web-stat-filter:
         enabled: true
       stat-view-servlet:
-        enabled: true
+        enabled: false # ZS-ENG-005：Druid 控制台默认关闭（原为匿名开放且未设账密）
         allow: # 设置白名单，不填则允许所有访问
         url-pattern: /druid/*
         login-username: # 控制台管理用户名和密码
@@ -151,7 +151,7 @@ management:
     web:
       base-path: /actuator # Actuator 提供的 API 接口的根目录。默认为 /actuator
       exposure:
-        include: '*' # 需要开放的端点。默认值只打开 health 和 info 两个端点。通过设置 * ，可以开放所有端点。
+        include: health,info,metrics # ZS-ENG-005：本地仅开放诊断端点，health 匿名、其余需认证
 
 # Spring Boot Admin 配置项
 spring:
@@ -266,3 +266,11 @@ justauth:
     type: REDIS
     prefix: 'social_auth_state:' # 缓存前缀，目前只对 Redis 缓存生效，默认 JUSTAUTH::STATE::
     timeout: 24h # 超时时长，目前只对 Redis 缓存生效，默认 3 分钟
+
+--- #################### 接口文档（ZS-ENG-005：仅本地开发开启） ####################
+
+springdoc:
+  api-docs:
+    enabled: true # 本地开发开启；基础配置默认关闭，部署环境不暴露接口文档
+  swagger-ui:
+    enabled: true
