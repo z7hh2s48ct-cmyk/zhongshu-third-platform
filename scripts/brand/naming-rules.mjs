@@ -7,8 +7,10 @@
  */
 
 // 上游署名/素材地址：整体保持原样（docs/06 第 4.1 节）。
+// ZS-BRAND-002 评审补充：github.com/YunaiV/*、gitee.com/zhijiantianya/* 也是上游署名 URL，
+// 曾被前缀替换误改（yudao-cloud→zszj-cloud），纳入保护。
 export const PROTECTED = [
-  /(gitee|github)\.com\/yudaocode\/[A-Za-z0-9._/-]*/g,
+  /(gitee|github)\.com\/(yudaocode|YunaiV|zhijiantianya)\/[A-Za-z0-9._/-]*/g,
   /static\.iocoder\.cn\/[A-Za-z0-9._/-]*/g,
 ];
 
@@ -24,6 +26,10 @@ export const REPLACEMENTS = [
   ['dashboard.yudao.iocoder.cn', 'dashboard.zszj.local'],
   ['test.yudao.iocoder.cn', 'static.zszj.example.com'],
   ['static.yudao.iocoder.cn', 'static.zszj.example.com'],
+  ['mall.yudao.iocoder.cn', 'mall.zszj.example.com'],
+  ['yudao.iocoder.cn', 'zszj.example.com'],
+  // ZS-BRAND-002 评审补充：清理被半改写的组合域（mall.zszj.iocoder.cn 等）
+  ['zszj.iocoder.cn', 'zszj.example.com'],
   // Java 包根与 GroupId（映射 #1/#2）
   ['cn.iocoder.yudao', 'cn.zszj'],
   ['cn/iocoder/yudao', 'cn/zszj'],
@@ -58,6 +64,25 @@ export function matchesChineseBrandScope(relativePath) {
     /\/Dockerfile$/.test(relativePath) ||
     /\/docker\.env$/.test(relativePath)
   );
+}
+
+// SQL 种子范围（ZS-BRAND-004）：产品可见演示数据的品牌串与演示域中性化。
+// 注意这些仅替换种子取值；上游注释/署名仍按 docs/06 第 4.1 节保留。
+export const SQL_SEED_REPLACEMENTS = [
+  ['yudao@iocoder.cn', 'zszj@example.com'],
+  ['@iocoder.cn', '@example.com'],
+  ['www.iocoder.cn', 'www.zszj.example.com'],
+  ['doc.iocoder.cn', 'doc.zszj.example.com'],
+  ['test.iocoder.cn', 'test.zszj.example.com'],
+  ['cloud.iocoder.cn', 'doc.zszj.example.com'],
+  ['zsxq.iocoder.cn', 'www.zszj.example.com'],
+  ['芋道的公众', '众墅之家公告示例'],
+  ['芋道源码', '众墅之家'],
+  ['芋道', '众墅之家'],
+];
+
+export function matchesSqlSeedScope(relativePath) {
+  return /^services\/zhongshu-core\/sql\//.test(relativePath);
 }
 
 const SENTINEL_START = '\uE000';

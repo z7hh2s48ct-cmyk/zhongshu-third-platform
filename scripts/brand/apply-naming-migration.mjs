@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { applyRules, matchesChineseBrandScope } from './naming-rules.mjs';
+import { applyRules, matchesChineseBrandScope, matchesSqlSeedScope, SQL_SEED_REPLACEMENTS } from './naming-rules.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const scope = process.argv[2];
@@ -41,7 +41,12 @@ const exclusions = {
   ],
   sql: [],
   web: [/^apps\/zhongshu-admin-web\/\.image\//, /pnpm-lock\.yaml$/],
-  miniapp: [/^apps\/zhongshu-miniapp\/\.image\//, /pnpm-lock\.yaml$/],
+  miniapp: [
+    /^apps\/zhongshu-miniapp\/\.image\//,
+    /pnpm-lock\.yaml$/,
+    /^apps\/zhongshu-miniapp\/docs\//,
+    /^apps\/zhongshu-miniapp\/README\.md$/,
+  ],
 }[scope];
 
 const files = execFileSync('git', ['ls-files', '-z', ...prefixes], { cwd: root, maxBuffer: 64 * 1024 * 1024 })
@@ -57,7 +62,10 @@ for (const file of files) {
   if (buf.subarray(0, 8192).includes(0)) { skipped.push([file, 'binary']); continue; }
   const text = buf.toString('utf8');
   if (text.includes('\uFFFD') && !buf.includes(0)) { skipped.push([file, 'non-utf8']); continue; }
-  const next = applyRules(text, { chinese: matchesChineseBrandScope(file) });
+  let next = applyRules(text, { chinese: matchesChineseBrandScope(file) });
+  if (scope === 'sql' && matchesSqlSeedScope(file)) {
+    for (const [from, to] of SQL_SEED_REPLACEMENTS) next = next.split(from).join(to);
+  }
   if (next !== text) { writeFileSync(root + file, next, 'utf8'); changed++; }
 }
 console.log(JSON.stringify({ scope, scanned: files.length, changed, skipped }, null, 2));

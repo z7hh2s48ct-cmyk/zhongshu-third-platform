@@ -327,7 +327,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(value = Exception.class)
     public CommonResult<?> defaultExceptionHandler(HttpServletRequest req, Throwable ex) {
         // 特殊：如果是 ServiceException 的异常，则直接返回
-        // 例如说：https://gitee.com/zhijiantianya/zszj-cloud/issues/ICSSRM、https://gitee.com/zhijiantianya/zszj-cloud/issues/ICT6FM
+        // 例如说：https://gitee.com/zhijiantianya/yudao-cloud/issues/ICSSRM、https://gitee.com/zhijiantianya/yudao-cloud/issues/ICT6FM
         if (ex.getCause() != null && ex.getCause() instanceof ServiceException) {
             return serviceExceptionHandler((ServiceException) ex.getCause());
         }

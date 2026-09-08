@@ -379,7 +379,7 @@ public class SocialClientServiceImpl implements SocialClientService {
                 .uploadTime(ZonedDateTime.now().format(UTC_MS_WITH_XXX_OFFSET_FORMATTER))
                 .build();
         // 重试机制：解决支付回调与订单信息上传之间的时间差导致的 10060001 错误
-        // 对应 ISSUE：https://gitee.com/zhijiantianya/zszj-cloud/pulls/230
+        // 对应 ISSUE：https://gitee.com/zhijiantianya/yudao-cloud/pulls/230
         // 注意：wx-java 的 upload 内部对 errCode != 0 直接抛 WxErrorException，所以重试判断必须基于异常的 errorCode
         int maxAttempts = UPLOAD_SHIPPING_INFO_RETRY_BACKOFF_MILLIS.length + 1;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {

@@ -36,7 +36,7 @@ public class FtpFileClient extends AbstractFileClient<FtpFileClientConfig> {
 
     @Override
     protected void doInit() {
-        // 初始化 Ftp 对象：https://gitee.com/zhijiantianya/zszj-cloud/pulls/207/
+        // 初始化 Ftp 对象：https://gitee.com/zhijiantianya/yudao-cloud/pulls/207/
         FtpConfig ftpConfig = new FtpConfig(config.getHost(), config.getPort(), config.getUsername(), config.getPassword(),
                 CharsetUtil.CHARSET_UTF_8, null, null);
         ftpConfig.setConnectionTimeout(CONNECTION_TIMEOUT);

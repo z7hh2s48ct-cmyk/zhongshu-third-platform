@@ -540,7 +540,7 @@ public abstract class AbstractWxPayClient extends AbstractPayClient<WxPayClientC
      * @see <a href="https://github.com/binarywang/weixin-java-pay-demo/blob/master/src/main/java/com/github/binarywang/demo/wx/pay/controller/WxPayV3Controller.java#L202-L221">官方示例</a>
      */
     private SignatureHeader getRequestHeader(Map<String, String> headers) {
-        // 参见 https://gitee.com/zhijiantianya/zszj-cloud/issues/ICSFL6
+        // 参见 https://gitee.com/zhijiantianya/yudao-cloud/issues/ICSFL6
         return SignatureHeader.builder()
                 .signature(getHeaderValue(headers, "Wechatpay-Signature", "wechatpay-signature"))
                 .nonce(getHeaderValue(headers, "Wechatpay-Nonce", "wechatpay-nonce"))

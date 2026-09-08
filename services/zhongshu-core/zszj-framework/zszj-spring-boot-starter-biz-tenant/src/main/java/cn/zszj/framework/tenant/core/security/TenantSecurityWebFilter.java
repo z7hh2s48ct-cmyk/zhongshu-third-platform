@@ -39,7 +39,7 @@ public class TenantSecurityWebFilter extends ApiRequestFilter {
     /**
      * 允许忽略租户的 URL 列表
      *
-     * 目的：解决 <a href="https://gitee.com/zhijiantianya/zszj-cloud/issues/ICUQL9">修改配置会导致 @TenantIgnore Controller 接口过滤失效</>
+     * 目的：解决 <a href="https://gitee.com/zhijiantianya/yudao-cloud/issues/ICUQL9">修改配置会导致 @TenantIgnore Controller 接口过滤失效</>
      */
     private final Set<String> ignoreUrls;
 
