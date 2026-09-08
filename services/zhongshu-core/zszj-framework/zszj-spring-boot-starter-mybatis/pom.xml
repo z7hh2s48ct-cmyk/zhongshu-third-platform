@@ -28,10 +28,12 @@
             <scope>provided</scope> <!-- 设置为 provided，只有 DefaultDBFieldHandler 使用到 -->
         </dependency>
 
-        <!-- DB 相关 -->
+        <!-- DB 相关：各方言驱动一律 optional，由可运行应用（zszj-server）显式引入目标数据库驱动。
+             ZS-DB-001.A / D-08：产品目标数据库为 PostgreSQL，MySQL 驱动不进入运行包 -->
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>com.oracle.database.jdbc</groupId>

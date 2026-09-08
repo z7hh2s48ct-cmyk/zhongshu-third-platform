@@ -29,16 +29,16 @@ spring:
         wall:
           config:
             multi-statement-allow: true
-    dynamic: # 多数据源配置
+    dynamic: # 多数据源配置（ZS-DB-001.A / D-08：仅 PostgreSQL 单主库，模拟从库已移除）
       druid: # Druid 【连接池】相关的全局配置
-        initial-size: 1 # 初始连接数
-        min-idle: 1 # 最小连接池数量
+        initial-size: 5 # 初始连接数
+        min-idle: 10 # 最小连接池数量
         max-active: 20 # 最大连接池数量
         max-wait: 60000 # 配置获取连接等待超时的时间，单位：毫秒（1 分钟）
         time-between-eviction-runs-millis: 60000 # 配置间隔多久才进行一次检测，检测需要关闭的空闲连接，单位：毫秒（1 分钟）
         min-evictable-idle-time-millis: 600000 # 配置一个连接在池中最小生存的时间，单位：毫秒（10 分钟）
         max-evictable-idle-time-millis: 1800000 # 配置一个连接在池中最大生存的时间，单位：毫秒（30 分钟）
-        validation-query: SELECT 1 FROM DUAL # 配置检测连接是否有效
+        validation-query: ${ZSZJ_DATASOURCE_VALIDATION_QUERY:SELECT 1} # 连接有效性检查（PG 方言：SELECT 1）
         test-while-idle: true
         test-on-borrow: false
         test-on-return: false
@@ -47,46 +47,16 @@ spring:
       primary: master
       datasource:
         master:
-          url: jdbc:mysql://127.0.0.1:3306/ruoyi-vue-pro?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true # MySQL Connector/J 8.X 连接的示例
-          #          url: jdbc:mysql://127.0.0.1:3306/ruoyi-vue-pro?useSSL=true&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true # MySQL Connector/J 5.X 连接的示例
-          #          url: jdbc:postgresql://127.0.0.1:5432/ruoyi-vue-pro # PostgreSQL 连接的示例
-          #          url: jdbc:oracle:thin:@127.0.0.1:1521:xe # Oracle 连接的示例
-          #          url: jdbc:sqlserver://127.0.0.1:1433;DatabaseName=ruoyi-vue-pro;SelectMethod=cursor;encrypt=false;rewriteBatchedStatements=true;useUnicode=true;characterEncoding=utf-8 # SQLServer 连接的示例
-          #          url: jdbc:dm://127.0.0.1:5236?schema=RUOYI_VUE_PRO # DM 连接的示例
-          #          url: jdbc:kingbase8://127.0.0.1:54321/test  # 人大金仓 KingbaseES 连接的示例
-          #          url: jdbc:postgresql://127.0.0.1:5432/postgres # OpenGauss 连接的示例
-          #          url: jdbc:postgresql://127.0.0.1:5866/ruoyi-vue-pro # 瀚高 HighGo 连接的示例
-          username: root
-          password: "${ZSZJ_APPLICATION_LOCAL_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD:}" # source demo secret removed; configure explicitly
-          #          username: sa # SQL Server 连接的示例
-          #          password: Zszj@2024 # SQL Server 连接的示例
-          #          username: SYSDBA # DM 连接的示例
-          #          password: SYSDBA001 # DM 连接的示例
-          #          username: root # OpenGauss 连接的示例
-          #          password: Zszj@2024 # OpenGauss 连接的示例
-          #          username: root # 瀚高 HighGo 连接的示例
-          #          password: 123456 # 瀚高 HighGo 连接的示例
-        slave: # 模拟从库，可根据自己需要修改
-          lazy: true # 开启懒加载，保证启动速度
-          url: jdbc:mysql://127.0.0.1:3306/ruoyi-vue-pro?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&nullCatalogMeansCurrent=true
-          username: root
-          password: "${ZSZJ_APPLICATION_LOCAL_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_SLAVE_PASSWORD:}" # source demo secret removed; configure explicitly
-#        tdengine: # IoT 数据库（需要 IoT 物联网再开启噢！）
-#          lazy: true # 开启懒加载，保证启动速度
-#          url: jdbc:TAOS-WS://127.0.0.1:6041/ruoyi_vue_pro?varcharAsString=true&enableAutoReconnect=true # 参见：https://t.zsxq.com/qaX9c，开启 TDengine WebSocket 自动重连
-#          driver-class-name: com.taosdata.jdbc.ws.WebSocketDriver
-#          username: root
-#          password: taosdata
-#          druid:
-#            validation-query: SELECT SERVER_STATUS() # TDengine 数据源的有效性检查 SQL
-
+          url: ${ZSZJ_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/ruoyi-vue-pro} # 目标库名以 ZS-DB-002 环境核验为准
+          username: ${ZSZJ_DATASOURCE_USERNAME:postgres}
+          password: "${ZSZJ_DATASOURCE_PASSWORD:}" # 按环境注入
   # Redis 配置。Redisson 默认的配置足够使用，一般不需要进行调优
   data:
     redis:
       host: 127.0.0.1 # 地址
       port: 6379 # 端口
       database: 0 # 数据库索引
-#      password: dev # 密码，建议生产环境开启
+#      password: 按环境注入
 
 --- #################### 定时任务相关配置 ####################
 

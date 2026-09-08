@@ -32,6 +32,14 @@
             <version>${revision}</version>
         </dependency>
 
+        <!-- ZS-DB-001.A / D-08：目标数据库为 PostgreSQL，运行包显式包含 PG 驱动；
+             各方言驱动在 starter 中均为 optional，MySQL 驱动不进入运行包（无 MySQL 回退） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- 会员中心。默认注释，保证编译速度 -->
 <!--        <dependency>-->
 <!--            <groupId>cn.zszj</groupId>-->

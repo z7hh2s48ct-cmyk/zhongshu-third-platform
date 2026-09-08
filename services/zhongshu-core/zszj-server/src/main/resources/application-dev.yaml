@@ -15,7 +15,7 @@ spring:
       web-stat-filter:
         enabled: true
       stat-view-servlet:
-        enabled: true
+        enabled: false # ZS-ENG-005：Druid 控制台默认关闭
         allow: # 设置白名单，不填则允许所有访问
         url-pattern: /druid/*
         login-username: # 控制台管理用户名和密码
@@ -29,7 +29,7 @@ spring:
         wall:
           config:
             multi-statement-allow: true
-    dynamic: # 多数据源配置
+    dynamic: # 多数据源配置（ZS-DB-001.A / D-08：仅 PostgreSQL 单主库，模拟从库已移除）
       druid: # Druid 【连接池】相关的全局配置
         initial-size: 5 # 初始连接数
         min-idle: 10 # 最小连接池数量
@@ -38,7 +38,7 @@ spring:
         time-between-eviction-runs-millis: 60000 # 配置间隔多久才进行一次检测，检测需要关闭的空闲连接，单位：毫秒（1 分钟）
         min-evictable-idle-time-millis: 600000 # 配置一个连接在池中最小生存的时间，单位：毫秒（10 分钟）
         max-evictable-idle-time-millis: 1800000 # 配置一个连接在池中最大生存的时间，单位：毫秒（30 分钟）
-        validation-query: SELECT 1 FROM DUAL # 配置检测连接是否有效
+        validation-query: ${ZSZJ_DATASOURCE_VALIDATION_QUERY:SELECT 1} # 连接有效性检查（PG 方言：SELECT 1）
         test-while-idle: true
         test-on-borrow: false
         test-on-return: false
@@ -47,22 +47,16 @@ spring:
       primary: master
       datasource:
         master:
-          url: jdbc:mysql://127.0.0.1:3306/ruoyi-vue-pro?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true # MySQL Connector/J 8.X 连接的示例
-          username: root
-          password: "${ZSZJ_APPLICATION_DEV_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD:}" # source demo secret removed; configure explicitly
-        slave: # 模拟从库，可根据自己需要修改 # 模拟从库，可根据自己需要修改
-          lazy: true # 开启懒加载，保证启动速度
-          url: jdbc:mysql://127.0.0.1:3306/ruoyi-vue-pro?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true # MySQL Connector/J 8.X 连接的示例
-          username: root
-          password: "${ZSZJ_APPLICATION_DEV_SPRING_DATASOURCE_DYNAMIC_DATASOURCE_SLAVE_PASSWORD:}" # source demo secret removed; configure explicitly
-
+          url: ${ZSZJ_APPLICATION_DEV_DATASOURCE_URL} # 目标库名以 ZS-DB-002 环境核验为准
+          username: ${ZSZJ_APPLICATION_DEV_DATASOURCE_USERNAME}
+          password: "${ZSZJ_APPLICATION_DEV_DATASOURCE_PASSWORD}" # 按环境注入
   # Redis 配置。Redisson 默认的配置足够使用，一般不需要进行调优
   data:
     redis:
-      host: 400-infra.server.iocoder.cn # 地址
+      host: ${ZSZJ_APPLICATION_DEV_REDIS_HOST:127.0.0.1} # 地址（上游演示地址已移除）
       port: 6379 # 端口
       database: 1 # 数据库索引
-#    password: 123456 # 密码，建议生产环境开启
+#    password: 按环境注入，勿写入演示口令
 
 --- #################### 定时任务相关配置 ####################
 
