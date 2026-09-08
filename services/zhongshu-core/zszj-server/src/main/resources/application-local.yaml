@@ -175,29 +175,12 @@ logging:
     name: ${user.home}/logs/${spring.application.name}.log # 日志文件名，全路径
   level:
     # 配置自己写的 MyBatis Mapper 打印日志
-    cn.zszj.module.bpm.dal.mysql: debug
     cn.zszj.module.infra.dal.mysql: debug
     cn.zszj.module.infra.dal.mysql.logger.ApiErrorLogMapper: INFO # 配置 ApiErrorLogMapper 的日志级别为 info，避免和 GlobalExceptionHandler 重复打印
     cn.zszj.module.infra.dal.mysql.job.JobLogMapper: INFO # 配置 JobLogMapper 的日志级别为 info
     cn.zszj.module.infra.dal.mysql.file.FileConfigMapper: INFO # 配置 FileConfigMapper 的日志级别为 info
-    cn.zszj.module.pay.dal.mysql: debug
-    cn.zszj.module.pay.dal.mysql.notify.PayNotifyTaskMapper: INFO # 配置 PayNotifyTaskMapper 的日志级别为 info
     cn.zszj.module.system.dal.mysql: debug
     cn.zszj.module.system.dal.mysql.sms.SmsChannelMapper: INFO # 配置 SmsChannelMapper 的日志级别为 info
-    cn.zszj.module.tool.dal.mysql: debug
-    cn.zszj.module.member.dal.mysql: debug
-    cn.zszj.module.trade.dal.mysql: debug
-    cn.zszj.module.promotion.dal.mysql: debug
-    cn.zszj.module.statistics.dal.mysql: debug
-    cn.zszj.module.crm.dal.mysql: debug
-    cn.zszj.module.erp.dal.mysql: debug
-    cn.zszj.module.mes.dal.mysql: debug
-    cn.zszj.module.wms.dal.mysql: debug
-    cn.zszj.module.iot.dal.mysql: debug
-    cn.zszj.module.iot.dal.tdengine: DEBUG
-    cn.zszj.module.iot.service.rule: debug
-    cn.zszj.module.ai.dal.mysql: debug
-    cn.zszj.module.im.dal.mysql: debug
     org.springframework.context.support.PostProcessorRegistrationDelegate: ERROR # TODO 芋艿：先禁用，Spring Boot 3.X 存在部分错误的 WARN 提示
 
 debug: false
@@ -205,11 +188,11 @@ debug: false
 --- #################### 微信公众号、小程序相关配置 ####################
 wx:
   mp: # 公众号配置（必填），参见 https://github.com/Wechat-Group/WxJava/blob/develop/spring-boot-starters/wx-java-mp-spring-boot-starter/README.md 文档
-#    app-id: wx041349c6f39b268b # 测试号（牛希尧提供的）
+#    app-id: "${ZSZJ_APPLICATION_DEV_WX_MP_APP_ID:}" # 测试号（牛希尧提供的）
 #    secret: REDACTED_SOURCE_SECRET
 #    app-id: wx5b23ba7a5589ecbb # 测试号（自己的）
-#    secret: 2a7b3b20c537e52e74afd395eb85f61f
-    app-id: wxf56b1542b9e85f8a # 测试号（Kongdy 提供的）
+#    secret: [已移除上游演示凭据]
+    app-id: "${ZSZJ_APPLICATION_LOCAL_WX_MP_APP_ID:}" # 按环境注入，不使用上游测试号
     secret: "${ZSZJ_APPLICATION_LOCAL_WX_MP_SECRET:}" # source demo secret removed; configure explicitly
     # 存储配置，解决 AccessToken 的跨节点的共享
     config-storage:
@@ -218,13 +201,13 @@ wx:
       http-client-type: HttpComponents # 采用 HttpComponents（HttpClient 5）请求微信公众号平台
   miniapp: # 小程序配置（必填），参见 https://github.com/Wechat-Group/WxJava/blob/develop/spring-boot-starters/wx-java-miniapp-spring-boot-starter/README.md 文档
     #    appid: wx62056c0d5e8db250 # 测试号（牛希尧提供的）
-    #    secret: 333ae72f41552af1e998fe1f54e1584a
-#    appid: wx63c280fe3248a3e7 # wenhualian的接口测试号
+    #    secret: [已移除上游演示凭据]
+#    appid: "${ZSZJ_APPLICATION_DEV_WX_MINIAPP_APPID:}" # wenhualian的接口测试号
 #    secret: REDACTED_SOURCE_SECRET
-    appid: wxc4598c446f8a9cb3 # 测试号（Kongdy 提供的）
+    appid: "${ZSZJ_APPLICATION_LOCAL_WX_MINIAPP_APPID:}" # 按环境注入，不使用上游测试号
     secret: "${ZSZJ_APPLICATION_LOCAL_WX_MINIAPP_SECRET:}" # source demo secret removed; configure explicitly
 #    appid: wx66186af0759f47c9 # 测试号（puhui 提供的）
-#    secret: 3218bcbd112cbc614c7264ceb20144ac
+#    secret: [已移除上游演示凭据]
     config-storage:
       type: RedisTemplate # 采用 RedisTemplate 操作 Redis，会自动从 Spring 中获取
       key-prefix: wa # Redis Key 的前缀
@@ -239,9 +222,9 @@ zszj:
   security:
     mock-enable: true
   pay:
-    order-notify-url: https://yutou.mynatapp.cc/admin-api/pay/notify/order # 支付渠道的【支付】回调地址
-    refund-notify-url: https://yutou.mynatapp.cc/admin-api/pay/notify/refund # 支付渠道的【退款】回调地址
-    transfer-notify-url: https://yutou.mynatapp.cc/admin-api/pay/notify/transfer # 支付渠道的【转账】回调地址
+    order-notify-url: ${ZSZJ_APPLICATION_LOCAL_PAY_ORDER_NOTIFY_URL:} # 支付渠道的【支付】回调地址
+    refund-notify-url: ${ZSZJ_APPLICATION_LOCAL_PAY_REFUND_NOTIFY_URL:} # 支付渠道的【退款】回调地址
+    transfer-notify-url: ${ZSZJ_APPLICATION_LOCAL_PAY_TRANSFER_NOTIFY_URL:} # 支付渠道的【转账】回调地址
   access-log: # 访问日志的配置项
     enable: false
   demo: false # 关闭演示模式
@@ -255,11 +238,11 @@ justauth:
   enabled: true
   type:
     DINGTALK: # 钉钉
-      client-id: dingvrnreaje3yqvzhxg
+      client-id: "${ZSZJ_APPLICATION_LOCAL_JUSTAUTH_TYPE_DINGTALK_CLIENT_ID:}"
       client-secret: "${ZSZJ_APPLICATION_LOCAL_JUSTAUTH_TYPE_DINGTALK_CLIENT_SECRET:}" # source demo secret removed; configure explicitly
       ignore-check-redirect-uri: true
     WECHAT_ENTERPRISE: # 企业微信
-      client-id: wwd411c69a39ad2e54
+      client-id: "${ZSZJ_APPLICATION_LOCAL_JUSTAUTH_TYPE_WECHAT_ENTERPRISE_CLIENT_ID:}"
       client-secret: "${ZSZJ_APPLICATION_LOCAL_JUSTAUTH_TYPE_WECHAT_ENTERPRISE_CLIENT_SECRET:}" # source demo secret removed; configure explicitly
       agent-id: 1000004
       ignore-check-redirect-uri: true

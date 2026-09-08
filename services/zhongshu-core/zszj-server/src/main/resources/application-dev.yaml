@@ -152,7 +152,7 @@ logging:
 wx: # 参见 https://github.com/Wechat-Group/WxJava/blob/develop/spring-boot-starters/wx-java-mp-spring-boot-starter/README.md 文档
   mp:
     # 公众号配置(必填)
-    app-id: wx041349c6f39b268b
+    app-id: "${ZSZJ_APPLICATION_DEV_WX_MP_APP_ID:}"
     secret: "${ZSZJ_APPLICATION_DEV_WX_MP_SECRET:}" # source demo secret removed; configure explicitly
     # 存储配置，解决 AccessToken 的跨节点的共享
     config-storage:
@@ -160,7 +160,7 @@ wx: # 参见 https://github.com/Wechat-Group/WxJava/blob/develop/spring-boot-sta
       key-prefix: wx # Redis Key 的前缀
       http-client-type: HttpComponents # 采用 HttpComponents（HttpClient 5）请求微信公众号平台
   miniapp: # 小程序配置（必填），参见 https://github.com/Wechat-Group/WxJava/blob/develop/spring-boot-starters/wx-java-miniapp-spring-boot-starter/README.md 文档
-    appid: wx63c280fe3248a3e7
+    appid: "${ZSZJ_APPLICATION_DEV_WX_MINIAPP_APPID:}"
     secret: "${ZSZJ_APPLICATION_DEV_WX_MINIAPP_SECRET:}" # source demo secret removed; configure explicitly
     config-storage:
       type: RedisTemplate # 采用 RedisTemplate 操作 Redis，会自动从 Spring 中获取
@@ -172,9 +172,9 @@ wx: # 参见 https://github.com/Wechat-Group/WxJava/blob/develop/spring-boot-sta
 # 众墅之家配置项，设置当前项目所有自定义的配置
 zszj:
   pay:
-    order-notify-url: http://yunai.natapp1.cc/admin-api/pay/notify/order # 支付渠道的【支付】回调地址
-    refund-notify-url: http://yunai.natapp1.cc/admin-api/pay/notify/refund # 支付渠道的【退款】回调地址
-    transfer-notify-url: https://yunai.natapp1.cc/admin-api/pay/notify/transfer # 支付渠道的【转账】回调地址
+    order-notify-url: ${ZSZJ_APPLICATION_DEV_PAY_ORDER_NOTIFY_URL:} # 支付渠道的【支付】回调地址
+    refund-notify-url: ${ZSZJ_APPLICATION_DEV_PAY_REFUND_NOTIFY_URL:} # 支付渠道的【退款】回调地址
+    transfer-notify-url: ${ZSZJ_APPLICATION_DEV_PAY_TRANSFER_NOTIFY_URL:} # 支付渠道的【转账】回调地址
   demo: false # 开启演示模式
   tencent-lbs-key: "${ZSZJ_APPLICATION_DEV_ZSZJ_TENCENT_LBS_KEY:}" # source demo secret removed; configure explicitly
 
@@ -182,11 +182,11 @@ justauth:
   enabled: true
   type:
     DINGTALK: # 钉钉
-      client-id: dingvrnreaje3yqvzhxg
+      client-id: "${ZSZJ_APPLICATION_LOCAL_JUSTAUTH_TYPE_DINGTALK_CLIENT_ID:}"
       client-secret: "${ZSZJ_APPLICATION_DEV_JUSTAUTH_TYPE_DINGTALK_CLIENT_SECRET:}" # source demo secret removed; configure explicitly
       ignore-check-redirect-uri: true
     WECHAT_ENTERPRISE: # 企业微信
-      client-id: wwd411c69a39ad2e54
+      client-id: "${ZSZJ_APPLICATION_LOCAL_JUSTAUTH_TYPE_WECHAT_ENTERPRISE_CLIENT_ID:}"
       client-secret: "${ZSZJ_APPLICATION_DEV_JUSTAUTH_TYPE_WECHAT_ENTERPRISE_CLIENT_SECRET:}" # source demo secret removed; configure explicitly
       agent-id: 1000004
       ignore-check-redirect-uri: true
