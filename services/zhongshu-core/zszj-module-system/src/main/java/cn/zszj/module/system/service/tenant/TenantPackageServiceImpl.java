@@ -8,7 +8,7 @@ import cn.zszj.framework.common.catalog.ModuleCatalog;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackagePageReqVO;
 import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackageSaveReqVO;
-import cn.zszj.module.system.dal.dataobject.menu.MenuDO;
+import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
 import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
@@ -40,10 +40,10 @@ public class TenantPackageServiceImpl implements TenantPackageService {
 
     @Resource
     @Lazy // 避免循环依赖的报错
-    private TenantService tenantService;?
-?
-    @Resource?
-    @Lazy // 避免循环依赖的报错?
+    private TenantService tenantService;
+
+    @Resource
+    @Lazy // 避免循环依赖的报错
     private MenuService menuService;
 
     @Override
@@ -143,23 +143,23 @@ public class TenantPackageServiceImpl implements TenantPackageService {
     }
 
 
-    /**?
-     * ZS-CFG-003.A：套餐菜单不得包含未启用模块的功能入口。?
-     * 无法归属模块的菜单（纯目录容器等）放行；归属到未启用模块的菜单拒绝。?
-     */?
-    @VisibleForTesting?
-    void validateTenantPackageMenus(Set<Long> menuIds) {?
-        if (CollUtil.isEmpty(menuIds)) {?
-            return;?
-        }?
-        for (MenuDO menu : menuService.getMenuList(menuIds)) {?
-            String module = ModuleCatalog.moduleOfMenu(menu.getPermission(), menu.getComponent(), menu.getPath());?
-            if (module != null && !ModuleCatalog.ENABLED_MODULES.contains(module)) {?
-                throw exception(TENANT_PACKAGE_MENU_MODULE_DISABLED, menu.getName(), module);?
-            }?
-        }?
-    }?
-?
+    /**
+     * ZS-CFG-003.A：套餐菜单不得包含未启用模块的功能入口。
+     * 无法归属模块的菜单（纯目录容器等）放行；归属到未启用模块的菜单拒绝。
+     */
+    @VisibleForTesting
+    void validateTenantPackageMenus(Set<Long> menuIds) {
+        if (CollUtil.isEmpty(menuIds)) {
+            return;
+        }
+        for (MenuDO menu : menuService.getMenuList(menuIds)) {
+            String module = ModuleCatalog.moduleOfMenu(menu.getPermission(), menu.getComponent(), menu.getPath());
+            if (module != null && !ModuleCatalog.ENABLED_MODULES.contains(module)) {
+                throw exception(TENANT_PACKAGE_MENU_MODULE_DISABLED, menu.getName(), module);
+            }
+        }
+    }
+
     @VisibleForTesting
     void validateTenantPackageNameUnique(Long id, String name) {
         if (StrUtil.isBlank(name)) {

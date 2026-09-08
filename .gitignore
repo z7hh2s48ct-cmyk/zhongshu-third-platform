@@ -37,3 +37,4 @@ dist-prod/
 !apps/zhongshu-miniapp/.vscode/launch.json
 !apps/zhongshu-miniapp/.vscode/settings.json
 !apps/zhongshu-miniapp/.vscode/vue3.code-snippets
+tools/

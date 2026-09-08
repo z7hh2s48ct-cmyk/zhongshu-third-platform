@@ -26,21 +26,21 @@ public final class ModuleCatalog {
     private static final List<String> ALL_MODULES = List.of(
             "system", "infra", "bpm", "mp", "mall", "erp", "wms", "pms", "crm", "mes", "im", "report", "pay", "ai", "iot");
 
-    /** 未启用模块 -> admin-api 兜底前缀 */
-    public static final Map<String, List<String>> DISABLED_MODULE_API_PREFIXES = Map.of(
-            "bpm", List.of("/admin-api/bpm/**"),
-            "mp", List.of("/admin-api/mp/**"),
-            "mall", List.of("/admin-api/product/**", "/admin-api/trade/**", "/admin-api/promotion/**"),
-            "erp", List.of("/admin-api/erp/**"),
-            "wms", List.of("/admin-api/wms/**"),
-            "pms", List.of("/admin-api/pms/**"),
-            "crm", List.of("/admin-api/crm/**"),
-            "mes", List.of("/admin-api/mes/**"),
-            "im", List.of("/admin-api/im/**"),
-            "report", List.of("/admin-api/report/**"),
-            "pay", List.of("/admin-api/pay/**"),
-            "ai", List.of("/admin-api/ai/**"),
-            "iot", List.of("/admin-api/iot/**"));
+    /** 未启用模块 -> admin-api 兜底前缀（超过 10 项，必须用 ofEntries 而非 Map.of） */
+    public static final Map<String, List<String>> DISABLED_MODULE_API_PREFIXES = Map.ofEntries(
+            Map.entry("bpm", List.of("/admin-api/bpm/**")),
+            Map.entry("mp", List.of("/admin-api/mp/**")),
+            Map.entry("mall", List.of("/admin-api/product/**", "/admin-api/trade/**", "/admin-api/promotion/**")),
+            Map.entry("erp", List.of("/admin-api/erp/**")),
+            Map.entry("wms", List.of("/admin-api/wms/**")),
+            Map.entry("pms", List.of("/admin-api/pms/**")),
+            Map.entry("crm", List.of("/admin-api/crm/**")),
+            Map.entry("mes", List.of("/admin-api/mes/**")),
+            Map.entry("im", List.of("/admin-api/im/**")),
+            Map.entry("report", List.of("/admin-api/report/**")),
+            Map.entry("pay", List.of("/admin-api/pay/**")),
+            Map.entry("ai", List.of("/admin-api/ai/**")),
+            Map.entry("iot", List.of("/admin-api/iot/**")));
 
     /**
      * 归属菜单到业务模块。
