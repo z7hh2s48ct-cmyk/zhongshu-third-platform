@@ -16,7 +16,7 @@ public class ImGroupUpdateReqVO {
     @NotNull(message = "群编号不能为空")
     private Long id;
 
-    @Schema(description = "群名称", example = "芋道技术交流群")
+    @Schema(description = "群名称", example = "众墅之家技术交流群")
     @Size(max = 64, message = "群名称长度不能超过 64")
     private String name;
 

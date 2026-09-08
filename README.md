@@ -70,7 +70,16 @@ node --test scripts/verify-source-copy.test.mjs
 node scripts/verify-source-copy.mjs
 ```
 
-这是本次迁入快照的完整性门禁，不是未来二开后文件必须保持不变的要求。后续修改应通过 Git 差异和业务测试追踪，不得重新生成清单来掩盖未经审查的差异。
+这是 2026-09-08 迁入快照（`brand-rename-baseline` 标签及之前）的完整性门禁，不是未来二开后文件必须保持不变的要求。品牌改名批次（ZS-BRAND-002～005）落地后，该检查针对当前工作区必然出现差异，属预期；导入证据由标签与 `third_party/` 清单冻结保留，不得重新生成清单来掩盖未经审查的差异。当前工作区的命名检查入口见下节。
+
+## 品牌命名门禁
+
+```bash
+node --test scripts/brand/verify-brand-naming.test.mjs
+node scripts/brand/verify-brand-naming.mjs
+```
+
+ZS-BRAND-006 交付的品牌/代码命名残留门禁：扫描全部跟踪文件的文件名与内容（`cn.iocoder`、`yudao`、`youdao`、`芋道`、`unibest`、登记缩写 `yd-`），按 [scripts/brand/brand-naming-allowlist.json](scripts/brand/brand-naming-allowlist.json) 以"应改/必要保留/限期兼容"判定；限期兼容项到期未撤除即失败。故意恢复旧产品标题、旧 `cn.iocoder.yudao` import 或生成器默认包名时门禁失败；上游 LICENSE、署名注释与来源引用不误报。命名映射与例外依据见 [docs/06-品牌素材与命名映射](docs/06-品牌素材与命名映射.md)。
 
 ## 文档同步规则
 

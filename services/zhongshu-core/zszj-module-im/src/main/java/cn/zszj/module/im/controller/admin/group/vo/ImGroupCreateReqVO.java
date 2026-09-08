@@ -11,7 +11,7 @@ import java.util.List;
 @Data
 public class ImGroupCreateReqVO {
 
-    @Schema(description = "群名称", requiredMode = Schema.RequiredMode.REQUIRED, example = "芋道技术交流群")
+    @Schema(description = "群名称", requiredMode = Schema.RequiredMode.REQUIRED, example = "众墅之家技术交流群")
     @NotBlank(message = "群名称不能为空")
     @Size(max = 64, message = "群名称长度不能超过 64")
     private String name;

@@ -47,7 +47,7 @@ public class ImGroupMemberRespVO {
 
     // ========== 关联 AdminUser 的字段 ==========
 
-    @Schema(description = "用户昵称", example = "芋道")
+    @Schema(description = "用户昵称", example = "众墅之家")
     private String nickname;
 
     @Schema(description = "用户头像")

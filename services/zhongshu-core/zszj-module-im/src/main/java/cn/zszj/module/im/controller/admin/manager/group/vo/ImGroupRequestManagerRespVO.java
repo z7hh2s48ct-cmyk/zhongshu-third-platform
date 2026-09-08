@@ -15,7 +15,7 @@ public class ImGroupRequestManagerRespVO {
     @Schema(description = "群编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1024")
     private Long groupId;
 
-    @Schema(description = "群名称", example = "芋道技术交流群")
+    @Schema(description = "群名称", example = "众墅之家技术交流群")
     private String groupName;
 
     @Schema(description = "申请人 / 被邀请人用户编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "100")

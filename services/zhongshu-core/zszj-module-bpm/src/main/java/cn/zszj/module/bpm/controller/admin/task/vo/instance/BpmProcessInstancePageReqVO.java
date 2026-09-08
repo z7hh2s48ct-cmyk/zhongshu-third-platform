@@ -15,7 +15,7 @@ import static cn.zszj.framework.common.util.date.DateUtils.FORMAT_YEAR_MONTH_DAY
 @Data
 public class BpmProcessInstancePageReqVO extends PageParam {
 
-    @Schema(description = "流程名称", example = "芋道")
+    @Schema(description = "流程名称", example = "众墅之家")
     private String name;
 
     @Schema(description = "流程定义的标识", example = "2048")

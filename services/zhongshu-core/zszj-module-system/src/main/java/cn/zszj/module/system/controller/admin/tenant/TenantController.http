@@ -8,7 +8,7 @@ Authorization: Bearer {{token}}
 tenant-id: {{adminTenantId}}
 
 {
-  "name": "芋道",
+  "name": "众墅之家",
   "contactName": "芋艿",
   "contactMobile": "15601691300",
   "status": 0,

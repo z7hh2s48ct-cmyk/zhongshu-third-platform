@@ -1,0 +1,162 @@
+{
+  "comment": "ZS-BRAND-006 品牌命名残留门禁白名单。path 命中整文件放行；content 命中按具体匹配放行。category 仅限 必要保留/限期兼容；expires(YYYY-MM-DD) 到期未撤除即门禁失败。依据与撤除条件见 docs/06-品牌素材与命名映射.md 第 4 节。",
+  "entries": [
+    {
+      "path": "^reference/",
+      "category": "必要保留",
+      "reason": "隔离供体快照，原样保留是来源证据的一部分"
+    },
+    {
+      "path": "^third_party/",
+      "category": "必要保留",
+      "reason": "2026-09-08 导入基线清单/净化记录/历史测试汇总，证据冻结不重写"
+    },
+    {
+      "path": "^THIRD_PARTY_NOTICES\\.md$",
+      "category": "必要保留",
+      "reason": "第三方来源与许可证声明（上游项目展示名为声明内容的一部分）"
+    },
+    {
+      "path": "^services/zhongshu-core/sql/postgresql/upgrades/",
+      "category": "必要保留",
+      "reason": "存量库改名迁移脚本需按旧名定位待迁移数据，验证查询亦引用旧名"
+    },
+    {
+      "path": "^docs/04-",
+      "category": "必要保留",
+      "reason": "历史迁入报告不重写，其中的旧路径与旧名仅作历史记录"
+    },
+    {
+      "path": "^docs/0[1-6]-",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "治理/需求/决策/映射文档中登记并讨论旧名的正文（决策 D-03/D-04 记录、映射表本身）"
+    },
+    {
+      "path": "^\\.omx/",
+      "category": "必要保留",
+      "reason": "历史规划建议稿，README 引用的内部文档"
+    },
+    {
+      "path": "^scripts/brand/",
+      "category": "必要保留",
+      "reason": "命名检查与迁移工具自身包含旧名匹配串"
+    },
+    {
+      "path": "services/zhongshu-core/zszj-ui/",
+      "category": "必要保留",
+      "reason": "未启用的上游前端模板资产（docs/06 第 4.2 节）；实际摘取启用前须按映射适配"
+    },
+    {
+      "path": "services/zhongshu-core/zszj-module-infra/src/main/resources/codegen/",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "模板中的上游参考链接（MyBatis 插件文档等来源说明）",
+      "content": [
+        "iocoder\\.cn",
+        "芋艿"
+      ]
+    },
+    {
+      "path": "^(services/zhongshu-core|apps)/.*/《[^/]*》\\.md$",
+      "category": "必要保留",
+      "reason": "上游教程文档（书名号命名的上游入门教程），随源码资产保留"
+    },
+    {
+      "path": "^apps/zhongshu-miniapp/vite-plugins/",
+      "category": "必要保留",
+      "reason": "上游 unibest 官方 vite 插件及其文档，随模板资产保留"
+    },
+    {
+      "path": "\\.image/",
+      "category": "必要保留",
+      "reason": "上游架构/演示说明图素材，不进入产品运行界面（docs/06 第 4.3 节）"
+    },
+    {
+      "path": "services/zhongshu-core/\\.github/",
+      "category": "必要保留",
+      "reason": "上游 CI 工作流，产品仓库不使用；随源码资产保留"
+    },
+    {
+      "path": "^apps/zhongshu-miniapp/docs/",
+      "category": "必要保留",
+      "reason": "上游模板自带文档站与内部历史交接文档"
+    },
+    {
+      "path": "^apps/[^/]+/\\.(cursor|github|vscode)/",
+      "category": "必要保留",
+      "reason": "上游模板编辑器配置与 issue 模板，非产品运行内容"
+    },
+    {
+      "path": "^apps/[^/]+/README\\.md$",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "两端 README 的来源与上游说明章节",
+      "content": [
+        "yudao-ui-admin-vue3",
+        "yudao-ui-admin-uniapp",
+        "unibest",
+        "iocoder\\.cn",
+        "芋艿",
+        "YunaiV"
+      ]
+    },
+    {
+      "path": "apps/zhongshu-miniapp/package\\.json$",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "上游 unibest 元数据字段与仓库地址（docs/06 第 4.1 节：署名与来源元数据保留）",
+      "content": [
+        "unibest",
+        "feige996",
+        "yudaocode",
+        "1020103647"
+      ]
+    },
+    {
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "上游署名/参考链接/issue 引用（源码注释、包元数据、LICENSE 引用）",
+      "content": [
+        "gitee\\.com/yudaocode/",
+        "github\\.com/yudaocode/",
+        "github\\.com/YunaiV/",
+        "gitee\\.com/zhijiantianya/",
+        "github\\.com/yudaocode$",
+        "static\\.iocoder\\.cn/",
+        "doc\\.iocoder\\.cn",
+        "www\\.iocoder\\.cn",
+        "cloud\\.iocoder\\.cn",
+        "iocoder\\.cn/MyBatis",
+        "@iocoder\\.cn",
+        "doc\\.yudao",
+        " Created by 芋道源码",
+        "芋道源码",
+        "@芋艿",
+        "芋艿（YunaiV）",
+        "yuanma@zszj\\.example\\.com"
+      ]
+    },
+    {
+      "path": "^apps/zhongshu-miniapp/(src|env)/",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "unibest 上游模板源码的官方维护注释与上游 issue 引用（来源说明）",
+      "content": [
+        "unibest 官方维护",
+        "github\\.com/unibest-tech/",
+        "unibest 框架",
+        "貌似 unibest",
+        "unibest\\.tech"
+      ]
+    },
+    {
+      "scope": "content",
+      "category": "限期兼容",
+      "reason": "小程序组件/样式前缀 yd-* 为登记缩写（docs/06 第 4.3 节）；撤除条件：移动端 H5/微信构建门禁（ZS-CLIENT-005）可用后按批次替换为 zszj-* 并撤销本例外",
+      "content": [
+        "\\byd-[a-z]"
+      ]
+    }
+  ]
+}

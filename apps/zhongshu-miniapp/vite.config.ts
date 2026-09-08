@@ -30,7 +30,7 @@ import vitePluginEruda from './scripts/vite-plugin-eruda'
 import { createCopyNativeResourcesPlugin } from './vite-plugins/copy-native-resources'
 import syncManifestPlugin from './vite-plugins/sync-manifest-plugins'
 
-/** 芋道 UI 组件解析器：本地 @/components/zszj-ui/* 的组件 */
+/** 众墅之家 UI 组件解析器：本地 @/components/zszj-ui/* 的组件 */
 function ZszjUiResolver(): ComponentResolver {
   return {
     type: 'component',

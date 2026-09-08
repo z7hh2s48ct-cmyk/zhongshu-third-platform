@@ -28,7 +28,7 @@ public class ProjectReactor {
     private static final String GROUP_ID = "cn.zszj";
     private static final String ARTIFACT_ID = "zszj";
     private static final String PACKAGE_NAME = "cn.zszj";
-    private static final String TITLE = "芋道管理系统";
+    private static final String TITLE = "众墅之家管理系统";
 
     /**
      * 白名单文件，不进行重写，避免出问题

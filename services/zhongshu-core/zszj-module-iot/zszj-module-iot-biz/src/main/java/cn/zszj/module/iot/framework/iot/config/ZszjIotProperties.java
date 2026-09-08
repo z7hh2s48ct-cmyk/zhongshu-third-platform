@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 
 /**
- * 芋道 IoT 全局配置类
+ * 众墅之家 IoT 全局配置类
  *
  * @author 芋道源码
  */

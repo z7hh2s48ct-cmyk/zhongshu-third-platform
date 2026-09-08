@@ -77,7 +77,7 @@ public class WmsShipmentOrderRespVO {
 
     @Schema(description = "创建者", example = "1")
     private String creator;
-    @Schema(description = "创建者名称", example = "芋道")
+    @Schema(description = "创建者名称", example = "众墅之家")
     private String creatorName;
 
     @Schema(description = "更新时间", requiredMode = Schema.RequiredMode.REQUIRED)
@@ -85,7 +85,7 @@ public class WmsShipmentOrderRespVO {
 
     @Schema(description = "更新者", example = "1")
     private String updater;
-    @Schema(description = "更新者名称", example = "芋道")
+    @Schema(description = "更新者名称", example = "众墅之家")
     private String updaterName;
 
 }

@@ -46,7 +46,7 @@ public class ImFriendRequestRespVO {
 
     // ========== 下面是聚合字段，方便前端显示 ==========
 
-    @Schema(description = "发起方昵称（实时聚合自 AdminUser）", example = "芋道")
+    @Schema(description = "发起方昵称（实时聚合自 AdminUser）", example = "众墅之家")
     private String fromNickname;
 
     @Schema(description = "发起方头像（实时聚合自 AdminUser）")

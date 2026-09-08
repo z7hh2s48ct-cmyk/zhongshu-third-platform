@@ -64,7 +64,7 @@ public class PmsKnowledgeDocumentRespVO {
     @Schema(description = "创建人用户编号", example = "1")
     private Long creatorUserId;
 
-    @Schema(description = "创建人姓名", example = "芋道")
+    @Schema(description = "创建人姓名", example = "众墅之家")
     private String creatorUserName;
 
     @Schema(description = "当前用户是否已关注")
@@ -89,7 +89,7 @@ public class PmsKnowledgeDocumentRespVO {
         @Schema(description = "用户编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1")
         private Long id;
 
-        @Schema(description = "用户昵称", example = "芋道")
+        @Schema(description = "用户昵称", example = "众墅之家")
         private String nickname;
 
         @Schema(description = "用户头像")

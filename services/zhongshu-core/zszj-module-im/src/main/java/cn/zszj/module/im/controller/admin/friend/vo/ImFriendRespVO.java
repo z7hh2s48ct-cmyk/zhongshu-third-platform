@@ -52,7 +52,7 @@ public class ImFriendRespVO {
 
     // ========== 下面是聚合字段，方便前端显示 ==========
 
-    @Schema(description = "好友昵称（实时聚合自 AdminUser）", example = "芋道")
+    @Schema(description = "好友昵称（实时聚合自 AdminUser）", example = "众墅之家")
     private String nickname;
 
     @Schema(description = "好友昵称的拼音（小写无空格）", example = "zszj")

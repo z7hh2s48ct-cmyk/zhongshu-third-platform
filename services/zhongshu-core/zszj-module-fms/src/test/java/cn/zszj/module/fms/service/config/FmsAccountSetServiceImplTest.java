@@ -92,7 +92,7 @@ public class FmsAccountSetServiceImplTest extends BaseDbUnitTest {
         // mock 数据
         accountSetMapper.insert(buildAccountSetDO("WK001", false));
         // 准备参数
-        FmsAccountSetSaveReqVO reqVO = buildAccountSetSaveReqVO("WK001", "芋道科技有限公司");
+        FmsAccountSetSaveReqVO reqVO = buildAccountSetSaveReqVO("WK001", "众墅之家科技有限公司");
 
         // 调用，并断言异常
         assertServiceException(() -> accountSetService.createAccountSet(reqVO, randomLongId()),

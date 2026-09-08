@@ -116,7 +116,7 @@
 
 - H5：`http://127.0.0.1:9000`（评审期间 dev server 可能未在跑，`pnpm dev:h5` 即可）
 - 后端：`http://127.0.0.1:48081/admin-api`（**注意是实现说明书写的 48080，实际是 48081**），MySQL `127.0.0.1 ruoyi-vue-pro`
-- 账号：`admin` / `admin123`，`tenant-id: 1`；库里有多个已初始化账套（上海芋道…、FMS回归测试账套…）和 3 张 2026-08 凭证
+- 账号：`admin` / `admin123`，`tenant-id: 1`；库里有多个已初始化账套（上海众墅之家…、FMS回归测试账套…）和 3 张 2026-08 凭证
 - 小程序端：`dist/dev/mp-weixin` 是旧构建，需 `pnpm dev:mp` 重新编译 + 重新登录
 - 非 admin 角色注意：`system_role_menu` 里普通角色只授了「财务指标」一条 FMS 菜单
 

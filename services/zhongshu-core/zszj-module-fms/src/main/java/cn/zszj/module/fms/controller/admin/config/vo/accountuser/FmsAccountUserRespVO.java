@@ -10,7 +10,7 @@ public class FmsAccountUserRespVO {
     @Schema(description = "后台用户编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1024")
     private Long userId;
 
-    @Schema(description = "用户昵称", example = "芋道")
+    @Schema(description = "用户昵称", example = "众墅之家")
     private String nickname;
 
     @Schema(description = "部门名称", example = "财务部")
