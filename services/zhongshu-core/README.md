@@ -17,7 +17,8 @@
 ## 构建与运行
 
 ```bash
-# JDK 17 + Maven（版本基线以 docs 文档与 ZS-ENG-002 登记为准）
+# 工具链基线（ZS-ENG-002 / D-02）：JDK 17（enforcer 强制 [17,18)，其他版本明确失败）+ Maven ≥ 3.8
+# 2026-09-09 核验：当前开发机 PATH 未安装 java/mvn，构建验证需在满足基线的环境执行
 mvn clean package -DskipTests
 # 可执行产物
 zszj-server/target/zszj-server.jar

@@ -1,6 +1,7 @@
 ## AdoptOpenJDK 停止发布 OpenJDK 二进制，而 Eclipse Temurin 是它的延伸，提供更好的稳定性
 ## 感谢复旦核博士的建议！灰子哥，牛皮！
-FROM eclipse-temurin:21-jre
+## ZS-ENG-002：运行镜像与构建基线对齐 JDK 17（D-02 已确认 JDK 17 维护线，Maven enforcer 强制 [17,18)）
+FROM eclipse-temurin:17-jre
 
 ## 创建目录，并使用它作为工作目录
 RUN mkdir -p /zszj-server

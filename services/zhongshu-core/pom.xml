@@ -122,6 +122,33 @@
         </pluginManagement>
 
         <plugins>
+            <!-- ZS-ENG-002：强制 JDK 17 / Maven 3.8+ 构建基线（D-02 已确认 JDK 17 维护线），
+                 工具链不满足时构建明确失败，不依赖机器隐式版本 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-jdk17-baseline</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[17,18)</version>
+                                    <message>本底座固定 JDK 17 构建基线（D-02），请使用 JDK 17 构建。</message>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.8,)</version>
+                                    <message>本底座要求 Maven 3.8 及以上版本。</message>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- 统一 revision 版本 -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
