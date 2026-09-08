@@ -1,12 +1,11 @@
 {
-  "name": "unibest",
+  "name": "zszj-miniapp",
   "type": "module",
   "version": "4.1.0",
   "unibest-version": "4.1.0",
-  "yudao-version": "2026.07.0-snapshot",
   "unibest-update-time": "2025-11-07",
   "packageManager": "pnpm@10.10.0",
-  "description": "unibest - 最好的 uniapp 开发模板",
+  "description": "众墅之家 AI 赋能平台移动端（基于 uni-app，源码迁自上游 zszj-ui-admin-uniapp/unibest 模板）",
   "generate-time": "用户创建项目时生成",
   "author": {
     "name": "feige996",
@@ -202,5 +201,6 @@
   },
   "lint-staged": {
     "*.{js,cjs,mjs,jsx,cjsx,mjsx,ts,cts,mts,tsx,ctsx,mtsx,vue,json,json5,jsonc,css,scss,less,pcss,postcss,html,htm,yaml,yml,toml}": "eslint --fix --cache --cache-strategy content --cache-location node_modules/.cache/eslint/.eslintcache"
-  }
+  },
+  "upstream-version": "2026.07.0-snapshot"
 }

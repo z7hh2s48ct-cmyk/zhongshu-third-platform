@@ -18,7 +18,7 @@
 
 <script lang="ts" setup>
 import type { MailTemplate } from '@/api/system/mail/template'
-import type { YdFormPickerExpose } from '@/components/yudao-ui'
+import type { YdFormPickerExpose } from '@/components/zszj-ui'
 import { onMounted, ref } from 'vue'
 import { getSimpleMailTemplateList } from '@/api/system/mail/template'
 

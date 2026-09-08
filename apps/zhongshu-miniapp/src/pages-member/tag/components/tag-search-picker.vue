@@ -14,7 +14,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { MemberTag } from '@/api/member/tag'
 import { onMounted, ref } from 'vue'
 import { getSimpleMemberTagList } from '@/api/member/tag'

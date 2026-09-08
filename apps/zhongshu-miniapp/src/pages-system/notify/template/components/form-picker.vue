@@ -18,7 +18,7 @@
 
 <script lang="ts" setup>
 import type { NotifyTemplate } from '@/api/system/notify/template'
-import type { YdFormPickerExpose } from '@/components/yudao-ui'
+import type { YdFormPickerExpose } from '@/components/zszj-ui'
 import { onMounted, ref } from 'vue'
 import { getSimpleNotifyTemplateList } from '@/api/system/notify/template'
 

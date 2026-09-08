@@ -4,7 +4,7 @@ import { tabBar } from './src/tabbar/config'
 export default defineUniPages({
   globalStyle: {
     navigationStyle: 'default',
-    navigationBarTitleText: '芋道管理系统',
+    navigationBarTitleText: '众墅之家',
     navigationBarBackgroundColor: '#f8f8f8',
     navigationBarTextStyle: 'black',
     backgroundColor: '#FFFFFF',
@@ -13,7 +13,7 @@ export default defineUniPages({
     autoscan: true,
     custom: {
       '^fg-(.*)': '@/components/fg-$1/fg-$1.vue',
-      '^yd-(.*)': '@/components/yudao-ui/yd-$1/yd-$1.vue',
+      '^yd-(.*)': '@/components/zszj-ui/yd-$1/yd-$1.vue',
       '^wd-(.*)': '@wot-ui/ui/components/wd-$1/wd-$1.vue',
       '^(?!z-paging-refresh|z-paging-load-more)z-paging(.*)':
         'z-paging/components/z-paging$1/z-paging$1.vue',

@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { AlertConfig } from '@/api/iot/alert/config'
 import { onMounted, ref } from 'vue'
 import { getSimpleAlertConfigList } from '@/api/iot/alert/config'

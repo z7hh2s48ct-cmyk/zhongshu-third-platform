@@ -73,7 +73,7 @@
 import type { FormInstance } from '@wot-ui/ui/components/wd-form/types'
 import type { Menu } from '@/api/system/menu'
 import type { TenantPackage } from '@/api/system/tenant/package'
-import type YdTreeSelect from '@/components/yudao-ui/yd-tree-select/yd-tree-select.vue'
+import type YdTreeSelect from '@/components/zszj-ui/yd-tree-select/yd-tree-select.vue'
 import { useToast } from '@wot-ui/ui/components/wd-toast'
 import { computed, onMounted, ref } from 'vue'
 import { getSimpleMenuList } from '@/api/system/menu'

@@ -14,7 +14,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { ImManagerChannelMaterialVO } from '@/api/im/manager/channel/material'
 import { ref, watch } from 'vue'
 import { getSimpleManagerChannelMaterialList } from '@/api/im/manager/channel/material'

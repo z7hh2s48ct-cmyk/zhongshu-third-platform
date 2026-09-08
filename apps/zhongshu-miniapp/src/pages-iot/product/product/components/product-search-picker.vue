@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { Product } from '@/api/iot/product/product'
 import { ref, watch } from 'vue'
 import { getSimpleProductList } from '@/api/iot/product/product'

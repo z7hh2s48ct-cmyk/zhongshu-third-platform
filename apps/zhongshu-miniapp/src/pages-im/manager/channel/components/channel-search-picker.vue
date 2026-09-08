@@ -13,7 +13,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { ImManagerChannelVO } from '@/api/im/manager/channel'
 import { onMounted, ref } from 'vue'
 import { getSimpleChannelList } from '@/api/im/manager/channel'

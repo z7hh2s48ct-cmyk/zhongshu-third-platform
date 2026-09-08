@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { DictType } from '@/api/system/dict/type'
 import { onMounted, ref } from 'vue'
 import { getSimpleDictTypeList } from '@/api/system/dict/type'

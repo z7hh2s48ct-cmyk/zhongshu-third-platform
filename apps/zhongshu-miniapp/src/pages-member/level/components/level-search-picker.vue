@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { MemberLevel } from '@/api/member/level'
 import { onMounted, ref } from 'vue'
 import { getSimpleMemberLevelList } from '@/api/member/level'

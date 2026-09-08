@@ -40,7 +40,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import { computed, reactive, ref } from 'vue'
 import CategorySearchPicker from '@/pages-bpm/category/components/category-search-picker.vue'
 import ProcessDefinitionSearchPicker from '@/pages-bpm/definition/components/process-definition-search-picker.vue'

@@ -62,7 +62,7 @@ function loadEnvFile(mode = 'production') {
 function readPackageVersion() {
   try {
     const pkg = readJson(path.resolve(ROOT_DIR, 'package.json'))
-    return pkg['yudao-version'] || pkg.version || '1.0.0'
+    return pkg['zszj-version'] || pkg.version || '1.0.0'
   } catch {
     return '1.0.0'
   }

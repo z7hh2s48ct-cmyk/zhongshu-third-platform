@@ -1,4 +1,4 @@
-// 客服实时链路：复用 yudao 内置 /infra/ws 通道
+// 客服实时链路：复用 zszj 内置 /infra/ws 通道
 // 处理两类帧：kefu_message_type（新消息）、kefu_message_read_status_change（管理员已读回执）
 // 收到后广播 mall:kefu:message / mall:kefu:read 给客服页，由页面更新消息与会话列表
 

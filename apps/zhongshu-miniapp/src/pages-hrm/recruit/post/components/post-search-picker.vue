@@ -14,7 +14,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { RecruitPost } from '@/api/hrm/recruit/post'
 import { onMounted, ref } from 'vue'
 import { getRecruitPostSimpleList } from '@/api/hrm/recruit/post'

@@ -57,7 +57,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import { computed, reactive, ref } from 'vue'
 import ItemSearchPicker from '@/pages-mes/md/item/components/item-search-picker.vue'
 import WarehouseSearchPicker from '@/pages-mes/wm/warehouse/components/warehouse-search-picker.vue'

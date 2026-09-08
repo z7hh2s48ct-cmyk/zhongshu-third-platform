@@ -18,7 +18,7 @@
 
 <script lang="ts" setup>
 import type { SmsTemplate } from '@/api/system/sms/template'
-import type { YdFormPickerExpose } from '@/components/yudao-ui'
+import type { YdFormPickerExpose } from '@/components/zszj-ui'
 import { onMounted, ref } from 'vue'
 import { getSimpleSmsTemplateList } from '@/api/system/sms/template'
 

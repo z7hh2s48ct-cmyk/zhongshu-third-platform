@@ -21,22 +21,22 @@ export interface FaqCategory {
 export const faqList: FaqCategory[] = [
   {
     icon: 'github-filled',
-    title: '芋道问题',
+    title: '常见问题',
     childList: [
       {
-        title: '芋道开源吗？',
+        title: '众墅之家是什么平台？',
         content: '开源，基于 MIT 协议，可免费商用。',
       },
       {
-        title: '芋道可以商用吗？',
-        content: '可以，芋道采用 MIT 开源协议，允许商业使用。',
+        title: '众墅之家可以商用吗？',
+        content: '可以，平台底座采用 MIT 开源协议，允许商业使用。',
       },
       {
-        title: '芋道官网地址多少？',
+        title: '众墅之家官网地址多少？',
         content: 'https://www.iocoder.cn',
       },
       {
-        title: '芋道文档地址多少？',
+        title: '众墅之家文档地址多少？',
         content: 'https://doc.iocoder.cn',
       },
     ],

@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { Warehouse } from '@/api/wms/md/warehouse'
 import { onMounted, ref } from 'vue'
 import { getSimpleWarehouseList } from '@/api/wms/md/warehouse'

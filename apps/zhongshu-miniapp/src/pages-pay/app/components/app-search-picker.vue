@@ -13,7 +13,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { PayApp } from '@/api/pay/app'
 import { onMounted, ref } from 'vue'
 import { getPayAppList } from '@/api/pay/app'

@@ -13,7 +13,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { DeliveryExpress } from '@/api/mall/trade/delivery/express'
 import { onMounted, ref } from 'vue'
 import { getSimpleDeliveryExpressList } from '@/api/mall/trade/delivery/express'

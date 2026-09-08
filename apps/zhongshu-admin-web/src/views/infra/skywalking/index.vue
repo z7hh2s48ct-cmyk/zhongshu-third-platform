@@ -11,7 +11,7 @@ import * as ConfigApi from '@/api/infra/config'
 defineOptions({ name: 'InfraSkyWalking' })
 
 const loading = ref(true) // 是否加载中
-const src = ref('http://skywalking.shop.iocoder.cn')
+const src = ref('http://skywalking.zszj.example.com')
 
 /** 初始化 */
 onMounted(async () => {

@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { DeviceGroup } from '@/api/iot/device/group'
 import { onMounted, ref } from 'vue'
 import { getSimpleDeviceGroupList } from '@/api/iot/device/group'

@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { Category } from '@/api/bpm/category'
 import { onMounted, ref } from 'vue'
 import { getCategorySimpleList } from '@/api/bpm/category'

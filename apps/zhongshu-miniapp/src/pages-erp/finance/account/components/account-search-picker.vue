@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { YdSearchPickerExpose } from '@/components/yudao-ui'
+import type { YdSearchPickerExpose } from '@/components/zszj-ui'
 import type { Account } from '@/api/erp/finance/account'
 import { onMounted, ref } from 'vue'
 import { getAccountSimpleList } from '@/api/erp/finance/account'

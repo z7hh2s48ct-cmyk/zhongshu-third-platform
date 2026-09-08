@@ -30,8 +30,8 @@ import vitePluginEruda from './scripts/vite-plugin-eruda'
 import { createCopyNativeResourcesPlugin } from './vite-plugins/copy-native-resources'
 import syncManifestPlugin from './vite-plugins/sync-manifest-plugins'
 
-/** 芋道 UI 组件解析器：本地 @/components/yudao-ui/* 的组件 */
-function YudaoUiResolver(): ComponentResolver {
+/** 芋道 UI 组件解析器：本地 @/components/zszj-ui/* 的组件 */
+function ZszjUiResolver(): ComponentResolver {
   return {
     type: 'component',
     resolve: (name: string) => {
@@ -39,7 +39,7 @@ function YudaoUiResolver(): ComponentResolver {
         const compName = kebabCase(name)
         return {
           name,
-          from: `@/components/yudao-ui/${compName}/${compName}.vue`,
+          from: `@/components/zszj-ui/${compName}/${compName}.vue`,
         }
       }
     },
@@ -91,7 +91,7 @@ export default defineConfig(({ command, mode }) => {
       UniPlatform(),
       UniManifest(),
       UniComponents({ // 仅自动导入本地组件；Wot UI 与 z-paging 由 pages.config.ts 的 easycom 解析
-        resolvers: [YudaoUiResolver()],
+        resolvers: [ZszjUiResolver()],
         extensions: ['vue'],
         deep: true, // 是否递归扫描子目录，
         directoryAsNamespace: false, // 是否把目录名作为命名空间前缀，true 时组件名为 目录名+组件名，
