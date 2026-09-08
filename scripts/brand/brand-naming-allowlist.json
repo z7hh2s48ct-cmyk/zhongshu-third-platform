@@ -157,6 +157,20 @@
       "content": [
         "\\byd-[a-z]"
       ]
+    },
+    {
+      "path": "^README.md$",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "品牌门禁说明中引用的检测模式名（反引号内为模式字面量，非残留）",
+      "content": [
+        "`cn.iocoder`",
+        "`yudao`",
+        "`youdao`",
+        "`芋道`",
+        "`unibest`",
+        "`yd-`"
+      ]
     }
   ]
 }
