@@ -21,11 +21,11 @@ const stripComments = (t) => t.replace(/<!--[\s\S]*?-->/g, '');
 const moduleArtifacts = (t) => [...stripComments(t).matchAll(/<artifactId>(zszj-module-[a-z-]+)<\/artifactId>/g)].map((m) => m[1].replace('zszj-module-', ''));
 
 // 解析白名单类
-const whitelistSrc = readFileSync(rel('zszj-server/src/main/java/cn/zszj/server/ModuleWhitelist.java'), 'utf8');
+const whitelistSrc = readFileSync(rel('zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/catalog/ModuleCatalog.java'), 'utf8');
 const enabledMatch = whitelistSrc.match(/ENABLED_MODULES = List\.of\(([^)]*)\)/);
 if (!enabledMatch) issues.push('无法解析 ModuleWhitelist.ENABLED_MODULES');
 const enabled = enabledMatch ? [...enabledMatch[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]) : [];
-const disabled = [...whitelistSrc.matchAll(/prefixes\.put\("([a-z-]+)", List\.of\(([^)]*)\)\)/g)].map((m) => ({
+const disabled = [...whitelistSrc.matchAll(/"([a-z-]+)", List\.of\(([^)]*)\)\)/g)].map((m) => ({
   module: m[1],
   prefixes: [...m[2].matchAll(/"([^"]+)"/g)].map((x) => x[1]),
 }));

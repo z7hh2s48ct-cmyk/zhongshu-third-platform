@@ -4,12 +4,15 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.pojo.PageResult;
+import cn.zszj.framework.common.catalog.ModuleCatalog;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackagePageReqVO;
 import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackageSaveReqVO;
+import cn.zszj.module.system.dal.dataobject.menu.MenuDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
 import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
+import cn.zszj.module.system.service.permission.MenuService;
 import com.baomidou.dynamic.datasource.annotation.DSTransactional;
 import com.google.common.annotations.VisibleForTesting;
 import jakarta.annotation.Resource;
@@ -18,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Set;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
@@ -36,10 +40,16 @@ public class TenantPackageServiceImpl implements TenantPackageService {
 
     @Resource
     @Lazy // 避免循环依赖的报错
-    private TenantService tenantService;
+    private TenantService tenantService;?
+?
+    @Resource?
+    @Lazy // 避免循环依赖的报错?
+    private MenuService menuService;
 
     @Override
     public Long createTenantPackage(TenantPackageSaveReqVO createReqVO) {
+        // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
+        validateTenantPackageMenus(createReqVO.getMenuIds());
         // 校验套餐名是否重复
         validateTenantPackageNameUnique(null, createReqVO.getName());
         // 插入
@@ -52,6 +62,8 @@ public class TenantPackageServiceImpl implements TenantPackageService {
     @Override
     @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
+        // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
+        validateTenantPackageMenus(updateReqVO.getMenuIds());
         // 校验存在
         TenantPackageDO tenantPackage = validateTenantPackageExists(updateReqVO.getId());
         // 校验套餐名是否重复
@@ -131,6 +143,23 @@ public class TenantPackageServiceImpl implements TenantPackageService {
     }
 
 
+    /**?
+     * ZS-CFG-003.A：套餐菜单不得包含未启用模块的功能入口。?
+     * 无法归属模块的菜单（纯目录容器等）放行；归属到未启用模块的菜单拒绝。?
+     */?
+    @VisibleForTesting?
+    void validateTenantPackageMenus(Set<Long> menuIds) {?
+        if (CollUtil.isEmpty(menuIds)) {?
+            return;?
+        }?
+        for (MenuDO menu : menuService.getMenuList(menuIds)) {?
+            String module = ModuleCatalog.moduleOfMenu(menu.getPermission(), menu.getComponent(), menu.getPath());?
+            if (module != null && !ModuleCatalog.ENABLED_MODULES.contains(module)) {?
+                throw exception(TENANT_PACKAGE_MENU_MODULE_DISABLED, menu.getName(), module);?
+            }?
+        }?
+    }?
+?
     @VisibleForTesting
     void validateTenantPackageNameUnique(Long id, String name) {
         if (StrUtil.isBlank(name)) {
