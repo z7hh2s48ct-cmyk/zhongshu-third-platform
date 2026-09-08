@@ -37,7 +37,7 @@ public interface JobLogMapper extends BaseMapperX<JobLogDO> {
      * @param limit      删除条数，防止一次删除太多
      * @return 删除条数
      */
-    @Delete("DELETE FROM infra_job_log WHERE create_time < #{createTime} LIMIT #{limit}")
+    @Delete("DELETE FROM infra_job_log WHERE id IN (SELECT id FROM infra_job_log WHERE create_time < #{createTime} LIMIT #{limit})")
     Integer deleteByCreateTimeLt(@Param("createTime") LocalDateTime createTime, @Param("limit") Integer limit);
 
 }

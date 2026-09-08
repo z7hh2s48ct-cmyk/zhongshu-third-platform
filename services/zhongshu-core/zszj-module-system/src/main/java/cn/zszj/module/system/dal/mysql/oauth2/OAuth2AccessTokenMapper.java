@@ -46,7 +46,7 @@ public interface OAuth2AccessTokenMapper extends BaseMapperX<OAuth2AccessTokenDO
      * @param limit       删除条数，防止一次删除太多
      * @return 删除条数
      */
-    @Delete("DELETE FROM system_oauth2_access_token WHERE expires_time < #{expiresTime} LIMIT #{limit}")
+    @Delete("DELETE FROM system_oauth2_access_token WHERE id IN (SELECT id FROM system_oauth2_access_token WHERE expires_time < #{expiresTime} LIMIT #{limit})")
     Integer deleteByExpiresTimeLt(@Param("expiresTime") LocalDateTime expiresTime, @Param("limit") Integer limit);
 
 }
