@@ -37,3 +37,14 @@
 - ZS-ENG-005：actuator/Spring Boot Admin 端点暴露白名单（local 的 `include: '*'` 收紧）。
 - ZS-ENG-006：Quartz `auto-startup` 与任务启停边界盘点。
 - ZS-CFG-001.A：秘密扫描工具与模板扫描门禁（承接本合同的机器化检查）。
+
+## 配置分类（ZS-CFG-001.A）
+
+| 分类 | 判定 | 存放 | 下发/展示 |
+|---|---|---|---|
+| 秘密 | 口令、密钥、token、商户凭据 | 仅环境变量/批准秘密存储，绝不入版本库与 infra_config 表 | 接口/日志/导出一律脱敏（ZS-CFG-001.B） |
+| 敏感 | 内部地址、账号名、开关组合 | 部署模板经环境注入；入库参数须标注敏感级 | 详情/导出需管理权限并脱敏 |
+| 普通 | 业务可调参数（如缓存时长） | infra_config 表可入库 | 经 visible 控制读取（CFG-001.B 约束写权限） |
+
+秘密扫描门禁（仓库根目录运行）：`node scripts/cfg/verify-config-secrets.mjs`——秘密类键只允许空值/占位符；
+必填项必须为无默认值占位符；拦截 RSA/PEM 块、超长 Base64、长十六进制串。
