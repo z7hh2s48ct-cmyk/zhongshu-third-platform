@@ -1,0 +1,13 @@
+[
+  { "file": "src/views/ai/chat/index/components/conversation/ConversationList.vue", "line": 289, "code": "TS2304", "message": "Cannot find name 'ElMessageBox'." },
+  { "file": "src/views/ai/chat/index/components/conversation/ConversationList.vue", "line": 334, "code": "TS2304", "message": "Cannot find name 'ElMessage'." },
+  { "file": "src/views/bpm/oa/leave/index.vue", "line": 241, "code": "TS2304", "message": "Cannot find name 'ElMessageBox'." },
+  { "file": "src/views/crm/statistics/funnel/index.vue", "line": 52, "code": "TS2322", "message": "Type 'number | undefined' is not assignable to type 'EpPropMergeType<(BooleanConstructor | ObjectConstructor | NumberConstructor | StringConstructor)[], unknown, unknown>'." },
+  { "file": "src/views/fms/report/components/FmsReportFormulaForm.vue", "line": 136, "code": "TS2345", "message": "Argument of type 'number' is not assignable to parameter of type '0 | 1 | 2'." },
+  { "file": "src/views/fms/report/components/FmsReportFormulaForm.vue", "line": 143, "code": "TS2345", "message": "Argument of type 'number' is not assignable to parameter of type '5 | 6 | 7'." },
+  { "file": "src/views/iot/alert/record/index.vue", "line": 279, "code": "TS2304", "message": "Cannot find name 'ElMessageBox'." },
+  { "file": "src/views/mes/wm/barcode/components/PrinterLabel.vue", "line": 20, "code": "TS2304", "message": "Cannot find name 'ElMessage'." },
+  { "file": "src/views/mes/wm/barcode/config/BarcodeConfigForm.vue", "line": 161, "code": "TS2304", "message": "Cannot find name 'ElMessage'." },
+  { "file": "src/views/mes/wm/warehouse/location/LocationForm.vue", "line": 237, "code": "TS2304", "message": "Cannot find name 'ElMessageBox'." },
+  { "file": "src/views/mes/wm/warehouse/location/LocationForm.vue", "line": 248, "code": "TS2304", "message": "Cannot find name 'ElMessageBox'." }
+]
