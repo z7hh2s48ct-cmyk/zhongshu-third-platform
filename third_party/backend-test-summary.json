@@ -1,0 +1,679 @@
+{
+  "date": "2026-09-08",
+  "jdk": "17.0.19",
+  "maven": "3.9.16",
+  "command": "mvn -o -B -ntp test",
+  "scope": "Default 21-module System/Infra reactor; upstream H2/jedismock tests, not PostgreSQL or provider integration",
+  "totals": {
+    "tests": 785,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 18
+  },
+  "reports": [
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-common/target/surefire-reports/TEST-cn.iocoder.yudao.framework.common.util.collection.CollectionUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.common.util.collection.CollectionUtilsTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-common/target/surefire-reports/TEST-cn.iocoder.yudao.framework.common.util.date.LocalDateTimeUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.common.util.date.LocalDateTimeUtilsTest",
+      "tests": 16,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-common/target/surefire-reports/TEST-cn.iocoder.yudao.framework.common.util.http.HttpUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.common.util.http.HttpUtilsTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-data-permission/target/surefire-reports/TEST-cn.iocoder.yudao.framework.datapermission.core.aop.DataPermissionAnnotationInterceptorTest.xml",
+      "name": "cn.iocoder.yudao.framework.datapermission.core.aop.DataPermissionAnnotationInterceptorTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-data-permission/target/surefire-reports/TEST-cn.iocoder.yudao.framework.datapermission.core.aop.DataPermissionContextHolderTest.xml",
+      "name": "cn.iocoder.yudao.framework.datapermission.core.aop.DataPermissionContextHolderTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-data-permission/target/surefire-reports/TEST-cn.iocoder.yudao.framework.datapermission.core.db.DataPermissionRuleHandlerTest.xml",
+      "name": "cn.iocoder.yudao.framework.datapermission.core.db.DataPermissionRuleHandlerTest",
+      "tests": 23,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-data-permission/target/surefire-reports/TEST-cn.iocoder.yudao.framework.datapermission.core.rule.DataPermissionRuleFactoryImplTest.xml",
+      "name": "cn.iocoder.yudao.framework.datapermission.core.rule.DataPermissionRuleFactoryImplTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-data-permission/target/surefire-reports/TEST-cn.iocoder.yudao.framework.datapermission.core.rule.dept.DeptDataPermissionRuleTest.xml",
+      "name": "cn.iocoder.yudao.framework.datapermission.core.rule.dept.DeptDataPermissionRuleTest",
+      "tests": 8,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-data-permission/target/surefire-reports/TEST-cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtilsTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-ip/target/surefire-reports/TEST-cn.iocoder.yudao.framework.ip.core.utils.AreaUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.ip.core.utils.AreaUtilsTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-biz-ip/target/surefire-reports/TEST-cn.iocoder.yudao.framework.ip.core.utils.IPUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.ip.core.utils.IPUtilsTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-excel/target/surefire-reports/TEST-cn.iocoder.yudao.framework.dict.core.util.DictFrameworkUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.dict.core.util.DictFrameworkUtilsTest",
+      "tests": 2,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-excel/target/surefire-reports/TEST-cn.iocoder.yudao.framework.excel.core.convert.MultiDictConvertTest.xml",
+      "name": "cn.iocoder.yudao.framework.excel.core.convert.MultiDictConvertTest",
+      "tests": 18,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-excel/target/surefire-reports/TEST-cn.iocoder.yudao.framework.excel.core.util.ExcelUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.excel.core.util.ExcelUtilsTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-mybatis/target/surefire-reports/TEST-cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperXTest.xml",
+      "name": "cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperXTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-mybatis/target/surefire-reports/TEST-cn.iocoder.yudao.framework.mybatis.core.query.QueryWrapperXTest.xml",
+      "name": "cn.iocoder.yudao.framework.mybatis.core.query.QueryWrapperXTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-mybatis/target/surefire-reports/TEST-cn.iocoder.yudao.framework.mybatis.core.util.MyBatisUtilsTest.xml",
+      "name": "cn.iocoder.yudao.framework.mybatis.core.util.MyBatisUtilsTest",
+      "tests": 11,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-protection/target/surefire-reports/TEST-cn.iocoder.yudao.framework.signature.core.ApiSignatureTest.xml",
+      "name": "cn.iocoder.yudao.framework.signature.core.ApiSignatureTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-web/target/surefire-reports/TEST-cn.iocoder.yudao.framework.desensitize.core.DesensitizeTest.xml",
+      "name": "cn.iocoder.yudao.framework.desensitize.core.DesensitizeTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-framework/yudao-spring-boot-starter-web/target/surefire-reports/TEST-cn.iocoder.yudao.framework.encrypt.ApiEncryptTest.xml",
+      "name": "cn.iocoder.yudao.framework.encrypt.ApiEncryptTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.framework.file.core.ftp.FtpFileClientTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.framework.file.core.ftp.FtpFileClientTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 1
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.framework.file.core.local.LocalFileClientTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.framework.file.core.local.LocalFileClientTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 2
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.framework.file.core.s3.S3FileClientTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.framework.file.core.s3.S3FileClientTest",
+      "tests": 11,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 6
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.framework.file.core.sftp.SftpFileClientTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.framework.file.core.sftp.SftpFileClientTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 1
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.framework.file.core.utils.FileTypeUtilsTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.framework.file.core.utils.FileTypeUtilsTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.CodegenServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.CodegenServiceImplTest",
+      "tests": 20,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenBuilderTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenBuilderTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineUniappTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineUniappTest",
+      "tests": 17,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5AntdGeneralTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5AntdGeneralTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5AntdSchemaTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5AntdSchemaTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5AntdvNextTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5AntdvNextTest",
+      "tests": 11,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5EleGeneralTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5EleGeneralTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5EleSchemaTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVben5EleSchemaTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVue2Test.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVue2Test",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVue3Test.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngineVue3Test",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.config.ConfigServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.config.ConfigServiceImplTest",
+      "tests": 12,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.db.DataSourceConfigServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.db.DataSourceConfigServiceImplTest",
+      "tests": 9,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.db.DatabaseTableServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.db.DatabaseTableServiceImplTest",
+      "tests": 2,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.file.FileConfigServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.file.FileConfigServiceImplTest",
+      "tests": 13,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.file.FileServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.file.FileServiceImplTest",
+      "tests": 24,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.job.JobLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.job.JobLogServiceImplTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.job.JobServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.job.JobServiceImplTest",
+      "tests": 14,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.logger.ApiAccessLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.logger.ApiAccessLogServiceImplTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-infra/target/surefire-reports/TEST-cn.iocoder.yudao.module.infra.service.logger.ApiErrorLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.infra.service.logger.ApiErrorLogServiceImplTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.controller.admin.oauth2.OAuth2OpenControllerTest.xml",
+      "name": "cn.iocoder.yudao.module.system.controller.admin.oauth2.OAuth2OpenControllerTest",
+      "tests": 12,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.framework.sms.core.client.impl.AliyunSmsClientTest.xml",
+      "name": "cn.iocoder.yudao.module.system.framework.sms.core.client.impl.AliyunSmsClientTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.framework.sms.core.client.impl.HuaweiSmsClientTest.xml",
+      "name": "cn.iocoder.yudao.module.system.framework.sms.core.client.impl.HuaweiSmsClientTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.framework.sms.core.client.impl.QiniuSmsClientTest.xml",
+      "name": "cn.iocoder.yudao.module.system.framework.sms.core.client.impl.QiniuSmsClientTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.framework.sms.core.client.impl.SmsClientTests.xml",
+      "name": "cn.iocoder.yudao.module.system.framework.sms.core.client.impl.SmsClientTests",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 7
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.framework.sms.core.client.impl.TencentSmsClientTest.xml",
+      "name": "cn.iocoder.yudao.module.system.framework.sms.core.client.impl.TencentSmsClientTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.auth.AdminAuthServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.auth.AdminAuthServiceImplTest",
+      "tests": 17,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.dept.DeptServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.dept.DeptServiceImplTest",
+      "tests": 17,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.dept.PostServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.dept.PostServiceImplTest",
+      "tests": 13,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.dict.DictDataServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.dict.DictDataServiceImplTest",
+      "tests": 20,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.dict.DictTypeServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.dict.DictTypeServiceImplTest",
+      "tests": 16,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.logger.LoginLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.logger.LoginLogServiceImplTest",
+      "tests": 2,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.logger.OperateLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.logger.OperateLogServiceImplTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.mail.MailAccountServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.mail.MailAccountServiceImplTest",
+      "tests": 9,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.mail.MailLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.mail.MailLogServiceImplTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.mail.MailSendServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.mail.MailSendServiceImplTest",
+      "tests": 9,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 1
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.mail.MailTemplateServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.mail.MailTemplateServiceImplTest",
+      "tests": 22,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.notice.NoticeServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.notice.NoticeServiceImplTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.notify.NotifyMessageServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.notify.NotifyMessageServiceImplTest",
+      "tests": 8,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.notify.NotifySendServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.notify.NotifySendServiceImplTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.notify.NotifyTemplateServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.notify.NotifyTemplateServiceImplTest",
+      "tests": 10,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.oauth2.OAuth2ApproveServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.oauth2.OAuth2ApproveServiceImplTest",
+      "tests": 9,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.oauth2.OAuth2ClientServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.oauth2.OAuth2ClientServiceImplTest",
+      "tests": 11,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.oauth2.OAuth2CodeServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.oauth2.OAuth2CodeServiceImplTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.oauth2.OAuth2GrantServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.oauth2.OAuth2GrantServiceImplTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.oauth2.OAuth2TokenServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.oauth2.OAuth2TokenServiceImplTest",
+      "tests": 13,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.permission.MenuServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.permission.MenuServiceImplTest",
+      "tests": 18,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.permission.PermissionServiceTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.permission.PermissionServiceTest",
+      "tests": 24,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.permission.RoleServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.permission.RoleServiceImplTest",
+      "tests": 22,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.sms.SmsChannelServiceTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.sms.SmsChannelServiceTest",
+      "tests": 11,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.sms.SmsCodeServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.sms.SmsCodeServiceImplTest",
+      "tests": 8,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.sms.SmsLogServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.sms.SmsLogServiceImplTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.sms.SmsSendServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.sms.SmsSendServiceImplTest",
+      "tests": 10,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.sms.SmsTemplateServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.sms.SmsTemplateServiceImplTest",
+      "tests": 18,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.social.SocialClientServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.social.SocialClientServiceImplTest",
+      "tests": 26,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.social.SocialUserServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.social.SocialUserServiceImplTest",
+      "tests": 11,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.tenant.TenantPackageServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.tenant.TenantPackageServiceImplTest",
+      "tests": 12,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.tenant.TenantServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.tenant.TenantServiceImplTest",
+      "tests": 23,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "path": "services/zhongshu-core/yudao-module-system/target/surefire-reports/TEST-cn.iocoder.yudao.module.system.service.user.AdminUserServiceImplTest.xml",
+      "name": "cn.iocoder.yudao.module.system.service.user.AdminUserServiceImplTest",
+      "tests": 36,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    }
+  ]
+}
