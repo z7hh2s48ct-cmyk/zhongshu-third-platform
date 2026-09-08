@@ -22,7 +22,7 @@
 ## 残留与一致性检查
 
 - `src/main/resources/codegen/**` 与 `src/test/resources/codegen/**` 不得出现 `cn.iocoder`、`yudao`、`Yudao`、`YUDAO`、`youdao`、`众墅之家`；上游参考链接域名（iocoder.cn 文档站）按 docs/06 第 4.1 节保留；
-- 测试夹具（`table/*.json` 示例值）与断言目录（`*_general_*` 等）的示例字符串已统一中性化，修改夹具时必须同步同批更新对应断言，保持 CodegenEngineTest 口径一致；
+- 测试夹具与断言的示例域与上游保持一致（`www.iocoder.cn` 属来源引用，按 docs/06 第 4.1 节保留并在门禁白名单登记）；模板、夹具、断言三者必须同批修改，保持 CodegenEngineTest 口径一致；
 - 残留扫描入口：`node scripts/brand/verify-brand-naming.mjs`（ZS-BRAND-006）。
 
 ## 待验证项（B02）

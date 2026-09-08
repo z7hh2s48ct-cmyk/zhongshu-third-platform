@@ -179,7 +179,7 @@ public class FileConfigServiceImplTest extends BaseDbUnitTest {
     @Test
     public void testGetFileConfigPage() {
         // mock 数据
-        FileConfigDO dbFileConfig = randomFileConfigDO().setName("芋道源码")
+        FileConfigDO dbFileConfig = randomFileConfigDO().setName("众墅之家")
                 .setStorage(FileStorageEnum.LOCAL.getStorage());
         dbFileConfig.setCreateTime(LocalDateTimeUtil.parse("2020-01-23", DatePattern.NORM_DATE_PATTERN));// 等会查询到
         fileConfigMapper.insert(dbFileConfig);

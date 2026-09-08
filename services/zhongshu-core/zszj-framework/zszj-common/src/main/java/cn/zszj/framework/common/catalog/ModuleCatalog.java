@@ -26,6 +26,12 @@ public final class ModuleCatalog {
     private static final List<String> ALL_MODULES = List.of(
             "system", "infra", "bpm", "mp", "mall", "erp", "wms", "pms", "crm", "mes", "im", "report", "pay", "ai", "iot");
 
+    /** 商城子前缀归属（product/trade/promotion 等属 mall 模块，与 DefaultController 兜底分组一致） */
+    private static final Map<String, String> MODULE_ALIASES = Map.of(
+            "product", "mall",
+            "trade", "mall",
+            "promotion", "mall");
+
     /** 未启用模块 -> admin-api 兜底前缀（超过 10 项，必须用 ofEntries 而非 Map.of） */
     public static final Map<String, List<String>> DISABLED_MODULE_API_PREFIXES = Map.ofEntries(
             Map.entry("bpm", List.of("/admin-api/bpm/**")),
@@ -45,26 +51,24 @@ public final class ModuleCatalog {
     /**
      * 归属菜单到业务模块。
      *
-     * @return 模块名；无法判定（纯目录容器、外链、空配置等）返回 null
+     * @return 模块名（含商城子前缀 product/trade/promotion → mall 的别名归并）；无法判定返回 null
      */
     public static String moduleOfMenu(String permission, String component, String path) {
-        if (permission != null) {
-            for (String module : ALL_MODULES) {
-                if (permission.startsWith(module + ":")) return module;
-            }
-        }
-        if (component != null) {
-            for (String module : ALL_MODULES) {
-                if (component.startsWith(module + "/")) return module;
-            }
-        }
-        if (path != null) {
-            String p = path.startsWith("/") ? path.substring(1) : path;
-            for (String module : ALL_MODULES) {
-                if (p.equals(module) || p.startsWith(module + "/")) return module;
-            }
-        }
-        return null;
+        String first = firstSegment(permission, ':');
+        if (first == null) first = firstSegment(component, '/');
+        if (first == null) first = firstSegment(path, '/');
+        if (first == null) return null;
+        if (first.startsWith("/")) first = first.substring(1);
+        if (MODULE_ALIASES.containsKey(first)) return MODULE_ALIASES.get(first);
+        return ALL_MODULES.contains(first) ? first : null;
+    }
+
+    private static String firstSegment(String value, char sep) {
+        if (value == null || value.isEmpty()) return null;
+        String v = value.startsWith("/") ? value.substring(1) : value;
+        int idx = v.indexOf(sep);
+        String seg = idx >= 0 ? v.substring(0, idx) : v;
+        return seg.isEmpty() ? null : seg;
     }
 
     /**
