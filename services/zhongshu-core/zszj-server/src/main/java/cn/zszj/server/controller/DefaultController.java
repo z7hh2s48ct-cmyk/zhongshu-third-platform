@@ -2,19 +2,27 @@ package cn.zszj.server.controller;
 
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.util.servlet.ServletUtils;
+import cn.zszj.server.ModuleWhitelist;
 import jakarta.annotation.security.PermitAll;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 import static cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants.NOT_IMPLEMENTED;
 
 /**
- * 默认 Controller，解决部分 module 未开启时的 404 提示。
- * 例如说，/bpm/** 路径，工作流
+ * 默认 Controller：对未启用模块的 admin-api 前缀返回明确的不可用响应（501），
+ * 解决部分 module 未开启时的 404 提示问题。
  *
- * @author 芋道源码
+ * 未启用模块及其 API 前缀的唯一清单见 {@link ModuleWhitelist#DISABLED_MODULE_API_PREFIXES}；
+ * 本类的 @RequestMapping 路径必须与该清单保持一致，由 ModuleWhitelistTest 与
+ * scripts/eng/verify-module-whitelist.mjs 双重校验。
+ *
+ * 边界（ZS-ENG-001）：未启用模块不得执行业务、写入数据或注册后台任务——
+ * 本类只返回错误响应，不委托任何业务逻辑。
  */
 @RestController
 @Slf4j
@@ -22,88 +30,84 @@ public class DefaultController {
 
     @RequestMapping("/admin-api/bpm/**")
     public CommonResult<Boolean> bpm404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[工作流模块 zszj-module-bpm - 已禁用][参考 https://doc.iocoder.cn/bpm/ 开启]");
+        return notImplemented("bpm", "工作流");
     }
 
     @RequestMapping("/admin-api/mp/**")
     public CommonResult<Boolean> mp404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[微信公众号 zszj-module-mp - 已禁用][参考 https://doc.iocoder.cn/mp/build/ 开启]");
+        return notImplemented("mp", "微信公众号");
     }
 
-    @RequestMapping(value = { "/admin-api/product/**", // 商品中心
+    @RequestMapping(value = {"/admin-api/product/**", // 商品中心
             "/admin-api/trade/**", // 交易中心
-            "/admin-api/promotion/**" }) // 营销中心
+            "/admin-api/promotion/**"}) // 营销中心
     public CommonResult<Boolean> mall404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[商城系统 zszj-module-mall - 已禁用][参考 https://doc.iocoder.cn/mall/build/ 开启]");
+        return notImplemented("mall", "商城系统");
     }
 
     @RequestMapping("/admin-api/erp/**")
     public CommonResult<Boolean> erp404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[ERP 模块 zszj-module-erp - 已禁用][参考 https://doc.iocoder.cn/erp/build/ 开启]");
+        return notImplemented("erp", "ERP 模块");
     }
 
-    @RequestMapping(value = { "/admin-api/wms/**"})
+    @RequestMapping(value = {"/admin-api/wms/**"})
     public CommonResult<Boolean> wms404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[WMS 仓库管理系统 zszj-module-wms - 已禁用][参考 https://doc.iocoder.cn/wms/build/ 开启]");
+        return notImplemented("wms", "WMS 仓库管理系统");
     }
 
     @RequestMapping("/admin-api/pms/**")
     public CommonResult<Boolean> pms404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[PMS 项目管理系统 zszj-module-pms - 已禁用][请在 zszj-server 中开启]");
+        return notImplemented("pms", "PMS 项目管理系统");
     }
 
     @RequestMapping("/admin-api/crm/**")
     public CommonResult<Boolean> crm404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[CRM 模块 zszj-module-crm - 已禁用][参考 https://doc.iocoder.cn/crm/build/ 开启]");
+        return notImplemented("crm", "CRM 模块");
     }
 
-    @RequestMapping(value = { "/admin-api/mes/**"})
+    @RequestMapping(value = {"/admin-api/mes/**"})
     public CommonResult<Boolean> mes404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[MES 系统 zszj-module-mes - 已禁用][参考 https://doc.iocoder.cn/mes/build/ 开启]");
+        return notImplemented("mes", "MES 系统");
     }
 
-    @RequestMapping(value = { "/admin-api/im/**"})
+    @RequestMapping(value = {"/admin-api/im/**"})
     public CommonResult<Boolean> im404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[IM 即时通讯 zszj-module-im - 已禁用][参考 https://doc.iocoder.cn/im/build/ 开启]");
+        return notImplemented("im", "IM 即时通讯");
     }
 
-    @RequestMapping(value = { "/admin-api/report/**"})
+    @RequestMapping(value = {"/admin-api/report/**"})
     public CommonResult<Boolean> report404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[报表模块 zszj-module-report - 已禁用][参考 https://doc.iocoder.cn/report/ 开启]");
+        return notImplemented("report", "报表模块");
     }
 
-    @RequestMapping(value = { "/admin-api/pay/**"})
+    @RequestMapping(value = {"/admin-api/pay/**"})
     public CommonResult<Boolean> pay404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[支付模块 zszj-module-pay - 已禁用][参考 https://doc.iocoder.cn/pay/build/ 开启]");
+        return notImplemented("pay", "支付模块");
     }
 
-    @RequestMapping(value = { "/admin-api/ai/**"})
+    @RequestMapping(value = {"/admin-api/ai/**"})
     public CommonResult<Boolean> ai404() {
-        return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[AI 大模型 zszj-module-ai - 已禁用][参考 https://doc.iocoder.cn/ai/build/ 开启]");
+        return notImplemented("ai", "AI 大模型");
     }
 
-    @RequestMapping(value = { "/admin-api/iot/**"})
+    @RequestMapping(value = {"/admin-api/iot/**"})
     public CommonResult<Boolean> iot404() {
+        return notImplemented("iot", "IoT 物联网");
+    }
+
+    private static CommonResult<Boolean> notImplemented(String module, String displayName) {
+        List<String> enabled = ModuleWhitelist.ENABLED_MODULES;
         return CommonResult.error(NOT_IMPLEMENTED.getCode(),
-                "[IoT 物联网 zszj-module-iot - 已禁用][参考 https://doc.iocoder.cn/iot/build/ 开启]");
+                "[" + displayName + " zszj-module-" + module + " - 未启用]"
+                        + "[启用需在 zszj-server/pom.xml 引入依赖并经底座批次验收，当前启用模块：" + enabled + "]");
     }
 
     /**
      * 测试接口：打印 query、header、body
+     *
+     * ZS-ENG-004 将移除或显式限制该调试端点（匿名可访问且记录请求原文，存在凭据泄露风险）。
      */
-    @RequestMapping(value = { "/test" })
+    @RequestMapping(value = {"/test"})
     @PermitAll
     public CommonResult<Boolean> test(HttpServletRequest request) {
         // 打印查询参数
