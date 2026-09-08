@@ -54,3 +54,13 @@ zszj:
 spring:
   quartz:
     auto-startup: ${ZSZJ_QUARTZ_AUTO_STARTUP:false} # 部署默认不随应用启动调度器，启用须过 ZS-ENG-006 盘点
+
+--- #################### 数据库迁移（ZS-DB-003） ####################
+
+spring:
+  flyway:
+    enabled: ${ZSZJ_FLYWAY_ENABLED:false} # 基线迁移落地（ZS-DB-004）后经环境变量激活
+    # 迁移连接默认回落应用数据源；需要 DDL 专用迁移账号时显式注入：
+    # url: ${ZSZJ_FLYWAY_URL}
+    # user: ${ZSZJ_FLYWAY_USER}
+    # password: ${ZSZJ_FLYWAY_PASSWORD}

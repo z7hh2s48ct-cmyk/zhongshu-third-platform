@@ -40,6 +40,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- ZS-DB-003 / PEND-005：Flyway 版本化迁移（版本随 Spring Boot BOM），应用启动为唯一权威迁移入口 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
         <!-- 会员中心。默认注释，保证编译速度 -->
 <!--        <dependency>-->
 <!--            <groupId>cn.zszj</groupId>-->

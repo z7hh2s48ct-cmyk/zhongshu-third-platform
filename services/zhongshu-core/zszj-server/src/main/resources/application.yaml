@@ -376,3 +376,15 @@ management:
       base-path: /actuator
       exposure:
         include: health
+
+--- #################### 数据库迁移（ZS-DB-003 / PEND-005） ####################
+
+spring:
+  flyway:
+    enabled: false # V1 基线由 ZS-DB-004 交付，部署环境经 ZSZJ_FLYWAY_ENABLED 激活
+    locations: classpath:db/migration # 唯一迁移目录（规范见 docs/数据库迁移规范.md）
+    out-of-order: false # 全局版本顺序，多实例走兼容迁移+滚动发布
+    validate-on-migrate: true # 已执行脚本被篡改（校验和失配）即阻止启动
+    clean-disabled: true # 全环境禁用 clean；测试库清理由 ZS-DB-019 临时实例负责
+    baseline-on-migrate: true # 既有旧库首次接入时吸收为基线，不重放 V1
+    baseline-version: 1
