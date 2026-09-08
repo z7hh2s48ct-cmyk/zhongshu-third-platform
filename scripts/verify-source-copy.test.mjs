@@ -52,7 +52,10 @@ test('non-canonical paths and unknown file modes are rejected', () => {
   assert.equal(verifyFiles(root, [{ ...entry, mode: 'invalid' }])[0].reason, 'invalid-entry');
 });
 
-test('executable mode and parent symlink changes are rejected', () => {
+// 可执行位语义在 Windows 上不可用（verifyFiles 在 win32 跳过 mode 校验），
+// 该用例仅在 POSIX（含 CI ubuntu）执行；symlink 部分同样需要 POSIX 语义
+const isPosix = process.platform !== 'win32';
+(isPosix ? test : test.skip)('executable mode and parent symlink changes are rejected', () => {
   const root = fixture();
   chmodSync(join(root, entry.path), 0o755);
   assert.equal(verifyFiles(root, [entry])[0].reason, 'executable-mode-mismatch');

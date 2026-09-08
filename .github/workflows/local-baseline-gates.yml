@@ -1,0 +1,20 @@
+name: local-baseline-gates
+
+# ZS-OPS-001.A：基础构建/文档流水线骨架——与本地 `node scripts/ops/run-local-gates.mjs` 同一规则。
+# 仅运行静态/单测门禁；PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  baseline-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 运行基线门禁（--fast：跳过需前端依赖的类型检查，其由 ZS-CLIENT-005.A 本地门禁覆盖）
+        run: node scripts/ops/run-local-gates.mjs --fast

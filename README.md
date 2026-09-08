@@ -81,6 +81,15 @@ node scripts/brand/verify-brand-naming.mjs
 
 ZS-BRAND-006 交付的品牌/代码命名残留门禁：扫描全部跟踪文件的文件名与内容（`cn.iocoder`、`yudao`、`youdao`、`芋道`、`unibest`、登记缩写 `yd-`），按 [scripts/brand/brand-naming-allowlist.json](scripts/brand/brand-naming-allowlist.json) 以"应改/必要保留/限期兼容"判定；限期兼容项到期未撤除即失败。故意恢复旧产品标题、旧 `cn.iocoder.yudao` import 或生成器默认包名时门禁失败；上游 LICENSE、署名注释与来源引用不误报。命名映射与例外依据见 [docs/06-品牌素材与命名映射](docs/06-品牌素材与命名映射.md)。
 
+## 本地基线门禁（ZS-OPS-001.A）
+
+```bash
+node scripts/ops/run-local-gates.mjs           # 全量（含 Web 类型基线，较慢）
+node scripts/ops/run-local-gates.mjs --fast    # 快速静态门禁
+```
+
+聚合以下检查并统一失败语义（任一失败阻止放行）：来源复制校验器单测、品牌命名门禁、文档一致性检查、模块白名单、数据源 PG 合同、Flyway 迁移规范、配置秘密门禁、Web 类型检查基线。CI 侧以 [.github/workflows/local-baseline-gates.yml](.github/workflows/local-baseline-gates.yml) 运行同一入口（--fast）；PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入。
+
 ## 文档同步规则
 
 文档一致性检查器（ZS-GOV-001）入口，任何文档变更后必须运行：
