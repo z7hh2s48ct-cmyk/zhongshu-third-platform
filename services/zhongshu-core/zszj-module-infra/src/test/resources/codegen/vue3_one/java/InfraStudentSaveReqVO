@@ -34,11 +34,11 @@ public class InfraStudentSaveReqVO {
     @NotNull(message = "是否有效不能为空")
     private Boolean enabled;
 
-    @Schema(description = "头像", requiredMode = Schema.RequiredMode.REQUIRED, example = "https://www.iocoder.cn/1.png")
+    @Schema(description = "头像", requiredMode = Schema.RequiredMode.REQUIRED, example = "https://www.zszj.example.com/1.png")
     @NotEmpty(message = "头像不能为空")
     private String avatar;
 
-    @Schema(description = "附件", requiredMode = Schema.RequiredMode.REQUIRED, example = "https://www.iocoder.cn/1.mp4")
+    @Schema(description = "附件", requiredMode = Schema.RequiredMode.REQUIRED, example = "https://www.zszj.example.com/1.mp4")
     @NotEmpty(message = "附件不能为空")
     private String video;
 
