@@ -10,8 +10,9 @@
  *   6. Flyway 迁移规范检查（ZS-DB-003）
  *   7. 配置秘密门禁（ZS-CFG-001.A）
  *   8. Web 类型检查基线（ZS-CLIENT-005.A，较慢；--fast 跳过）
+ *   9. 启用模块后端单测（--mvn 显式启用；需 tools/env.sh 工具链，排除已登记的上游基线失败）
  * PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入，不在本骨架。
- * 用法：node scripts/ops/run-local-gates.mjs [--fast]
+ * 用法：node scripts/ops/run-local-gates.mjs [--fast] [--mvn]
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,7 @@ import { join } from 'node:path';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const fast = process.argv.includes('--fast');
+const withMvn = process.argv.includes('--mvn');
 
 const gates = [
   { id: 'G1 来源复制校验器单测', cmd: ['node', '--test', 'scripts/verify-source-copy.test.mjs'] },
@@ -34,6 +36,10 @@ const gates = [
 if (!fast) {
   gates.push({ id: 'G10 Web 类型检查基线', cmd: ['node', 'scripts/client/verify-ts-baseline.mjs'] });
 }
+if (withMvn) {
+  gates.push({ id: 'G11 启用模块后端单测（common/infra，排除上游基线失败）',
+    mvnArgs: "-pl zszj-framework/zszj-common,zszj-module-infra -am -Dtest=!CodegenEngineUniappTest#testExecute_treeSearch -Dsurefire.failIfNoSpecifiedTests=false test" });
+}
 
 const results = [];
 let failed = false;
@@ -41,12 +47,22 @@ for (const gate of gates) {
   let status = 'PASS';
   let output = '';
   try {
-    output = execFileSync(gate.cmd[0], gate.cmd.slice(1), {
-      cwd: root,
-      maxBuffer: 64 * 1024 * 1024,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    if (gate.mvnArgs) {
+      // Maven 门禁需先注入 tools 工具链环境（JDK17/Maven 不在系统 PATH）
+      const r = spawnSync('bash', ['-c', 'source tools/env.sh && cd services/zhongshu-core && MSYS_NO_PATHCONV=1 "$TOOLS/apache-maven-3.9.9/bin/mvn.cmd" ' + gate.mvnArgs], {
+        cwd: root, maxBuffer: 256 * 1024 * 1024, encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      if (r.status !== 0) throw { stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+      output = r.stdout ?? '';
+    } else {
+      output = execFileSync(gate.cmd[0], gate.cmd.slice(1), {
+        cwd: root,
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }
   } catch (e) {
     status = 'FAIL';
     failed = true;
