@@ -1,0 +1,3 @@
+cn.zszj.framework.mq.redis.config.ZszjRedisMQProducerAutoConfiguration
+cn.zszj.framework.mq.redis.config.ZszjRedisMQConsumerAutoConfiguration
+cn.zszj.framework.mq.rabbitmq.config.ZszjRabbitMQAutoConfiguration

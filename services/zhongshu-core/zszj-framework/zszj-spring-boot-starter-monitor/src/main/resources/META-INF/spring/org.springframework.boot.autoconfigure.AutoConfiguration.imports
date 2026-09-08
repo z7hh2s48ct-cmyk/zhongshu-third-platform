@@ -1,0 +1,2 @@
+cn.zszj.framework.tracer.config.ZszjTracerAutoConfiguration
+cn.zszj.framework.tracer.config.ZszjMetricsAutoConfiguration

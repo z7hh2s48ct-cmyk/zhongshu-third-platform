@@ -1,0 +1,2 @@
+cn.zszj.framework.quartz.config.ZszjQuartzAutoConfiguration
+cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration

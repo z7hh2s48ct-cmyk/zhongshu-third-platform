@@ -1,0 +1,2 @@
+cn.zszj.framework.redis.config.ZszjRedisAutoConfiguration
+cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration

@@ -1,0 +1,3 @@
+cn.zszj.framework.datasource.config.ZszjDataSourceAutoConfiguration
+cn.zszj.framework.mybatis.config.ZszjMybatisAutoConfiguration
+cn.zszj.framework.translate.config.ZszjTranslateAutoConfiguration

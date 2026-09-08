@@ -3,35 +3,35 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>cn.iocoder.boot</groupId>
-    <artifactId>yudao</artifactId>
+    <groupId>cn.zszj</groupId>
+    <artifactId>zszj</artifactId>
     <version>${revision}</version>
     <packaging>pom</packaging>
     <modules>
-        <module>yudao-dependencies</module>
-        <module>yudao-framework</module>
+        <module>zszj-dependencies</module>
+        <module>zszj-framework</module>
         <!-- Server 主项目 -->
-        <module>yudao-server</module>
+        <module>zszj-server</module>
         <!-- 各种 module 拓展 -->
-        <module>yudao-module-system</module>
-        <module>yudao-module-infra</module>
-<!--        <module>yudao-module-member</module>-->
-<!--        <module>yudao-module-bpm</module>-->
-<!--        <module>yudao-module-report</module>-->
-<!--        <module>yudao-module-mp</module>-->
-<!--        <module>yudao-module-pay</module>-->
-<!--        <module>yudao-module-mall</module>-->
-<!--        <module>yudao-module-crm</module>-->
-<!--        <module>yudao-module-erp</module>-->
-<!--        <module>yudao-module-iot</module>-->
-<!--        <module>yudao-module-mes</module>-->
-<!--        <module>yudao-module-wms</module>-->
-<!--        <module>yudao-module-hrm</module>-->
-<!--        <module>yudao-module-fms</module>-->
-<!--        <module>yudao-module-pms</module>-->
-<!--        <module>yudao-module-im</module>-->
+        <module>zszj-module-system</module>
+        <module>zszj-module-infra</module>
+<!--        <module>zszj-module-member</module>-->
+<!--        <module>zszj-module-bpm</module>-->
+<!--        <module>zszj-module-report</module>-->
+<!--        <module>zszj-module-mp</module>-->
+<!--        <module>zszj-module-pay</module>-->
+<!--        <module>zszj-module-mall</module>-->
+<!--        <module>zszj-module-crm</module>-->
+<!--        <module>zszj-module-erp</module>-->
+<!--        <module>zszj-module-iot</module>-->
+<!--        <module>zszj-module-mes</module>-->
+<!--        <module>zszj-module-wms</module>-->
+<!--        <module>zszj-module-hrm</module>-->
+<!--        <module>zszj-module-fms</module>-->
+<!--        <module>zszj-module-pms</module>-->
+<!--        <module>zszj-module-im</module>-->
 <!-- 请参考 https://doc.iocoder.cn/ai/build/ 文档，完成 AI 模块的启动！！！ -->
-<!--        <module>yudao-module-ai</module>-->
+<!--        <module>zszj-module-ai</module>-->
     </modules>
 
     <name>${project.artifactId}</name>
@@ -57,8 +57,8 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>cn.iocoder.boot</groupId>
-                <artifactId>yudao-dependencies</artifactId>
+                <groupId>cn.zszj</groupId>
+                <artifactId>zszj-dependencies</artifactId>
                 <version>${revision}</version>
                 <type>pom</type>
                 <scope>import</scope>

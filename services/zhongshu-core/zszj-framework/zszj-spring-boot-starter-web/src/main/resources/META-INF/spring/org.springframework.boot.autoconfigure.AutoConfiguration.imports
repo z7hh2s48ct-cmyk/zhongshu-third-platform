@@ -1,0 +1,7 @@
+cn.zszj.framework.apilog.config.ZszjApiLogAutoConfiguration
+cn.zszj.framework.jackson.config.ZszjJacksonAutoConfiguration
+cn.zszj.framework.swagger.config.ZszjSwaggerAutoConfiguration
+cn.zszj.framework.web.config.ZszjWebAutoConfiguration
+cn.zszj.framework.xss.config.ZszjXssAutoConfiguration
+cn.zszj.framework.banner.config.ZszjBannerAutoConfiguration
+cn.zszj.framework.encrypt.config.ZszjApiEncryptAutoConfiguration

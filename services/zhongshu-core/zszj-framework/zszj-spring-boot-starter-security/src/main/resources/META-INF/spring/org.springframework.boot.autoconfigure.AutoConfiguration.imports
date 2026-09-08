@@ -1,0 +1,3 @@
+cn.zszj.framework.security.config.ZszjSecurityAutoConfiguration
+cn.zszj.framework.security.config.ZszjWebSecurityConfigurerAdapter
+cn.zszj.framework.operatelog.config.ZszjOperateLogConfiguration

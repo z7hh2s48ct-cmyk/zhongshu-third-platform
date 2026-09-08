@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>zszj</artifactId>
+        <groupId>cn.zszj</groupId>
+        <version>${revision}</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>zszj-module-mall</artifactId>
+    <packaging>pom</packaging>
+
+    <name>${project.artifactId}</name>
+
+    <description>
+        商城大模块，由 product 商品、promotion 营销、trade 交易、statistics 统计等组成
+    </description>
+    <modules>
+        <module>zszj-module-product</module>
+        <module>zszj-module-promotion</module>
+        <module>zszj-module-trade</module>
+        <module>zszj-module-statistics</module>
+        <!--
+            特殊：为什么会有 zszj-module-trade-api 呢？
+                zszj-module-promotion 和 zszj-module-trade 之间相互循环依赖，所以抽出 zszj-module-trade-api 模块，这样：
+                1. zszj-module-promotion 依赖 zszj-module-trade-api
+                2. zszj-module-trade 依赖 zszj-module-promotion
+            从而不存在相互（循环）依赖，即 zszj-module-trade => zszj-module-promotion => zszj-module-trade-api
+         -->
+        <module>zszj-module-trade-api</module>
+    </modules>
+
+</project>
