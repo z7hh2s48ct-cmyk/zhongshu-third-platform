@@ -18,8 +18,15 @@ import { join, dirname, resolve } from 'node:path';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const core = join(root, 'services', 'zhongshu-core');
 
+// 构建/依赖产物目录不参与静态检查（ZS-BRAND-002 发现 2）：Maven 生成的
+// target/generated-sources/**/*.java 路径不含 /src/(main|test)/java/ 前缀，会被第 1 项
+// package-path 校验误判为 mismatch，mvn compile 后本地门禁假阳性，破坏「本地与 CI 同规则」。
+// 在唯一遍历原语 walk() 统一跳过，一处覆盖全部 5 段 walk。仅列绝不含后端源码的产物目录；
+// out/build/dist 可能是合法源码包名（如 erp vo/out/ 出库 VO），一并跳过会漏检真实残留（假阴性），故不纳入。
+const SKIP_DIRS = new Set(['target', 'node_modules', '.git', '.idea']);
 function walk(dir, fn) {
   for (const name of readdirSync(dir)) {
+    if (SKIP_DIRS.has(name)) continue;
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) walk(p, fn);
