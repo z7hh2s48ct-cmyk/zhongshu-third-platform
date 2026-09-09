@@ -33,7 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 2. 认证接口 - 无 token → 401；有效 token → 200；MEMBER token 访问 /admin-api → 403
  * 3. 权限接口（@PreAuthorize）- 无权限 → 403；有权限 → 200
  * 4. 租户校验 - 未传（兜底/400）/不匹配/禁用/过期/未知租户
- * 5. 跨租户访问（visit-tenant-id）- 无权 403 / 持权 200（skipPermissionCheck=true 基线）
+ * 5. 跨租户访问（visit-tenant-id）- ZS-SEC-001.A 默认关闭：普通头/旧 visit 权限均 403 拒绝，不放大范围
  * 6. 对象授权 - 按 ID 归属校验
  * 7. 异常出口一致性 - CommonResult JSON 格式
  *
@@ -313,7 +313,7 @@ class SecurityFilterChainFixtureTest {
     // ========== 5. 跨租户访问（visit-tenant-id） ==========
 
     @Nested
-    @DisplayName("5. 跨租户访问（visit-tenant-id）")
+    @DisplayName("5. 跨租户访问（visit-tenant-id）— ZS-SEC-001.A 默认关闭")
     class CrossTenantAccess {
 
         @Test
@@ -340,33 +340,35 @@ class SecurityFilterChainFixtureTest {
         }
 
         @Test
-        @DisplayName("无 system:tenant:visit 权限跨租户 → 403 您无权切换租户")
-        void crossTenantWithoutVisitPermission() throws Exception {
-            // t1-admin 无 system:tenant:visit 权限：TenantVisitContextInterceptor.preHandle 抛
-            // ServiceException(403, "您无权切换租户")，由 GlobalExceptionHandler 转 CommonResult。
+        @DisplayName("ZS-SEC-001.A 默认关闭：无权用户携跨租户头 → 403 能力未启用（门控先于权限校验）")
+        void crossTenantRejectedNoPermissionWhenDisabled() throws Exception {
+            // 默认 zszj.tenant.visit-enable=false：TenantVisitContextInterceptor 在权限校验前先命中能力门控，
+            // 抛 ServiceException(403, "跨租户访问能力未启用，禁止切换租户")，由 GlobalExceptionHandler 转 CommonResult。
             mockMvc.perform(get("/admin-api/fixture/auth/cross-tenant")
                             .header("Authorization", "Bearer token-t1-admin")
                             .header("tenant-id", MockOAuth2TokenApi.TENANT_1)
                             .header("visit-tenant-id", MockOAuth2TokenApi.TENANT_2))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(403))
-                    .andExpect(jsonPath("$.msg").value("您无权切换租户"));
+                    .andExpect(jsonPath("$.msg").value("跨租户访问能力未启用，禁止切换租户"));
         }
 
         @Test
-        @DisplayName("持有 system:tenant:visit 跨租户 → 200 且 skipPermissionCheck=true（ZS-SEC-001 待收紧）")
-        void crossTenantWithVisitPermission() throws Exception {
-            // t1-visitor 持有 system:tenant:visit：切换成功后 LoginUser.visitTenantId=TENANT_2。
-            // 此时 SecurityFrameworkUtils.skipPermissionCheck() 返回 true（权限校验被整体跳过）——
-            // 这正是 ZS-SEC-001.A「禁用旧跨租户权限跳过」需要收紧的越权放大点，本用例将其显式固化为基线。
+        @DisplayName("ZS-SEC-001.A 默认关闭：持旧 system:tenant:visit 权限携跨租户头 → 403 拒绝（旧权限不再放大范围）")
+        void crossTenantRejectedWithOldPermissionWhenDisabled() throws Exception {
+            // 收紧前（ZS-SEC-012.A 暴露的基线）：t1-visitor 持 system:tenant:visit 切换成功 → visitTenantId=TENANT_2、
+            // skipPermissionCheck()=true，权限/角色/scope 与数据范围被整体跳过（越权放大点）。
+            // 收紧后（本用例）：默认能力门控关闭，即使持有旧 visit 权限也在切换前被拒绝——
+            // 不设置 visitTenantId、不切换租户上下文，skipPermissionCheck() 无从变为 true，范围不被放大。
+            // 获批的受控跨组织访问由 ZS-SEC-001.B（依赖 D-09）实现；门控为「配置开关」而非硬删除，
+            // 见 CrossTenantVisitEnabledFixtureTest 验证 visit-enable=true 时旧链路恢复。
             mockMvc.perform(get("/admin-api/fixture/auth/cross-tenant")
                             .header("Authorization", "Bearer token-t1-visitor")
                             .header("tenant-id", MockOAuth2TokenApi.TENANT_1)
                             .header("visit-tenant-id", MockOAuth2TokenApi.TENANT_2))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.code").value(0))
-                    .andExpect(jsonPath("$.data.visitTenantId").value(MockOAuth2TokenApi.TENANT_2))
-                    .andExpect(jsonPath("$.data.skipPermissionCheck").value(true));
+                    .andExpect(jsonPath("$.code").value(403))
+                    .andExpect(jsonPath("$.msg").value("跨租户访问能力未启用，禁止切换租户"));
         }
     }
 

@@ -36,6 +36,15 @@ public class TenantVisitContextInterceptor implements HandlerInterceptor {
         if (ObjUtil.equal(visitTenantId, TenantContextHolder.getTenantId())) {
             return true;
         }
+        // ZS-SEC-001.A：底座默认关闭未经批准的跨租户浏览能力。未显式开启（zszj.tenant.visit-enable=false，默认）时，
+        // 任何切换到不同目标租户的请求（含伪造头、含持有旧 system:tenant:visit 权限者）一律拒绝，且不设置 visitTenantId、
+        // 不切换 TenantContextHolder，使 SecurityFrameworkUtils#skipPermissionCheck() 恒为 false，功能权限与数据范围
+        // 均按登录租户正常校验，杜绝越权放大。获批的受控跨组织访问由 ZS-SEC-001.B（依赖 D-09）实现。
+        if (!Boolean.TRUE.equals(tenantProperties.getVisitEnable())) {
+            log.warn("[preHandle][跨租户访问能力未启用，拒绝切换到 visitTenantId({})，当前租户({})]",
+                    visitTenantId, TenantContextHolder.getTenantId());
+            throw exception0(GlobalErrorCodeConstants.FORBIDDEN.getCode(), "跨租户访问能力未启用，禁止切换租户");
+        }
         // 必须是登录用户
         LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
         if (loginUser == null) {

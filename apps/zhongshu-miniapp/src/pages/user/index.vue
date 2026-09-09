@@ -27,7 +27,7 @@
     <view class="mx-24rpx mt-32rpx">
       <wd-cell-group custom-class="menu-group" border>
         <TenantVisitPicker
-          v-if="tenantEnabled && hasAccessByCodes(['system:tenant:visit'])"
+          v-if="tenantEnabled && tenantVisitEnabled && hasAccessByCodes(['system:tenant:visit'])"
           @confirm="handleTenantConfirm"
         >
           <template #default="{ value }">
@@ -110,6 +110,8 @@ const { hasAccessByCodes } = useAccess()
 const { userInfo } = storeToRefs(userStore)
 const userProfile = ref<UserProfileVO | null>(null) // 用户详细信息
 const tenantEnabled = computed(() => import.meta.env.VITE_APP_TENANT_ENABLE === 'true') // 租户开关
+// ZS-SEC-001.A：跨租户访问能力总开关，默认关闭；关闭时不显示租户切换入口
+const tenantVisitEnabled = computed(() => import.meta.env.VITE_APP_TENANT_VISIT_ENABLE === 'true')
 
 /** 页面加载时获取用户信息 */
 onMounted(async () => {

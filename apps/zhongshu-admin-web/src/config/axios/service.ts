@@ -18,6 +18,8 @@ import { deleteUserCache } from '@/hooks/web/useCache'
 import { ApiEncrypt } from '@/utils/encrypt'
 
 const tenantEnable = import.meta.env.VITE_APP_TENANT_ENABLE
+// ZS-SEC-001.A：跨租户访问能力总开关，默认关闭；关闭时不注入 visit-tenant-id 头
+const tenantVisitEnable = import.meta.env.VITE_APP_TENANT_VISIT_ENABLE
 const { result_code, base_url, request_timeout } = config
 
 // 需要忽略的提示。忽略后，自动 Promise.reject('error')
@@ -61,10 +63,13 @@ service.interceptors.request.use(
     if (tenantEnable && tenantEnable === 'true') {
       const tenantId = getTenantId()
       if (tenantId) config.headers['tenant-id'] = tenantId
-      // 只有登录时，才设置 visit-tenant-id 访问租户
-      const visitTenantId = getVisitTenantId()
-      if (config.headers.Authorization && visitTenantId) {
-        config.headers['visit-tenant-id'] = visitTenantId
+      // ZS-SEC-001.A：仅当跨租户访问能力显式开启、且已登录时才注入 visit-tenant-id 访问租户头；
+      // 默认关闭时前端不发送该头，后端拦截器亦会拒绝，形成前后端双重收口，避免越权范围被自动放大
+      if (tenantVisitEnable === 'true') {
+        const visitTenantId = getVisitTenantId()
+        if (config.headers.Authorization && visitTenantId) {
+          config.headers['visit-tenant-id'] = visitTenantId
+        }
       }
     }
     const method = config.method?.toUpperCase()

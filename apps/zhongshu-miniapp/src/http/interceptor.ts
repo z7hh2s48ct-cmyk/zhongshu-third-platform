@@ -8,6 +8,8 @@ import { stringifyQuery } from './tools/queryString'
 // 请求基准地址
 const baseUrl = getEnvBaseUrl()
 const tenantEnable = import.meta.env.VITE_APP_TENANT_ENABLE
+// ZS-SEC-001.A：跨租户访问能力总开关，默认关闭；关闭时不注入 visit-tenant-id 头
+const tenantVisitEnable = import.meta.env.VITE_APP_TENANT_VISIT_ENABLE
 
 const whiteList: string[] = [
   '/login',
@@ -73,9 +75,13 @@ const httpInterceptor = {
       if (tenantId) {
         options.header['tenant-id'] = tenantId
       }
-      const visitTenantId = useUserStore().visitTenantId
-      if (token && visitTenantId) {
-        options.header['visit-tenant-id'] = visitTenantId
+      // ZS-SEC-001.A：仅当跨租户访问能力显式开启时才注入 visit-tenant-id 头；
+      // 默认关闭时前端不发送该头，后端拦截器亦会拒绝，形成前后端双重收口
+      if (tenantVisitEnable === 'true') {
+        const visitTenantId = useUserStore().visitTenantId
+        if (token && visitTenantId) {
+          options.header['visit-tenant-id'] = visitTenantId
+        }
       }
     }
 
