@@ -34,14 +34,34 @@ UPDATE system_dept
  WHERE name = '芋道源码';
 
 -- 3. 用户：演示账号用户名、昵称、邮箱与头像域名
+-- 3.1 演示账号用户名：仅租户 1 的 id=100 演示账号（hotfix-A 修正：原 WHERE username='yudao' 波及所有租户）
+--     先检查目标名冲突，避免唯一约束 (tenant_id, username) 冲突使事务回滚
+--     hotfix-A-r1: 冲突检查限定 deleted=0，与应用 @TableLogic 语义一致，已删除行不阻塞改名
 UPDATE system_users
    SET username = 'zszj'
- WHERE username = 'yudao';
+ WHERE id = 100 AND tenant_id = 1 AND username = 'yudao'
+   AND NOT EXISTS (
+     SELECT 1 FROM system_users u2
+      WHERE u2.tenant_id = 1 AND u2.username = 'zszj' AND u2.id <> 100 AND u2.deleted = 0
+   );
 
 UPDATE system_users
    SET nickname = REPLACE(nickname, '芋道', '众墅之家')
  WHERE nickname LIKE '%芋道%';
 
+-- 3.2 演示账号邮箱：精确映射（hotfix-A 修正：先于通用域名替换，避免 yudao@iocoder.cn → yudao@example.com 残留旧标识）
+--     hotfix-A-r1: 目标邮箱冲突检查，避免产生重复 active email 导致 selectByEmail/selectOne 异常
+--     hotfix-A-r2: 冲突检查同时覆盖 3.3 通用域名替换后会变成 zszj@example.com 的行（zszj@iocoder.cn）
+UPDATE system_users
+   SET email = 'zszj@example.com'
+ WHERE id = 100 AND tenant_id = 1 AND email = 'yudao@iocoder.cn'
+   AND NOT EXISTS (
+     SELECT 1 FROM system_users u2
+      WHERE u2.tenant_id = 1 AND u2.id <> 100 AND u2.deleted = 0
+        AND (u2.email = 'zszj@example.com' OR u2.email = 'zszj@iocoder.cn')
+   );
+
+-- 3.3 通用域名替换：处理其他 @iocoder.cn 邮箱（如 test@iocoder.cn）
 UPDATE system_users
    SET email = REPLACE(email, '@iocoder.cn', '@example.com')
  WHERE email LIKE '%@iocoder.cn%';
@@ -153,7 +173,7 @@ COMMIT;
 -- =====================================================================
 -- 验证（迁移后人工/脚本执行，期望全部为 0）：
 --   SELECT count(*) FROM system_tenant  WHERE name LIKE '%芋道%' OR websites LIKE '%iocoder.cn%';
---   SELECT count(*) FROM system_users   WHERE nickname LIKE '%芋道%' OR username = 'yudao' OR avatar LIKE '%yudao.iocoder.cn%';
+--   SELECT count(*) FROM system_users   WHERE nickname LIKE '%芋道%' OR (username = 'yudao' AND id = 100 AND tenant_id = 1) OR email = 'yudao@iocoder.cn' OR avatar LIKE '%yudao.iocoder.cn%';
 --   SELECT count(*) FROM system_notice  WHERE title LIKE '%芋道%' OR content LIKE '%yudao.iocoder.cn%';
 --   SELECT count(*) FROM system_dept    WHERE name LIKE '%芋道%';
 --   SELECT count(*) FROM system_oauth2_client WHERE client_id LIKE 'yudao-%' OR logo LIKE '%yudao.iocoder.cn%' OR redirect_uris LIKE '%iocoder.cn%';
