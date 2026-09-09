@@ -114,6 +114,27 @@ test('hotfix-B：署名例外不得被 URL 斜杠与引号字符串反向利用'
   assert.equal(comment.violations.length, 0);
 });
 
+test('hotfix-B r1：codex 评审探针样本——三类庇护路径已闭合', () => {
+  // 尾随通配过贪：URL 后的 "> 不得被并入匹配区间而庇护紧随的产品标题
+  const a = judge('apps/zhongshu-admin-web/src/a.html',
+    '<a href="https://doc.iocoder.cn">芋道管理系统</a>', entries, now);
+  assert.ok(a.violations.some((v) => v.pattern === '芋道'), 'URL 尾随通配不得跨引号庇护产品标题');
+  // setter 形态限定 src/test：应用侧 setTitle(...) 不得被测试夹具模式庇护
+  const b = judge('apps/zhongshu-admin-web/src/a.html', 'setTitle("芋道源码管理平台");', entries, now);
+  assert.ok(b.violations.some((v) => v.pattern === '芋道'), '应用侧 set* 调用不得被测试夹具模式庇护');
+  // package.json 裸 token：name 等产品元数据字段不得被 provenance 例外庇护
+  const c = judge('apps/zhongshu-miniapp/package.json', '{\n  "name": "unibest"\n}', entries, now);
+  assert.ok(c.violations.some((v) => v.pattern === 'unibest'), 'package.json name 字段不得被 provenance 例外庇护');
+  // 真实 provenance 形态仍放行
+  const d = judge('apps/zhongshu-miniapp/package.json',
+    '{\n  "unibest-version": "4.1.0",\n  "repository": "https://github.com/feige996/unibest"\n}', entries, now);
+  assert.equal(d.violations.length, 0, 'provenance 字段与仓库地址应放行');
+  // 真实测试夹具形态仍放行
+  const e = judge('services/zhongshu-core/zszj-module-bpm/src/test/java/A.java',
+    'group.setName("芋道源码");', entries, now);
+  assert.equal(e.violations.length, 0, 'src/test 下的 setter 夹具应放行');
+});
+
 test('hotfix-B：白名单结构自检——content 例外必须带模式，避免静默失效', () => {
   // P1-3 修复后，scope=content 但无 content 模式的条目不再放行任何命中
   // （原 ^docs/0[1-6]- 条目即依赖 pathPass 缺陷生效），此处固化该不变式

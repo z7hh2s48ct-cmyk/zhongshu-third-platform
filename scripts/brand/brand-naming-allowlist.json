@@ -122,12 +122,11 @@
       "path": "apps/zhongshu-miniapp/package\\.json$",
       "scope": "content",
       "category": "必要保留",
-      "reason": "上游 unibest 元数据字段与仓库地址（docs/06 第 4.1 节：署名与来源元数据保留）",
+      "reason": "上游 unibest 元数据字段与仓库地址（docs/06 第 4.1 节：署名与来源元数据保留）；hotfix-B：原裸 token \"unibest\" 会庇护 package.json 内任意位置（包括 name 等产品元数据字段），现改为仅匹配 provenance 字段键、URL 与描述中的模板路径",
       "content": [
-        "unibest",
-        "feige996",
-        "yudaocode",
-        "1020103647"
+        "\"unibest-[a-z-]+\"",
+        "https?://[^\\s\"'<>()]*unibest[^\\s\"'<>()]*",
+        "uniapp/unibest"
       ]
     },
     {
@@ -135,36 +134,44 @@
       "category": "必要保留",
       "reason": "上游署名/参考链接/issue 引用（源码注释、包元数据、LICENSE 引用）",
       "content": [
-        "gitee\\.com/yudaocode/\\S*",
-        "github\\.com/yudaocode/\\S*",
-        "github\\.com/YunaiV/\\S*",
-        "gitee\\.com/zhijiantianya/\\S*",
+        "gitee\\.com/yudaocode/[^\\s\"'<>()]*",
+        "github\\.com/yudaocode/[^\\s\"'<>()]*",
+        "github\\.com/YunaiV/[^\\s\"'<>()]*",
+        "gitee\\.com/zhijiantianya/[^\\s\"'<>()]*",
         "github\\.com/yudaocode$",
-        "static\\.iocoder\\.cn/\\S*",
-        "doc\\.iocoder\\.cn\\S*",
-        "www\\.iocoder\\.cn\\S*",
-        "cloud\\.iocoder\\.cn\\S*",
-        "iocoder\\.cn/MyBatis\\S*",
-        "\\S*@iocoder\\.cn",
-        "doc\\.yudao\\S*",
+        "static\\.iocoder\\.cn/[^\\s\"'<>()]*",
+        "doc\\.iocoder\\.cn[^\\s\"'<>()]*",
+        "www\\.iocoder\\.cn[^\\s\"'<>()]*",
+        "cloud\\.iocoder\\.cn[^\\s\"'<>()]*",
+        "iocoder\\.cn/MyBatis[^\\s\"'<>()]*",
+        "[^\\s\"'<>()]*@iocoder\\.cn",
+        "doc\\.yudao[^\\s\"'<>()]*",
         " Created by 芋道源码",
         "@author\\s+芋道源码",
-        "(?<!:)//.*芋道源码",
+        "(?<!:)//[^\"'<>()]*芋道源码",
         "芋道源码\\s*[:：]",
         "芋道源码\\s*\\(",
         "芋道源码\\s+https?://",
         "-+\\s*芋道源码",
         "\\)\\s*芋道源码",
-        "set\\w+\\(.*芋道源码",
-        "regex\\s*=.*芋道源码",
         "\\\"author\\\"\\s*:.*芋道源码",
-        "example\\s*=.*芋道源码",
-        "thenReturn\\(.*芋道源码",
-        "assertEquals\\(.*芋道源码",
+        "example\\s*=[^)]*芋道源码",
         "name=芋道源码",
         "@芋艿",
         "芋艿（YunaiV）",
         "yuanma@zszj\\.example\\.com"
+      ]
+    },
+    {
+      "path": "(^|/)src/test/",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "hotfix-B：测试夹具/断言中的上游示例数据（setter、thenReturn、assertEquals、regex 赋值形态）；原位于无 path 限定的全局署名条目，使应用侧 setTitle(\"芋道源码管理平台\") 等同形态调用被庇护；现限定 src/test 路径",
+      "content": [
+        "set\\w+\\(.*芋道源码",
+        "thenReturn\\(.*芋道源码",
+        "assertEquals\\(.*芋道源码",
+        "regex\\s*=.*芋道源码"
       ]
     },
     {
@@ -174,7 +181,7 @@
       "reason": "unibest 上游模板源码的官方维护注释与上游 issue 引用（来源说明）",
       "content": [
         "unibest 官方维护",
-        "github\\.com/unibest-tech/\\S*",
+        "github\\.com/unibest-tech/[^\\s\"'<>()]*",
         "unibest 框架",
         "貌似 unibest",
         "unibest\\.tech"
