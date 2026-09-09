@@ -1,0 +1,88 @@
+# ZS-SEC-012.A：安全夹具测试配置
+# 该配置仅用于测试，不暴露任何真实秘密
+#
+# 归属说明：本夹具测试置于 biz-tenant 模块（而非 security），因为 security↔biz-tenant 若互相依赖
+# 会构成 Maven reactor 循环。biz-tenant 已 compile 依赖 security、test 依赖 starter-test（含 MockMvc），
+# 夹具测试放这里可同时引用 security + tenant 真实组件，零新增依赖边 → 无循环。
+
+spring:
+  application:
+    name: zszj-security-fixture
+  main:
+    allow-bean-definition-overriding: true
+    allow-circular-references: false
+  # ZS-SEC-012.A：排除与本安全夹具无关或会拖入 DB/Redis/调度的自动配置。
+  # 保留：ZszjWebAutoConfiguration、ZszjJacksonAutoConfiguration、ZszjSecurityAutoConfiguration、ZszjWebSecurityConfigurerAdapter。
+  # ZszjTenantAutoConfiguration 被排除后，租户 Web 组件由 TenantFixtureConfiguration 手动装配（真实组件、不改源码）。
+  # mybatis/redis/job 是 biz-tenant 的 compile 依赖（无法用 pom 排除），故在此按类名排除其自动配置。
+  autoconfigure:
+    exclude:
+      # 租户自动配置（其无条件创建 MyBatis 拦截器 / Redis 缓存管理器 / TenantCommonApi 驱动的重型 Bean）
+      - cn.zszj.framework.tenant.config.ZszjTenantAutoConfiguration
+      # mybatis starter
+      - cn.zszj.framework.datasource.config.ZszjDataSourceAutoConfiguration
+      - cn.zszj.framework.mybatis.config.ZszjMybatisAutoConfiguration
+      - cn.zszj.framework.translate.config.ZszjTranslateAutoConfiguration
+      # redis starter
+      - cn.zszj.framework.redis.config.ZszjRedisAutoConfiguration
+      - cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration
+      # job starter
+      - cn.zszj.framework.quartz.config.ZszjQuartzAutoConfiguration
+      - cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration
+      # web starter 中与本夹具无关的自动配置
+      - cn.zszj.framework.apilog.config.ZszjApiLogAutoConfiguration
+      - cn.zszj.framework.swagger.config.ZszjSwaggerAutoConfiguration
+      - cn.zszj.framework.encrypt.config.ZszjApiEncryptAutoConfiguration
+      - cn.zszj.framework.operatelog.config.ZszjOperateLogConfiguration
+      - cn.zszj.framework.banner.config.ZszjBannerAutoConfiguration
+      - cn.zszj.framework.xss.config.ZszjXssAutoConfiguration
+
+# Web 配置
+zszj:
+  web:
+    admin-api:
+      prefix: /admin-api
+      controller: "**.controller.admin.**"
+    app-api:
+      prefix: /app-api
+      controller: "**.controller.app.**"
+    admin-ui:
+      url: http://localhost:8080
+
+  # Security 配置
+  security:
+    token-header: Authorization
+    token-parameter: token
+    mock-enable: false  # ZS-ENG-004：默认关闭模拟认证
+    mock-secret: fixture-test-secret
+    permit-all-urls:
+      - /actuator/health
+    password-encoder-length: 4
+
+  # Tenant 配置
+  tenant:
+    enable: true
+    ignore-urls:
+      - /admin-api/fixture/public/**
+      - /actuator/health
+    ignore-visit-urls: []
+    ignore-tables: []
+    ignore-caches: []
+
+# 日志配置
+logging:
+  level:
+    root: WARN
+    cn.zszj.framework.security: DEBUG
+    cn.zszj.framework.tenant: DEBUG
+    org.springframework.security: DEBUG
+
+# Actuator 配置（ZS-ENG-005：仅暴露 health）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
