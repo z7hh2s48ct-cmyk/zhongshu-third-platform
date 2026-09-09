@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * ZS-SEC-012.A：测试用 Controller，提供公开/认证/权限三种端点。
@@ -23,8 +24,10 @@ import java.util.Map;
  * 2. 认证端点（需登录）：/fixture/auth/**
  * 3. 权限端点（@PreAuthorize）：/fixture/perm/**
  * 4. 对象授权端点：/fixture/obj/**
+ * 6. 异步端点（ZS-SEC-002）：/fixture/async/**，验证 ASYNC permitAll 不使首次 REQUEST 派发免认证
  *
  * 所有端点均位于 /admin-api 前缀下，触发 ADMIN userType 推导。
+ * （/app-api MEMBER 主体端点见 {@link TestAppController}，用于 ZS-SEC-002 的 ADMIN/MEMBER 双向串用验证。）
  */
 @RestController
 @RequestMapping("/admin-api/fixture")
@@ -143,5 +146,21 @@ public class TestControllers {
         result.put("visitTenantId", user != null ? user.getVisitTenantId() : null);
         result.put("skipPermissionCheck", SecurityFrameworkUtils.skipPermissionCheck());
         return CommonResult.success(result);
+    }
+
+    // ========== 6. 异步端点（ZS-SEC-002：ASYNC 派发不免首次认证） ==========
+
+    /**
+     * 受保护的异步端点（无 {@code @PermitAll}，返回 {@link Callable} 触发 ASYNC 派发）。
+     *
+     * <p>ZS-SEC-002 验收「ASYNC（异步派发）不使首次受保护请求免认证」：安全链的
+     * {@code dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()}（见 ZszjWebSecurityConfigurerAdapter）
+     * 仅放行「异步二次派发」（SSE 场景续接），首次 REQUEST 派发仍受 {@code anyRequest().authenticated()} 约束。
+     * 故本端点在静态接口清单中被归类为 AUTHENTICATED（非匿名），运行时也必须：无 token → 首次派发 401，
+     * 有效 token → 首次派发通过认证并进入异步。全面 async/SSE 合同（流式、异步异常出口、跨线程租户上下文）归 ZS-SEC-012.B。
+     */
+    @GetMapping("/async/profile")
+    public Callable<CommonResult<String>> asyncProfile() {
+        return () -> CommonResult.success("async-profile");
     }
 }

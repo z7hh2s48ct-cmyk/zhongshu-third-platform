@@ -59,9 +59,12 @@ class ModuleWhitelistTest {
 
     @Test
     void enabledModulesMatchServerPomDependencies() throws IOException {
+        // activeModuleArtifacts 已剥离 "zszj-module-" 前缀（与 enabledModulesMatchRootPomActiveModules 同一约定），
+        // 故直接与 ENABLED_MODULES（无前缀，如 system/infra）比对。ZS-ENG-001 交付时本测试从未运行（当时无 JDK
+        // 工具链，见 05 文档 ZS-ENG-001 开发记录「测试运行…待 B01 工具链复验」），断言误在期望侧补前缀、又在实际侧按前缀
+        // 过滤已剥前缀的值，致实际恒为空、断言恒失败；ZS-SEC-002 首次以工具链运行 zszj-server 全测试时暴露并修复。
         Set<String> serverDeps = activeModuleArtifacts(read("pom.xml"));
-        assertEquals(ModuleWhitelist.ENABLED_MODULES.stream().map(m -> "zszj-module-" + m).collect(Collectors.toSet()),
-                serverDeps.stream().filter(m -> m.startsWith("zszj-module-")).collect(Collectors.toSet()),
+        assertEquals(new LinkedHashSet<>(ModuleWhitelist.ENABLED_MODULES), serverDeps,
                 "zszj-server 依赖的业务模块必须与白名单一致：未启用模块不得进入依赖闭包（Bean/Job 装配边界）");
     }
 

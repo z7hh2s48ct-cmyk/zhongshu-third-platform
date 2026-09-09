@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -36,6 +37,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 5. 跨租户访问（visit-tenant-id）- ZS-SEC-001.A 默认关闭：普通头/旧 visit 权限均 403 拒绝，不放大范围
  * 6. 对象授权 - 按 ID 归属校验
  * 7. 异常出口一致性 - CommonResult JSON 格式
+ * 8. ZS-SEC-002 分类完整性 - 受保护异步端点首次 REQUEST 派发仍需认证（ASYNC permitAll 不泄露）；
+ *    ADMIN token→/app-api 403、MEMBER token→/app-api 200（与组 2 的 MEMBER→/admin-api 403 构成 ADMIN/MEMBER 双向串用矩阵）。
+ *    注：全面 async/SSE 运行时合同（流式、异步异常出口、跨线程租户上下文、[Web]/[移动端]同步）仍归 ZS-SEC-012.B（见 05 文档 ZS-SEC-012 卡）。
  *
  * @author ZS-SEC-012.A
  */
@@ -446,6 +450,66 @@ class SecurityFilterChainFixtureTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(400))
                     .andExpect(jsonPath("$.msg").value("请求的租户标识未传递，请进行排查"));
+        }
+    }
+
+    // ========== 8. ZS-SEC-002 分类完整性（异步首次认证 + ADMIN/MEMBER 双向串用） ==========
+
+    @Nested
+    @DisplayName("8. ZS-SEC-002 分类完整性（异步首次认证 + ADMIN/MEMBER 双向串用）")
+    class ApiClassificationContract {
+
+        @Test
+        @DisplayName("受保护异步端点 + 无 token → 首次 REQUEST 派发仍 401（ASYNC permitAll 不泄露）")
+        void asyncEndpointWithoutTokenStillAuthenticated() throws Exception {
+            // 安全链 dispatcherTypeMatchers(ASYNC).permitAll() 只放行异步二次派发；
+            // 首次 REQUEST 派发命中 anyRequest().authenticated() → 无 token 401，
+            // 证明清单中归为 AUTHENTICATED 的异步端点未被 ASYNC permitAll 降级为匿名。
+            mockMvc.perform(get("/admin-api/fixture/async/profile")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(401))
+                    .andExpect(jsonPath("$.msg").value("账号未登录"));
+        }
+
+        @Test
+        @DisplayName("受保护异步端点 + 有效 token → 首次 REQUEST 派发通过认证并进入异步")
+        void asyncEndpointWithValidTokenStartsAsync() throws Exception {
+            // 有效 token 通过首次 REQUEST 派发认证 → 进入 handler 返回 Callable → asyncStarted=true，
+            // 证明该端点确为异步（走 ASYNC 派发路径），且首次派发未被 permitAll 绕过认证。
+            mockMvc.perform(get("/admin-api/fixture/async/profile")
+                            .header("Authorization", "Bearer token-t1-admin")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1))
+                    .andExpect(request().asyncStarted());
+        }
+
+        @Test
+        @DisplayName("ADMIN token 访问 /app-api → 403（用户类型不匹配，反向串用拒绝）")
+        void adminTokenOnAppApiRejected() throws Exception {
+            // token-t1-admin 的 userType=ADMIN(2)，/app-api 约定 MEMBER(1)：
+            // WebFrameworkUtils.getLoginUserType 依 servletPath 前缀 /app-api 推导 MEMBER，
+            // TokenAuthenticationFilter 比对不等 → AccessDeniedException("错误的用户类型") → 403。
+            mockMvc.perform(get("/app-api/fixture/member/profile")
+                            .header("Authorization", "Bearer token-t1-admin")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403))
+                    .andExpect(jsonPath("$.msg").value("没有该操作权限"));
+        }
+
+        @Test
+        @DisplayName("MEMBER token 访问 /app-api → 200（正确主体类型放行）")
+        void memberTokenOnAppApiAccepted() throws Exception {
+            // token-t1-member 的 userType=MEMBER(1) 与 /app-api 约定一致 → 认证通过 → 200，
+            // 与组 2 的 memberTokenOnAdminApiRejected（MEMBER→/admin-api 403）构成 ADMIN/MEMBER 双向串用矩阵，
+            // 同时运行时验证 getLoginUserType 的 /app-api → MEMBER 推导分支（此前夹具零 /app-api 端点、从未触发）。
+            mockMvc.perform(get("/app-api/fixture/member/profile")
+                            .header("Authorization", "Bearer token-t1-member")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(0))
+                    .andExpect(jsonPath("$.data.userId").value(MockOAuth2TokenApi.USER_T1_MEMBER))
+                    .andExpect(jsonPath("$.data.userType").value(MockOAuth2TokenApi.USER_TYPE_MEMBER));
         }
     }
 }
