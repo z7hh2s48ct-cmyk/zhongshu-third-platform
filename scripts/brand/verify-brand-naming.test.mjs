@@ -135,6 +135,35 @@ test('hotfix-B r1：codex 评审探针样本——三类庇护路径已闭合', 
   assert.equal(e.violations.length, 0, 'src/test 下的 setter 夹具应放行');
 });
 
+test('hotfix-B r2：字符集不得跨行终止符与 JSON 转义（codex r1 两项 P2 回归）', () => {
+  // P2-a：.* 不含换行，而显式字符集 [^)] 含——无关赋值不得跳行豁免后续产品代码
+  const ex = judge('apps/zhongshu-admin-web/src/a.ts',
+    'const example = 1;\nconst title = "芋道源码管理平台";', entries, now);
+  assert.ok(ex.violations.some((v) => v.pattern === '芋道'), 'example 赋值不得跨 \n 豁免下一行产品标题');
+  const exCrlf = judge('apps/zhongshu-admin-web/src/a.ts',
+    'const example = 1;\r\nconst title = "芋道源码管理平台";', entries, now);
+  assert.ok(exCrlf.violations.some((v) => v.pattern === '芋道'), 'CRLF 文件同样不得跨行豁免');
+  // P2-a 同根因：注释模式不得跨行豁免反引号包裹的产品标题
+  const cmt = judge('apps/zhongshu-admin-web/src/a.ts',
+    '// 上游模板说明\nconst pageTitle = `芋道源码管理平台`;', entries, now);
+  assert.ok(cmt.violations.some((v) => v.pattern === '芋道'), '行注释不得跨 \n 豁免后续反引号标题');
+  // P2-b：\s 不含反斜杠——JSON 转义序列 \n 是两个非空白字符，URL 匹配必须止于转义
+  const pkg = judge('apps/zhongshu-miniapp/package.json',
+    '{\n  "description": "https://unibest.tech\\n芋道管理系统"\n}', entries, now);
+  assert.ok(pkg.violations.some((v) => v.pattern === '芋道'), 'JSON 转义后的产品标题不得被上游 URL 遮蔽');
+  assert.ok(!pkg.violations.some((v) => v.pattern === 'unibest'), 'URL 本体仍应放行');
+  // 正向对照：同行真实形态仍全部放行
+  assert.equal(judge('services/x/A.java',
+    '@Schema(description = "昵称", example = "芋道源码")', entries, now).violations.length, 0,
+    '同行 example 署名应放行');
+  assert.equal(judge('services/x/A.java',
+    '// 芋道源码 修复了 https://doc.iocoder.cn/x 的问题\nString title = "众墅之家";', entries, now).violations.length, 0,
+    '同行注释署名应放行，且不影响下一行');
+  assert.equal(judge('apps/zhongshu-admin-web/src/a.md',
+    '见 https://github.com/yudaocode/ruoyi-vue-pro\n标题：众墅之家', entries, now).violations.length, 0,
+    '上游仓库地址应放行，换行后的自有文案不产生命中');
+});
+
 test('hotfix-B：白名单结构自检——content 例外必须带模式，避免静默失效', () => {
   // P1-3 修复后，scope=content 但无 content 模式的条目不再放行任何命中
   // （原 ^docs/0[1-6]- 条目即依赖 pathPass 缺陷生效），此处固化该不变式
