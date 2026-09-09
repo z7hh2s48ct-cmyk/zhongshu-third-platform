@@ -152,6 +152,9 @@ const outputs = [
   ['apps/zhongshu-miniapp/src/static/logo.png', encodePng(emblem.w, emblem.h, emblem.px)],
   // 衍生徽标留档（512），便于后续 App 图标等场景复用
   ['docs/assets/brand/zszj-emblem-512.png', encodePng(512, 512, resize(emblem, 512, 512).px)],
+  // Web 端 public/logo.png：index.html 加载屏与 DiyEditor 预览二维码以 /logo.png 引用（ZS-BRAND-003.A P3）；
+  // 与 512 徽标同源同尺寸，纳入生成保证派生参数调整后不残留陈旧 Logo
+  ['apps/zhongshu-admin-web/public/logo.png', encodePng(512, 512, resize(emblem, 512, 512).px)],
 ];
 
 // favicon.ico：16/32/48/256 PNG-in-ICO

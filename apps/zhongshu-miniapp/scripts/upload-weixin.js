@@ -62,6 +62,9 @@ function loadEnvFile(mode = 'production') {
 function readPackageVersion() {
   try {
     const pkg = readJson(path.resolve(ROOT_DIR, 'package.json'))
+    // zszj-version＝产品发布版本（微信上传口径）。package.json 的 version＝4.1.0 为脚手架模板版本、
+    // upstream-version 为上游基线溯源元数据（docs/06 第 9 行强制保留），二者均不用于产品上传。
+    // ZS-BRAND-003.A 迁移把本消费端自动改为读 zszj-version 却未定义该字段，致静默回退 4.1.0；hotfix-D P2-1 补定义使定义—消费一致。
     return pkg['zszj-version'] || pkg.version || '1.0.0'
   } catch {
     return '1.0.0'

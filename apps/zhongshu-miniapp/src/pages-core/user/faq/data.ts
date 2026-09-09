@@ -33,11 +33,13 @@ export const faqList: FaqCategory[] = [
       },
       {
         title: '众墅之家官网地址多少？',
-        content: 'https://www.iocoder.cn',
+        // hotfix-D P2-2：原答案把上游官网/文档域名呈现为众墅之家官网/文档，属产品可见界面引用上游链接，
+        // 违反 docs/06 第 4.1 节（上游参考链接仅保留于注释/.http 示例/上游元数据）。正式域名就绪前用占位文案。
+        content: '官网正在建设中，敬请期待。',
       },
       {
         title: '众墅之家文档地址多少？',
-        content: 'https://doc.iocoder.cn',
+        content: '文档正在建设中，敬请期待。',
       },
     ],
   },
