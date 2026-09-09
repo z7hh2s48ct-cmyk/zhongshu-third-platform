@@ -3,7 +3,7 @@
  *
  * 依次执行全部本地检查（快 → 慢），任一失败即整体失败并汇总：
  *   1. 来源复制校验器单测（verify-source-copy.test.mjs）
- *   2. 品牌命名门禁单测 + 全仓扫描
+ *   2. 品牌命名门禁单测 + 命名迁移工具单测 + 全仓扫描
  *   3. 文档一致性单测 + 全文档扫描（ZS-GOV-001）
  *   4. 模块白名单静态检查（ZS-ENG-001）
  *   5. 数据源 PG 合同检查（ZS-DB-001.A）
@@ -25,6 +25,7 @@ const withMvn = process.argv.includes('--mvn');
 const gates = [
   { id: 'G1 来源复制校验器单测', cmd: ['node', '--test', 'scripts/verify-source-copy.test.mjs'] },
   { id: 'G2 品牌命名门禁单测', cmd: ['node', '--test', 'scripts/brand/verify-brand-naming.test.mjs'] },
+  { id: 'G2b 命名迁移工具单测（冻结文件排除 + 租户域名唯一）', cmd: ['node', '--test', 'scripts/brand/apply-naming-migration.test.mjs'] },
   { id: 'G3 品牌命名全仓扫描', cmd: ['node', 'scripts/brand/verify-brand-naming.mjs'] },
   { id: 'G4 文档一致性单测', cmd: ['node', '--test', 'scripts/gov/verify-docs.test.mjs'] },
   { id: 'G5 文档一致性全量', cmd: ['node', 'scripts/gov/verify-docs.mjs'] },

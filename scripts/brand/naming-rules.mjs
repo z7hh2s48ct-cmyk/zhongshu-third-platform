@@ -68,14 +68,26 @@ export function matchesChineseBrandScope(relativePath) {
 
 // SQL 种子范围（ZS-BRAND-004）：产品可见演示数据的品牌串与演示域中性化。
 // 注意这些仅替换种子取值；上游注释/署名仍按 docs/06 第 4.1 节保留。
+//
+// 映射目标必须保持「一对一无冲突」的判定标准：仅当目标域会落入被唯一性约束
+// 或用于路由选择的字段（system_tenant.websites，经 FIND_IN_SET 精确分词匹配、
+// 由 validTenantWebsiteDuplicate 校验唯一、由 getTenantByWebsite 取首条）时，
+// 两个来源映射到同一目标才构成缺陷。
 export const SQL_SEED_REPLACEMENTS = [
   ['yudao@iocoder.cn', 'zszj@example.com'],
   ['@iocoder.cn', '@example.com'],
   ['www.iocoder.cn', 'www.zszj.example.com'],
   ['doc.iocoder.cn', 'doc.zszj.example.com'],
   ['test.iocoder.cn', 'test.zszj.example.com'],
+  // cloud/doc 两站同为上游文档门户，合并到同一 doc 占位域是有意为之：
+  // 该目标只出现在菜单外链与 OAuth2 回调演示值中，不受唯一性约束、不参与租户路由。
   ['cloud.iocoder.cn', 'doc.zszj.example.com'],
-  ['zsxq.iocoder.cn', 'www.zszj.example.com'],
+  // hotfix-C P2-2：原映射为 www.zszj.example.com，与 www.iocoder.cn 同目标，
+  // 使租户 1（众墅之家）与租户 121（小租户）持有完全相同的 websites 分词，
+  // getTenantByWebsite() 取首条且无 ORDER BY，域名选租户结果不确定；
+  // validTenantWebsiteDuplicate() 亦会拒绝租户 121 后续任何涉及 websites 的更新。
+  // 保留上游子域语义，改用独立占位域以维持租户可区分。
+  ['zsxq.iocoder.cn', 'zsxq.zszj.example.com'],
   ['芋道的公众', '众墅之家公告示例'],
   ['芋道源码', '众墅之家'],
   ['芋道', '众墅之家'],

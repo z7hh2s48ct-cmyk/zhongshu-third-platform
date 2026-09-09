@@ -25,8 +25,25 @@ UPDATE system_tenant
        'test.iocoder.cn', 'test.zszj.example.com'),
        'doc.iocoder.cn', 'doc.zszj.example.com'),
        'cloud.iocoder.cn', 'doc.zszj.example.com'),
-       'zsxq.iocoder.cn', 'www.zszj.example.com')
+       'zsxq.iocoder.cn', 'zsxq.zszj.example.com')
  WHERE websites LIKE '%iocoder.cn%';
+
+-- 1.1 修复历史升级遗留的租户同域冲突（hotfix-C P2-2）：
+--     早期版本本脚本把 zsxq.iocoder.cn 与 www.iocoder.cn 一并映射到 www.zszj.example.com，
+--     使租户 1（众墅之家）与租户 121（小租户）持有相同的 websites 分词：
+--     getTenantByWebsite() 取首条且无 ORDER BY，域名选租户结果不确定；
+--     validTenantWebsiteDuplicate() 亦拒绝租户 121 后续涉及 websites 的更新。
+--     已升级库中源域已消失，重跑上面的 REPLACE 链无法自愈，故按演示租户身份定点还原。
+--     仅当租户 1 确实持有同一域名时才改，避免误伤运维手工配置；还原后不再命中 LIKE，幂等。
+UPDATE system_tenant
+   SET websites = REPLACE(websites, 'www.zszj.example.com', 'zsxq.zszj.example.com')
+ WHERE id = 121 AND deleted = 0
+   AND websites LIKE '%www.zszj.example.com%'
+   AND EXISTS (
+     SELECT 1 FROM system_tenant t1
+      WHERE t1.id = 1 AND t1.deleted = 0
+        AND t1.websites LIKE '%www.zszj.example.com%'
+   );
 
 -- 2. 部门：演示部门名
 UPDATE system_dept
@@ -102,7 +119,7 @@ UPDATE system_oauth2_client
        'test.iocoder.cn', 'test.zszj.example.com'),
        'doc.iocoder.cn', 'doc.zszj.example.com'),
        'cloud.iocoder.cn', 'doc.zszj.example.com'),
-       'zsxq.iocoder.cn', 'www.zszj.example.com')
+       'zsxq.iocoder.cn', 'zsxq.zszj.example.com')
  WHERE redirect_uris LIKE '%iocoder.cn%';
 
 -- 5.5 菜单外链：演示外链菜单中的上游演示域
@@ -112,7 +129,7 @@ UPDATE system_menu
        'test.iocoder.cn', 'test.zszj.example.com'),
        'doc.iocoder.cn', 'doc.zszj.example.com'),
        'cloud.iocoder.cn', 'doc.zszj.example.com'),
-       'zsxq.iocoder.cn', 'www.zszj.example.com')
+       'zsxq.iocoder.cn', 'zsxq.zszj.example.com')
  WHERE path LIKE '%iocoder.cn%';
 
 -- 6. 演示表：yudao_demo* 表/序列/约束/索引改名为 zszj_demo*
@@ -173,6 +190,7 @@ COMMIT;
 -- =====================================================================
 -- 验证（迁移后人工/脚本执行，期望全部为 0）：
 --   SELECT count(*) FROM system_tenant  WHERE name LIKE '%芋道%' OR websites LIKE '%iocoder.cn%';
+--   SELECT count(*) FROM system_tenant  WHERE id = 121 AND websites LIKE '%www.zszj.example.com%';  -- hotfix-C P2-2 租户同域冲突
 --   SELECT count(*) FROM system_users   WHERE nickname LIKE '%芋道%' OR (username = 'yudao' AND id = 100 AND tenant_id = 1) OR email = 'yudao@iocoder.cn' OR avatar LIKE '%yudao.iocoder.cn%';
 --   SELECT count(*) FROM system_notice  WHERE title LIKE '%芋道%' OR content LIKE '%yudao.iocoder.cn%';
 --   SELECT count(*) FROM system_dept    WHERE name LIKE '%芋道%';
