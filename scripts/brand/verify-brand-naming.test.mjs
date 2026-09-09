@@ -164,6 +164,46 @@ test('hotfix-B r2：字符集不得跨行终止符与 JSON 转义（codex r1 两
     '上游仓库地址应放行，换行后的自有文案不产生命中');
 });
 
+test('hotfix-B r2：不变式——任何 content 例外均不得跨行终止符豁免后续品牌串', () => {
+  // 已证实的三个跨行豁免漏洞（\s 包含 \n\r，故无关前缀可跳行庇护下一行产品文案）：
+  //   @author\n芋道源码…   ---\n芋道源码…   foo()\n芋道源码…
+  // 注：括号用例必须使 ) 紧邻换行（foo(); 因中间有 ; 本来就不会被庇护，属无效用例）
+  const EXPLOITS = [
+    ['@author 尾随换行', '@author \n芋道源码管理平台'],
+    ['markdown 分隔线后换行', '---\n芋道源码管理平台'],
+    ['右括号紧邻换行', 'foo()\n芋道源码管理平台'],
+    ['链接右括号后换行', '[文档](https://x.com)\n芋道源码管理平台'],
+  ];
+  for (const [name, text] of EXPLOITS) {
+    const r = judge('apps/zhongshu-admin-web/src/a.md', text, entries, now);
+    assert.ok(r.violations.some((v) => v.pattern === '芋道'),
+      `${name}不得跨行豁免下一行产品文案: ${JSON.stringify(text)}`);
+  }
+  // 系统化不变式：对全部 content 模式做「无关前缀 + 换行 + 旧品牌串」穷举探针，
+  // 若匹配区间同时跨过换行且吞掉尾部品牌串，则仍存在跨行豁免风险
+  const HEADS = ['', '// x', 'example = ', 'example = "', ') ', '- ', '@author ', '@author', '"author"',
+    'regex ', '芋道源码', 'name=', ' Created by ', 'foo();', 'x)', '---', '[link](https://x.com)', '*', '  ', '\t',
+    'https://doc.iocoder.cn', 'https://unibest.tech', 'github.com/yudaocode/', 'static.iocoder.cn/', 'doc.yudao'];
+  const TAILS = ['芋道源码', '芋道管理系统', '芋道', 'unibest', 'yudao', 'Yudao', 'cn.iocoder', 'youdao'];
+  for (const e of entries) {
+    for (const c of e.content ?? []) {
+      const re = new RegExp(c);
+      for (const head of HEADS) {
+        for (const t of TAILS) {
+          for (const nl of ['\n', '\r\n']) {
+            const s = head + nl + t;
+            re.lastIndex = 0;
+            const m = re.exec(s);
+            const crosses = !!(m && /[\r\n]/.test(m[0]) && m[0].includes(t) && m.index < head.length);
+            assert.ok(!crosses,
+              `content 模式跨行豁免: ${c} 对 ${JSON.stringify(s)} 匹配到 ${JSON.stringify(m && m[0])}`);
+          }
+        }
+      }
+    }
+  }
+});
+
 test('hotfix-B：白名单结构自检——content 例外必须带模式，避免静默失效', () => {
   // P1-3 修复后，scope=content 但无 content 模式的条目不再放行任何命中
   // （原 ^docs/0[1-6]- 条目即依赖 pathPass 缺陷生效），此处固化该不变式
