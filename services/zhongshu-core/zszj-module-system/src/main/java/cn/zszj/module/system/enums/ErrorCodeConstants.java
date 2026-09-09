@@ -77,6 +77,13 @@ public interface ErrorCodeConstants {
     // ========== 通知公告 1-002-008-000 ==========
     ErrorCode NOTICE_NOT_FOUND = new ErrorCode(1_002_008_001, "当前通知公告不存在");
 
+    // ========== 权限分配校验 1-002-009-000 ==========
+    ErrorCode PERMISSION_ASSIGN_USER_OTHER_TENANT = new ErrorCode(1_002_009_000, "被授权用户({})不属于当前租户，拒绝分配");
+    ErrorCode PERMISSION_ASSIGN_ROLE_OTHER_TENANT = new ErrorCode(1_002_009_001, "被授权角色({})不属于当前租户，拒绝分配");
+    ErrorCode PERMISSION_ASSIGN_DEPT_OTHER_TENANT = new ErrorCode(1_002_009_002, "数据权限部门({})不属于当前租户，拒绝分配");
+    ErrorCode PERMISSION_GRANT_EXCEED_CEILING = new ErrorCode(1_002_009_003, "超出可授予权限上限，非超级管理员不能授予超级管理员等特权角色");
+    ErrorCode PERMISSION_SELF_ELEVATION = new ErrorCode(1_002_009_004, "禁止为当前登录用户自身新增角色，避免自我提权");
+
     // ========== 短信渠道 1-002-011-000 ==========
     ErrorCode SMS_CHANNEL_NOT_EXISTS = new ErrorCode(1_002_011_000, "短信渠道不存在");
     ErrorCode SMS_CHANNEL_DISABLE = new ErrorCode(1_002_011_001, "短信渠道不处于开启状态，不允许选择");

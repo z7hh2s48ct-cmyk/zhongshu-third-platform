@@ -5,13 +5,18 @@ import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.extra.spring.SpringUtil;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
+import cn.zszj.framework.common.exception.ErrorCode;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
 import cn.zszj.framework.datapermission.core.annotation.DataPermission;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
+import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
 import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
 import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
 import cn.zszj.module.system.dal.dataobject.permission.RoleMenuDO;
 import cn.zszj.module.system.dal.dataobject.permission.UserRoleDO;
+import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.permission.RoleMenuMapper;
 import cn.zszj.module.system.dal.mysql.permission.UserRoleMapper;
 import cn.zszj.module.system.dal.redis.RedisKeyConstants;
@@ -33,8 +38,11 @@ import jakarta.annotation.Resource;
 import java.util.*;
 import java.util.function.Supplier;
 
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static cn.zszj.framework.common.util.collection.CollectionUtils.convertMap;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.zszj.framework.common.util.json.JsonUtils.toJsonString;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
 
 /**
  * 权限 Service 实现类
@@ -139,6 +147,8 @@ public class PermissionServiceImpl implements PermissionService {
             allEntries = true) // allEntries 清空所有缓存，主要一次更新涉及到的 menuIds 较多，反倒批量会更快
     })
     public void assignRoleMenu(Long roleId, Set<Long> menuIds) {
+        // ZS-PERM-001.A：分配前校验角色归属，防止篡改他租户角色 ID 写入关联
+        validateRoleForAssign(roleId);
         // 获得角色拥有菜单编号
         Set<Long> dbMenuIds = convertSet(roleMenuMapper.selectListByRoleId(roleId), RoleMenuDO::getMenuId);
         // 计算新增和删除的菜单编号
@@ -213,6 +223,10 @@ public class PermissionServiceImpl implements PermissionService {
         Set<Long> roleIdList = CollUtil.emptyIfNull(roleIds);
         Collection<Long> createRoleIds = CollUtil.subtract(roleIdList, dbRoleIds);
         Collection<Long> deleteMenuIds = CollUtil.subtract(dbRoleIds, roleIdList);
+        // ZS-PERM-001.A：写入前统一校验，防止篡改他租户 用户/角色 ID、批量混入、越权授予与自我提权
+        validateUserForAssign(userId);
+        validateRolesForAssign(roleIdList, createRoleIds);
+        validateUserRoleGrantCeiling(userId, createRoleIds);
         // 执行新增和删除。对于已经授权的角色，不用做任何处理
         if (!CollectionUtil.isEmpty(createRoleIds)) {
             userRoleMapper.insertBatch(CollectionUtils.convertList(createRoleIds, roleId -> {
@@ -269,6 +283,9 @@ public class PermissionServiceImpl implements PermissionService {
 
     @Override
     public void assignRoleDataScope(Long roleId, Integer dataScope, Set<Long> dataScopeDeptIds) {
+        // ZS-PERM-001.A：校验角色与数据权限部门归属，防止篡改他租户 角色/部门 ID
+        validateRoleForAssign(roleId);
+        validateDeptListForAssign(dataScopeDeptIds);
         roleService.updateRoleDataScope(roleId, dataScope, dataScopeDeptIds);
     }
 
@@ -332,6 +349,141 @@ public class PermissionServiceImpl implements PermissionService {
             log.error("[getDeptDataPermission][LoginUser({}) role({}) 无法处理]", userId, toJsonString(result));
         }
         return result;
+    }
+
+    // ========== ZS-PERM-001.A 授权目标归属与上限校验  ==========
+
+    /**
+     * 校验被授权用户：必须存在，且归属当前技术租户。
+     *
+     * 防止篡改他租户用户 ID 进行授权。
+     */
+    private void validateUserForAssign(Long userId) {
+        AdminUserDO user = userService.getUser(userId);
+        if (user == null) {
+            throw exception(USER_NOT_EXISTS);
+        }
+        validateTenantScope(user.getTenantId(), userId, PERMISSION_ASSIGN_USER_OTHER_TENANT);
+    }
+
+    /**
+     * 校验被授权角色集合：每个角色必须存在、归属当前技术租户；新授予的角色还必须处于开启状态。
+     *
+     * 防止篡改他租户角色 ID、批量混入无效或越权角色。状态仅校验新授予的角色，
+     * 以保证「重复授权幂等」时不会因为既有角色的状态变化而报错。
+     */
+    private void validateRolesForAssign(Collection<Long> roleIds, Collection<Long> createRoleIds) {
+        if (CollUtil.isEmpty(roleIds)) {
+            return;
+        }
+        Map<Long, RoleDO> roleMap = convertMap(roleService.getRoleList(roleIds), RoleDO::getId);
+        Set<Long> createSet = new HashSet<>();
+        if (CollUtil.isNotEmpty(createRoleIds)) {
+            createSet.addAll(createRoleIds);
+        }
+        roleIds.forEach(roleId -> {
+            RoleDO role = roleMap.get(roleId);
+            // 存在性：角色不存在（含被租户过滤掉的他租户角色）则拒绝
+            if (role == null) {
+                throw exception(ROLE_NOT_EXISTS);
+            }
+            // 归属：显式比对租户，不能只凭请求 tenant_id 为关系表填值就认定外键安全
+            validateTenantScope(role.getTenantId(), roleId, PERMISSION_ASSIGN_ROLE_OTHER_TENANT);
+            // 状态：仅对新授予的角色校验，禁用角色不可被授予
+            if (createSet.contains(roleId) && !CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus())) {
+                throw exception(ROLE_IS_DISABLE, role.getName());
+            }
+        });
+    }
+
+    /**
+     * 校验单个被授权角色：必须存在，且归属当前技术租户。
+     */
+    private void validateRoleForAssign(Long roleId) {
+        RoleDO role = roleService.getRole(roleId);
+        if (role == null) {
+            throw exception(ROLE_NOT_EXISTS);
+        }
+        validateTenantScope(role.getTenantId(), roleId, PERMISSION_ASSIGN_ROLE_OTHER_TENANT);
+    }
+
+    /**
+     * 校验数据权限部门集合：每个部门必须存在，且归属当前技术租户。
+     */
+    private void validateDeptListForAssign(Collection<Long> deptIds) {
+        if (CollUtil.isEmpty(deptIds)) {
+            return;
+        }
+        Map<Long, DeptDO> deptMap = convertMap(deptService.getDeptList(deptIds), DeptDO::getId);
+        deptIds.forEach(deptId -> {
+            DeptDO dept = deptMap.get(deptId);
+            if (dept == null) {
+                throw exception(DEPT_NOT_FOUND);
+            }
+            validateTenantScope(dept.getTenantId(), deptId, PERMISSION_ASSIGN_DEPT_OTHER_TENANT);
+        });
+    }
+
+    /**
+     * 校验授予上限与自我提权（仅针对新授予的角色）。
+     *
+     * 非超级管理员：既不能授予超级管理员等特权角色，也不能为自身新增角色。
+     * 无登录上下文（如系统内部/租户供给路径）时跳过，仅保留归属校验；超级管理员保留完整管理能力。
+     */
+    private void validateUserRoleGrantCeiling(Long userId, Collection<Long> createRoleIds) {
+        // 无新增授予时无需校验，保证重复授权幂等
+        if (CollUtil.isEmpty(createRoleIds)) {
+            return;
+        }
+        Long loginUserId = SecurityFrameworkUtils.getLoginUserId();
+        // 无登录上下文（系统内部调用/租户供给）时，跳过上限与自我提权校验
+        if (loginUserId == null) {
+            return;
+        }
+        // 超级管理员保留完整管理能力
+        if (isSuperAdminUser(loginUserId)) {
+            return;
+        }
+        // 上限：非超管不得授予超管等特权角色
+        if (roleService.hasAnySuperAdmin(createRoleIds)) {
+            throw exception(PERMISSION_GRANT_EXCEED_CEILING);
+        }
+        // 自我提权：非超管不得为自身新增角色
+        if (loginUserId.equals(userId)) {
+            throw exception(PERMISSION_SELF_ELEVATION);
+        }
+    }
+
+    /**
+     * 判断用户是否为超级管理员。
+     */
+    private boolean isSuperAdminUser(Long userId) {
+        Set<Long> roleIds = getUserRoleIdListByUserId(userId);
+        return CollUtil.isNotEmpty(roleIds) && roleService.hasAnySuperAdmin(roleIds);
+    }
+
+    /**
+     * 校验目标对象的租户归属：必须属于当前技术租户。
+     *
+     * 仅在存在明确技术租户上下文、且未忽略租户时执行。租户供给路径通过
+     * {@link cn.zszj.framework.tenant.core.util.TenantUtils#execute} 设置具体租户且不忽略，
+     * 故新建用户/角色的归属天然满足校验；系统级忽略租户的操作则跳过。
+     */
+    private void validateTenantScope(Long targetTenantId, Long targetId, ErrorCode errorCode) {
+        if (!isTenantScopeValidationEnabled()) {
+            return;
+        }
+        Long currentTenantId = TenantContextHolder.getTenantId();
+        if (!currentTenantId.equals(targetTenantId)) {
+            throw exception(errorCode, targetId);
+        }
+    }
+
+    /**
+     * 是否启用租户归属校验：存在技术租户上下文，且未忽略租户。
+     */
+    private boolean isTenantScopeValidationEnabled() {
+        return !TenantContextHolder.isIgnore() && TenantContextHolder.getTenantId() != null;
     }
 
     /**

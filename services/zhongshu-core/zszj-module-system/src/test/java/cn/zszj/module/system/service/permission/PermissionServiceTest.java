@@ -4,6 +4,8 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.extra.spring.SpringUtil;
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
 import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
@@ -17,6 +19,7 @@ import cn.zszj.module.system.enums.permission.DataScopeEnum;
 import cn.zszj.module.system.service.dept.DeptService;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.context.annotation.Import;
@@ -29,8 +32,10 @@ import java.util.Set;
 import static cn.hutool.core.collection.ListUtil.toList;
 import static cn.zszj.framework.common.util.collection.SetUtils.asSet;
 import static cn.zszj.framework.test.core.util.AssertUtils.assertPojoEquals;
+import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomLongId;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
 import static java.util.Collections.singleton;
 import static java.util.Collections.singletonList;
 import static org.junit.jupiter.api.Assertions.*;
@@ -56,6 +61,12 @@ public class PermissionServiceTest extends BaseDbUnitTest {
     private DeptService deptService;
     @MockitoBean
     private AdminUserService userService;
+
+    @AfterEach
+    public void tearDownTenantContext() {
+        // 清理租户上下文，避免 ThreadLocal 泄漏到其它用例
+        TenantContextHolder.clear();
+    }
 
     @Test
     public void testHasAnyPermissions_superAdmin() {
@@ -131,6 +142,12 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         // 准备参数
         Long roleId = 1L;
         Set<Long> menuIds = asSet(200L, 300L);
+        // mock 当前技术租户上下文 + 角色归属（ZS-PERM-001.A）
+        TenantContextHolder.setTenantId(100L);
+        when(roleService.getRole(eq(roleId))).thenReturn(randomPojo(RoleDO.class, o -> {
+            o.setId(roleId);
+            o.setTenantId(100L);
+        }));
         // mock 数据
         RoleMenuDO roleMenu01 = randomPojo(RoleMenuDO.class).setRoleId(1L).setMenuId(100L);
         roleMenuMapper.insert(roleMenu01);
@@ -146,6 +163,23 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         assertEquals(200L, roleMenuList.get(0).getMenuId());
         assertEquals(1L, roleMenuList.get(1).getRoleId());
         assertEquals(300L, roleMenuList.get(1).getMenuId());
+    }
+
+    @Test
+    public void testAssignRoleMenu_roleOtherTenant_rejected() {
+        // 准备参数：当前技术租户为 100，被授权角色归属他租户 200
+        Long roleId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(roleService.getRole(eq(roleId))).thenReturn(randomPojo(RoleDO.class, o -> {
+            o.setId(roleId);
+            o.setTenantId(200L); // 他租户
+        }));
+
+        // 调用，并断言拒绝
+        assertServiceException(() -> permissionService.assignRoleMenu(roleId, asSet(200L)),
+                PERMISSION_ASSIGN_ROLE_OTHER_TENANT, roleId);
+        // 未写入任何关联
+        assertTrue(CollUtil.isEmpty(roleMenuMapper.selectListByRoleId(roleId)));
     }
 
     @Test
@@ -247,6 +281,15 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         // 准备参数
         Long userId = 1L;
         Set<Long> roleIds = asSet(200L, 300L);
+        // mock 当前技术租户上下文 + 用户/角色归属（ZS-PERM-001.A）
+        TenantContextHolder.setTenantId(100L);
+        when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setTenantId(100L);
+        }));
+        when(roleService.getRoleList(any())).thenReturn(toList(
+                randomPojo(RoleDO.class, o -> { o.setId(200L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); }),
+                randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
         // mock 数据
         UserRoleDO userRole01 = randomPojo(UserRoleDO.class).setUserId(1L).setRoleId(100L);
         userRoleMapper.insert(userRole01);
@@ -262,6 +305,146 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         assertEquals(200L, userRoleDOList.get(0).getRoleId());
         assertEquals(1L, userRoleDOList.get(1).getUserId());
         assertEquals(300L, userRoleDOList.get(1).getRoleId());
+    }
+
+    @Test
+    public void testAssignUserRole_userOtherTenant_rejected() {
+        // 准备参数：当前技术租户为 100，被授权用户归属他租户 200
+        Long userId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setTenantId(200L); // 他租户
+        }));
+
+        // 调用，并断言拒绝
+        assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                PERMISSION_ASSIGN_USER_OTHER_TENANT, userId);
+        assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+    }
+
+    @Test
+    public void testAssignUserRole_roleOtherTenant_rejected() {
+        // 准备参数：当前技术租户为 100，被授权角色归属他租户 200
+        Long userId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setTenantId(100L);
+        }));
+        when(roleService.getRoleList(any())).thenReturn(toList(
+                randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(200L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+
+        // 调用，并断言拒绝
+        assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                PERMISSION_ASSIGN_ROLE_OTHER_TENANT, 300L);
+        assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+    }
+
+    @Test
+    public void testAssignUserRole_batchMixed_rejected() {
+        // 准备参数：批量混入——一个本租户合法角色 300 + 一个他租户角色 400
+        Long userId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setTenantId(100L);
+        }));
+        when(roleService.getRoleList(any())).thenReturn(toList(
+                randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); }),
+                randomPojo(RoleDO.class, o -> { o.setId(400L); o.setTenantId(200L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+
+        // 调用，并断言拒绝：只要混入一个他租户角色，整批拒绝
+        assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L, 400L)),
+                PERMISSION_ASSIGN_ROLE_OTHER_TENANT, 400L);
+        assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+    }
+
+    @Test
+    public void testAssignUserRole_disabledRole_rejected() {
+        // 准备参数：新授予的角色已被禁用
+        Long userId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setTenantId(100L);
+        }));
+        when(roleService.getRoleList(any())).thenReturn(toList(
+                randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setName("禁用角色"); o.setStatus(CommonStatusEnum.DISABLE.getStatus()); })));
+
+        // 调用，并断言拒绝
+        assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                ROLE_IS_DISABLE, "禁用角色");
+        assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+    }
+
+    @Test
+    public void testAssignUserRole_selfElevation_rejected() {
+        try (MockedStatic<SecurityFrameworkUtils> secMock = mockStatic(SecurityFrameworkUtils.class)) {
+            // 准备参数：非超管操作者为自身新增角色
+            Long loginUserId = 1L;
+            secMock.when(SecurityFrameworkUtils::getLoginUserId).thenReturn(loginUserId);
+            TenantContextHolder.setTenantId(100L);
+            when(userService.getUser(eq(loginUserId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(loginUserId);
+                o.setTenantId(100L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+            // 操作者（=目标用户）无任何角色 → 非超管；授予的 300 也非超管角色
+            when(roleService.hasAnySuperAdmin(any())).thenReturn(false);
+
+            // 调用，并断言拒绝：自我提权
+            assertServiceException(() -> permissionService.assignUserRole(loginUserId, asSet(300L)),
+                    PERMISSION_SELF_ELEVATION);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(loginUserId)));
+        }
+    }
+
+    @Test
+    public void testAssignUserRole_exceedCeiling_rejected() {
+        try (MockedStatic<SecurityFrameworkUtils> secMock = mockStatic(SecurityFrameworkUtils.class)) {
+            // 准备参数：非超管操作者授予超管角色
+            Long loginUserId = 1L;
+            Long targetUserId = 2L;
+            secMock.when(SecurityFrameworkUtils::getLoginUserId).thenReturn(loginUserId);
+            TenantContextHolder.setTenantId(100L);
+            when(userService.getUser(eq(targetUserId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(targetUserId);
+                o.setTenantId(100L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(900L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+            // 操作者无任何角色 → 非超管（isSuperAdminUser 短路）；授予的 900 是超管角色
+            when(roleService.hasAnySuperAdmin(any())).thenReturn(true);
+
+            // 调用，并断言拒绝：超出可授予上限
+            assertServiceException(() -> permissionService.assignUserRole(targetUserId, asSet(900L)),
+                    PERMISSION_GRANT_EXCEED_CEILING);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(targetUserId)));
+        }
+    }
+
+    @Test
+    public void testAssignUserRole_idempotent() {
+        // 准备参数：重复授予相同角色，应幂等（无新增、无报错）
+        Long userId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setTenantId(100L);
+        }));
+        when(roleService.getRoleList(any())).thenReturn(toList(
+                randomPojo(RoleDO.class, o -> { o.setId(200L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+        // 已存在 (1,200)
+        userRoleMapper.insert(randomPojo(UserRoleDO.class).setUserId(userId).setRoleId(200L));
+
+        // 调用：再次授予 {200}
+        permissionService.assignUserRole(userId, asSet(200L));
+        // 断言：仍只有一条，无重复
+        List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
+        assertEquals(1, list.size());
+        assertEquals(200L, list.get(0).getRoleId());
     }
 
     @Test
@@ -380,11 +563,38 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         Long roleId = 1L;
         Integer dataScope = 2;
         Set<Long> dataScopeDeptIds = asSet(10L, 20L);
+        // mock 当前技术租户上下文 + 角色/部门归属（ZS-PERM-001.A）
+        TenantContextHolder.setTenantId(100L);
+        when(roleService.getRole(eq(roleId))).thenReturn(randomPojo(RoleDO.class, o -> {
+            o.setId(roleId);
+            o.setTenantId(100L);
+        }));
+        when(deptService.getDeptList(anyCollection())).thenReturn(toList(
+                randomPojo(DeptDO.class, o -> { o.setId(10L); o.setTenantId(100L); }),
+                randomPojo(DeptDO.class, o -> { o.setId(20L); o.setTenantId(100L); })));
 
         // 调用
         permissionService.assignRoleDataScope(roleId, dataScope, dataScopeDeptIds);
         // 断言
         verify(roleService).updateRoleDataScope(eq(roleId), eq(dataScope), eq(dataScopeDeptIds));
+    }
+
+    @Test
+    public void testAssignRoleDataScope_deptOtherTenant_rejected() {
+        // 准备参数：当前技术租户为 100，数据权限部门归属他租户 200
+        Long roleId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(roleService.getRole(eq(roleId))).thenReturn(randomPojo(RoleDO.class, o -> {
+            o.setId(roleId);
+            o.setTenantId(100L);
+        }));
+        when(deptService.getDeptList(anyCollection())).thenReturn(toList(
+                randomPojo(DeptDO.class, o -> { o.setId(10L); o.setTenantId(200L); }))); // 他租户部门
+
+        // 调用，并断言拒绝
+        assertServiceException(() -> permissionService.assignRoleDataScope(roleId, 2, asSet(10L)),
+                PERMISSION_ASSIGN_DEPT_OTHER_TENANT, 10L);
+        verify(roleService, never()).updateRoleDataScope(any(), any(), any());
     }
 
     @Test
