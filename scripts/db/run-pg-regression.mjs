@@ -7,8 +7,9 @@
  *   3. ZS-DB-008 事务原子性与锁行为（6 用例）
  *   4. ZS-CFG-002.A 字典编码唯一约束（8 用例）
  *   5. ZS-DB-011~015 有界删除（5 表 × 有界/边界/空集）
- *   6. DB-016 Quartz 调度表结构级验证（委托核心语句）
- *   7. DB-017 PG 元数据测试表与注释/索引核对
+ *   6. ZS-DB-018 ORM/手写 SQL/租户隔离（两技术租户 CRUD/分页/关联/批量/逻辑删除 + 全局表/忽略注解/系统清理合法范围）
+ *   7. DB-016 Quartz 调度表结构级验证（委托核心语句）
+ *   8. DB-017 PG 元数据测试表与注释/索引核对
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -24,6 +25,7 @@ const cases = [
   { id: 'ZS-DB-008 事务与锁', cmd: ['node', 'scripts/db/run-db008-verify.mjs'] },
   { id: 'ZS-CFG-002.A 字典约束', cmd: ['node', 'scripts/db/run-cfg002-verify.mjs'] },
   { id: 'ZS-DB-011~015 有界删除', cmd: ['node', 'scripts/db/run-db011-015-verify.mjs'] },
+  { id: 'ZS-DB-018 ORM/手写SQL/租户隔离', cmd: ['node', 'scripts/db/run-db018-verify.mjs'] },
   { id: 'DB-016 Quartz 调度表结构级验证', caseFile: 'scripts/db/cases/db016-quartz-schema.sql' },
   { id: 'DB-017 元数据测试表', caseFile: 'scripts/db/cases/db017-metadata-testtable.sql' },
 ];
