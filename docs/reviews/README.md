@@ -23,7 +23,7 @@
 
 | # | 任务 | 缺陷 | 文件:行 | 状态 | 归入批次 |
 |---|---|---|---|---|---|
-| 1 | ZS-BRAND-004.A | username 迁移波及所有租户，未限定演示账号 | `sql/postgresql/upgrades/20260908_brand_rename_zszj.sql:37-39` | ❌ 仍有效 | ZS-BRAND-004.B 前置 hotfix |
+| 1 | ZS-BRAND-004.A | username 迁移波及所有租户，未限定演示账号 | `sql/postgresql/upgrades/20260908_brand_rename_zszj.sql:37-39` | ✅ 已修复（`45ab83e3` hotfix-A） | — |
 | 2 | ZS-BRAND-006.A | pathPass 忽略 scope，content 例外被误当 whole-file 豁免 | `scripts/brand/verify-brand-naming.mjs:49` | ❌ 仍有效 | ZS-BRAND-006.B 前置 hotfix |
 | 3 | ZS-BRAND-005 | 41 个 XML 快照与模板失配，codegen 测试失败 | `src/test/resources/codegen/*/xml/InfraStudentMapper:9` | ✅ 已修复（`89af39fc`） | — |
 | 4 | ZS-BRAND-006.A | 分页测试正向 fixture 未随过滤器改名 | `TenantServiceImplTest.java:282,297` 等 6 处 | ✅ 已修复（`52a537f5`） | — |
@@ -38,7 +38,7 @@
 | 3 | ZS-BRAND-003.A | FAQ 呈现上游链接为产品官网/文档 | `apps/zhongshu-miniapp/src/pages-core/user/faq/data.ts:35-40` | ❌ 仍有效 | ZS-BRAND-003.B |
 | 4 | ZS-BRAND-004.A | apply-naming-migration.mjs sql scope 无排除，重写升级脚本 | `scripts/brand/apply-naming-migration.mjs:42` | ❌ 仍有效 | ZS-BRAND-006.A 增强或独立 hotfix |
 | 5 | ZS-BRAND-004.A | zsxq.iocoder.cn 与 www.iocoder.cn 映射到同一目标 | `scripts/brand/naming-rules.mjs:78` | ❌ 仍有效 | ZS-BRAND-004.B |
-| 6 | ZS-BRAND-004.A | 升级脚本 email 映射不完整，yudao@iocoder.cn → yudao@example.com | `sql/postgresql/upgrades/20260908_brand_rename_zszj.sql:45-47` | ❌ 仍有效 | ZS-BRAND-004.B 前置 hotfix（与 P1-1 合并） |
+| 6 | ZS-BRAND-004.A | 升级脚本 email 映射不完整，yudao@iocoder.cn → yudao@example.com | `sql/postgresql/upgrades/20260908_brand_rename_zszj.sql:45-47` | ✅ 已修复（`45ab83e3` hotfix-A） | — |
 | 7 | ZS-BRAND-006.A | 例外匹配未验证覆盖检测命中，40 字符窗内任一白名单串庇护不相关命中 | `scripts/brand/verify-brand-naming.mjs:59-63` | ❌ 仍有效 | ZS-BRAND-006.B |
 | 8 | ZS-BRAND-006.A | 署名例外过宽，`芋道源码` 无上下文限定 | `scripts/brand/brand-naming-allowlist.json:133-134` | ❌ 仍有效 | ZS-BRAND-006.B |
 | 9 | ZS-BRAND-006.A | 文件名前过滤只检查 basename + 3 个模式 | `scripts/brand/verify-brand-naming.mjs:78-82` | ❌ 仍有效 | ZS-BRAND-006.B |
@@ -68,14 +68,14 @@
 
 ## 本轮评审统计
 
-- **已评审任务**：6 个（ZS-BRAND-001 / 002 / 003.A / 004.A / 005 / 006.A）
-- **发现总数**：18 项（5 × P1 + 12 × P2 + 1 × P3）
-- **已修复**：5 项（3 × P1 + 2 × P2），均由后续批次提交（`581927d0` / `89af39fc` / `52a537f5` / `fa40af00`）落地
-- **仍有效**：13 项（2 × P1 + 10 × P2 + 1 × P3），须在下轮批次修复
+- **已评审任务**：6 个（ZS-BRAND-001 / 002 / 003.A / 004.A / 005 / 006.A）+ 1 个 hotfix（hotfix-A）
+- **发现总数**：18 项原始 + 3 项 hotfix 迭代新增 = 21 项（5 × P1 + 15 × P2 + 1 × P3）
+- **已修复**：8 项（3 × P1 + 5 × P2），由后续批次提交（`581927d0` / `89af39fc` / `52a537f5` / `fa40af00`）及 hotfix-A（`45ab83e3`）落地
+- **仍有效**：11 项（1 × P1 + 9 × P2 + 1 × P3），须在 hotfix-B/C/D/E 修复
 - **优先级最高的 2 项 P1**：
   - ZS-BRAND-004.A username 迁移波及所有租户（存量库升级安全）
   - ZS-BRAND-006.A pathPass 忽略 scope（门禁有效性被架空）
 - **建议合并 hotfix**：
-  - hotfix-A：ZS-BRAND-004.A P1-1 + P2-6（均涉及 `system_users` 表演示账号迁移）
+  - ~~hotfix-A：ZS-BRAND-004.A P1-1 + P2-6~~（✅ 已完成，`45ab83e3`，3 轮 codex 评审通过）
   - hotfix-B：ZS-BRAND-006.A P1-2 + P2-7 + P2-8 + P2-9 + P2-10（均涉及 `verify-brand-naming.mjs` 与 `brand-naming-allowlist.json`）
   - hotfix-C：ZS-BRAND-004.A P2-4 + P2-5（均涉及 `naming-rules.mjs` / `apply-naming-migration.mjs` 工具链）
