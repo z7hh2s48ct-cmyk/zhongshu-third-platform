@@ -27,10 +27,14 @@
       "reason": "历史迁入报告不重写，其中的旧路径与旧名仅作历史记录"
     },
     {
-      "path": "^docs/0[1-6]-",
-      "scope": "content",
+      "path": "^docs/reviews/",
       "category": "必要保留",
-      "reason": "治理/需求/决策/映射文档中登记并讨论旧名的正文（决策 D-03/D-04 记录、映射表本身）"
+      "reason": "codex 代码评审文档，引用旧名作为缺陷描述、修复证据与复现步骤的一部分"
+    },
+    {
+      "path": "^docs/0[1-6]-",
+      "category": "必要保留",
+      "reason": "治理/需求/决策/映射文档中登记并讨论旧名的正文（决策 D-03/D-04 记录、映射表本身）；hotfix-B: 移除错误 scope=content（无 content 模式），改为整文件放行"
     },
     {
       "path": "^\\.omx/",
@@ -48,13 +52,26 @@
       "reason": "未启用的上游前端模板资产（docs/06 第 4.2 节）；实际摘取启用前须按映射适配"
     },
     {
-      "path": "services/zhongshu-core/zszj-module-infra/src/main/resources/codegen/",
+      "path": "^services/zhongshu-core/zszj-module-infra/src/main/resources/codegen/",
       "scope": "content",
       "category": "必要保留",
       "reason": "模板中的上游参考链接（MyBatis 插件文档等来源说明）",
       "content": [
         "iocoder\\.cn",
         "芋艿"
+      ]
+    },
+    {
+      "path": "^services/zhongshu-core/zszj-module-infra/src/main/resources/codegen/README\\.md$",
+      "scope": "content",
+      "category": "必要保留",
+      "reason": "codegen 门禁说明中引用的检测模式名（反引号内为模式字面量，非残留）",
+      "content": [
+        "`cn\\.iocoder`",
+        "`yudao`",
+        "`Yudao`",
+        "`YUDAO`",
+        "`youdao`"
       ]
     },
     {
@@ -118,20 +135,33 @@
       "category": "必要保留",
       "reason": "上游署名/参考链接/issue 引用（源码注释、包元数据、LICENSE 引用）",
       "content": [
-        "gitee\\.com/yudaocode/",
-        "github\\.com/yudaocode/",
-        "github\\.com/YunaiV/",
-        "gitee\\.com/zhijiantianya/",
+        "gitee\\.com/yudaocode/\\S*",
+        "github\\.com/yudaocode/\\S*",
+        "github\\.com/YunaiV/\\S*",
+        "gitee\\.com/zhijiantianya/\\S*",
         "github\\.com/yudaocode$",
-        "static\\.iocoder\\.cn/",
-        "doc\\.iocoder\\.cn",
-        "www\\.iocoder\\.cn",
-        "cloud\\.iocoder\\.cn",
-        "iocoder\\.cn/MyBatis",
-        "@iocoder\\.cn",
-        "doc\\.yudao",
+        "static\\.iocoder\\.cn/\\S*",
+        "doc\\.iocoder\\.cn\\S*",
+        "www\\.iocoder\\.cn\\S*",
+        "cloud\\.iocoder\\.cn\\S*",
+        "iocoder\\.cn/MyBatis\\S*",
+        "\\S*@iocoder\\.cn",
+        "doc\\.yudao\\S*",
         " Created by 芋道源码",
-        "芋道源码",
+        "@author\\s+芋道源码",
+        "(?<!:)//.*芋道源码",
+        "芋道源码\\s*[:：]",
+        "芋道源码\\s*\\(",
+        "芋道源码\\s+https?://",
+        "-+\\s*芋道源码",
+        "\\)\\s*芋道源码",
+        "set\\w+\\(.*芋道源码",
+        "regex\\s*=.*芋道源码",
+        "\\\"author\\\"\\s*:.*芋道源码",
+        "example\\s*=.*芋道源码",
+        "thenReturn\\(.*芋道源码",
+        "assertEquals\\(.*芋道源码",
+        "name=芋道源码",
         "@芋艿",
         "芋艿（YunaiV）",
         "yuanma@zszj\\.example\\.com"
@@ -144,16 +174,17 @@
       "reason": "unibest 上游模板源码的官方维护注释与上游 issue 引用（来源说明）",
       "content": [
         "unibest 官方维护",
-        "github\\.com/unibest-tech/",
+        "github\\.com/unibest-tech/\\S*",
         "unibest 框架",
         "貌似 unibest",
         "unibest\\.tech"
       ]
     },
     {
+      "path": "^(apps/zhongshu-miniapp/|scripts/brand/|services/zhongshu-core/zszj-module-infra/src/(?:main/resources/codegen/vue3_admin_uniapp/|test/resources/codegen/vue3_admin_uniapp|test/java/cn/zszj/module/infra/service/codegen/))",
       "scope": "content",
       "category": "限期兼容",
-      "reason": "小程序组件/样式前缀 yd-* 为登记缩写（docs/06 第 4.3 节）；撤除条件：移动端 H5/微信构建门禁（ZS-CLIENT-005）可用后按批次替换为 zszj-* 并撤销本例外",
+      "reason": "小程序组件/样式前缀 yd-* 为登记缩写（docs/06 第 4.3 节）；hotfix-B：补上 path 限定——原条目无 path 因而全局生效，使管理端等其他端的 yd-* 残留也被放行；现仅覆盖小程序本体、生成小程序代码的 codegen uniapp 模板及其同批夹具/断言（codegen README：模板、夹具、断言三者必须同批修改）、门禁脚本自身的模式定义；撤除条件：移动端 H5/微信构建门禁（ZS-CLIENT-005）可用后按批次替换为 zszj-* 并撤销本例外",
       "content": [
         "\\byd-[a-z]"
       ]
@@ -165,6 +196,7 @@
       "reason": "品牌门禁说明中引用的检测模式名（反引号内为模式字面量，非残留）",
       "content": [
         "`cn.iocoder`",
+        "`cn\\.iocoder\\.yudao`",
         "`yudao`",
         "`youdao`",
         "`芋道`",

@@ -26,7 +26,8 @@ const PATTERNS = [
   { name: 'unibest', re: /unibest/gi },
   { name: 'yd-prefix', re: /\byd-[a-z]/g },
 ];
-const BINARY = /\.(png|jpe?g|gif|ico|bmp|webp|svg|ttf|woff2?|eot|mp3|mp4|xdb|jar|zip|gz)$/i;
+// hotfix-B: SVG 是 XML 文本，可含 <text>/<title> 等品牌串，不再作为二进制跳过（导出以供单测固化）
+export const BINARY = /\.(png|jpe?g|gif|ico|bmp|webp|ttf|woff2?|eot|mp3|mp4|xdb|jar|zip|gz)$/i;
 const SKIP_DIRS = /(^|\/)(\.git|node_modules|dist|dist-prod|target|unpackage|\.vite|\.idea)(\/|$)/;
 
 export function loadAllowlist(read = (p) => readFileSync(p, 'utf8')) {
@@ -35,7 +36,7 @@ export function loadAllowlist(read = (p) => readFileSync(p, 'utf8')) {
   return parsed.entries.map((e) => ({
     ...e,
     pathRe: e.path ? new RegExp(e.path) : null,
-    contentRes: (e.content ?? []).map((c) => new RegExp(c)), // 无 g 标志，避免 lastIndex 状态污染
+    contentRes: (e.content ?? []).map((c) => new RegExp(c, 'g')), // g 标志用于 coverage check 遍历所有匹配；每次使用前重置 lastIndex
     expiresAt: e.expires ? new Date(`${e.expires}T23:59:59Z`) : null,
   }));
 }
@@ -46,7 +47,13 @@ function entryExpired(entry, now = new Date()) {
 
 /** 对单个文件的命中做白名单判定；返回未放行命中。 */
 export function judge(relativePath, text, entries, now = new Date()) {
-  const pathPass = entries.some((e) => e.pathRe && e.pathRe.test(relativePath) && !entryExpired(e, now));
+  // hotfix-B P1-3: pathPass 仅对无 scope 或 scope=path 的条目生效；
+  // scope=content 的条目必须经内容匹配判定，不得整文件豁免
+  const pathPass = entries.some((e) =>
+    e.pathRe && e.pathRe.test(relativePath) &&
+    (!e.scope || e.scope === 'path') &&
+    !entryExpired(e, now)
+  );
   const hits = [];
   for (const { name, re } of PATTERNS) {
     re.lastIndex = 0; // 模块级 /g 正则，逐文件重置
@@ -57,10 +64,20 @@ export function judge(relativePath, text, entries, now = new Date()) {
   const violations = [];
   for (const hit of hits) {
     const fragment = text.slice(Math.max(0, hit.index - 40), hit.index + 40);
+    // hotfix-B P2-7: 白名单 content 正则的匹配区间必须覆盖命中点，
+    // 防止邻近 40 字符内的不相关白名单串庇护产品可见品牌残留
+    const hitOffset = Math.min(40, hit.index);
     const ok = entries.some((e) => {
       if (!e.scope || e.scope !== 'content' || entryExpired(e, now)) return false;
       if (e.pathRe && !e.pathRe.test(relativePath)) return false;
-      return e.contentRes.some((cre) => cre.test(fragment));
+      return e.contentRes.some((cre) => {
+        cre.lastIndex = 0;
+        let cm;
+        while ((cm = cre.exec(fragment))) {
+          if (cm.index <= hitOffset && hitOffset < cm.index + cm[0].length) return true;
+        }
+        return false;
+      });
     });
     if (!ok) violations.push(hit);
   }
@@ -75,13 +92,19 @@ export function scanTree(entries, now = new Date()) {
   const report = { scanned: 0, allowedHits: 0, violations: [] };
   for (const rel of files) {
     if (SKIP_DIRS.test(rel)) continue;
-    // 文件/目录名检查（不含路径白名单覆盖范围）
-    const nameHit = /yudao|youdao|芋道/i.test(rel.split('/').pop());
+    // hotfix-B P2-9: 文件/目录名检查——对完整相对路径应用全部 PATTERNS，
+    // 不仅检查 basename + 3 个模式，避免目录残留与遗漏模式逃逸
+    const nameHits = [];
+    for (const { name, re } of PATTERNS) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(rel))) nameHits.push({ pattern: name, index: m.index, text: m[0] });
+    }
     const abs = `${root}${rel.replaceAll('/', process.platform === 'win32' ? '\\' : '/')}`;
-    if (nameHit) {
+    if (nameHits.length) {
       const { violations } = judge(rel, rel, entries, now); // 用路径文本自身做判定（含路径白名单）
       for (const v of violations) report.violations.push({ path: rel, pattern: v.pattern, sample: rel });
-      if (!violations.length) report.allowedHits++;
+      if (!violations.length) report.allowedHits += nameHits.length;
     }
     if (BINARY.test(rel) || !existsSync(abs) || !statSync(abs).isFile()) continue;
     let text;
