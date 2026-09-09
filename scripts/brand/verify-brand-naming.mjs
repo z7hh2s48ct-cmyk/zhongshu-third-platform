@@ -26,7 +26,7 @@ const PATTERNS = [
   { name: 'unibest', re: /unibest/gi },
   { name: 'yd-prefix', re: /\byd-[a-z]/g },
 ];
-// hotfix-B: SVG 是 XML 文本，可含 <text>/<title> 等品牌串，不再作为二进制跳过（导出以供单测固化）
+// hotfix-B P2-7: SVG 是 XML 文本，可含 <text>/<title> 等品牌串，不再作为二进制跳过（导出以供单测固化）
 export const BINARY = /\.(png|jpe?g|gif|ico|bmp|webp|ttf|woff2?|eot|mp3|mp4|xdb|jar|zip|gz)$/i;
 const SKIP_DIRS = /(^|\/)(\.git|node_modules|dist|dist-prod|target|unpackage|\.vite|\.idea)(\/|$)/;
 
@@ -64,7 +64,7 @@ export function judge(relativePath, text, entries, now = new Date()) {
   const violations = [];
   for (const hit of hits) {
     const fragment = text.slice(Math.max(0, hit.index - 40), hit.index + 40);
-    // hotfix-B P2-7: 白名单 content 正则的匹配区间必须覆盖命中点，
+    // hotfix-B P2-4: 白名单 content 正则的匹配区间必须覆盖命中点，
     // 防止邻近 40 字符内的不相关白名单串庇护产品可见品牌残留
     const hitOffset = Math.min(40, hit.index);
     const ok = entries.some((e) => {
@@ -92,7 +92,7 @@ export function scanTree(entries, now = new Date()) {
   const report = { scanned: 0, allowedHits: 0, violations: [] };
   for (const rel of files) {
     if (SKIP_DIRS.test(rel)) continue;
-    // hotfix-B P2-9: 文件/目录名检查——对完整相对路径应用全部 PATTERNS，
+    // hotfix-B P2-6: 文件/目录名检查——对完整相对路径应用全部 PATTERNS，
     // 不仅检查 basename + 3 个模式，避免目录残留与遗漏模式逃逸
     const nameHits = [];
     for (const { name, re } of PATTERNS) {

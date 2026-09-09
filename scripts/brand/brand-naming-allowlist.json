@@ -132,7 +132,7 @@
     {
       "scope": "content",
       "category": "必要保留",
-      "reason": "上游署名/参考链接/issue 引用（源码注释、包元数据、LICENSE 引用）；hotfix-B r2：URL/域名字符集排除 \\ （止于 JSON 转义），注释与 example 字符集排除 \\r\\n（.* 不含换行而显式字符集含，避免无关赋值/注释跳行豁免后续产品代码）",
+      "reason": "上游署名/参考链接/issue 引用（源码注释、包元数据、LICENSE 引用）；hotfix-B P2-5：原条目含裸 token \"芋道源码\" 与无上下文限定形态，产品可见位置可滥用，现拆分为带上下文锚点（@author / 行注释 / 冒号标题 / URL）的具体署名形态；hotfix-B r2：URL/域名字符集排除 \\ （止于 JSON 转义），注释与 example 字符集排除 \\r\\n；hotfix-B r3：署名类空白符收窄为仅水平空白（排除 CR/LF）",
       "content": [
         "gitee\\.com/yudaocode/[^\\s\"'<>()\\\\]*",
         "github\\.com/yudaocode/[^\\s\"'<>()\\\\]*",
@@ -166,7 +166,7 @@
       "path": "(^|/)src/test/",
       "scope": "content",
       "category": "必要保留",
-      "reason": "hotfix-B：测试夹具/断言中的上游示例数据（setter、thenReturn、assertEquals、regex 赋值形态）；原位于无 path 限定的全局署名条目，使应用侧 setTitle(\"芋道源码管理平台\") 等同形态调用被庇护；现限定 src/test 路径",
+      "reason": "hotfix-B P2-5：测试夹具/断言中的上游示例数据（setter、thenReturn、assertEquals、regex 赋值形态）；原位于无 path 限定的全局署名条目，使应用侧 setTitle(\"芋道源码管理平台\") 等同形态调用被庇护；现限定 src/test 路径",
       "content": [
         "set\\w+\\(.*芋道源码",
         "thenReturn\\(.*芋道源码",
