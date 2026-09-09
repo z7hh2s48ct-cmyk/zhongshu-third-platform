@@ -18,6 +18,7 @@
 | ZS-BRAND-006.A 品牌命名残留扫描门禁与全仓残留清理 | `b2c26ea9` | 136 files | ✅ 已评审 | [codex-ZS-BRAND-006.A.md](codex-ZS-BRAND-006.A.md) | 3 × P1 + 4 × P2（分页 fixture 已由 `52a537f5` 修复；README 例外已由 `fa40af00` 修复；pathPass 忽略 scope、例外匹配未验证覆盖、署名例外过宽、文件名前过滤不全、SVG 被跳过 均已由 hotfix-B 修复） |
 | hotfix-A ZS-BRAND-004.A 演示账号迁移安全修正 | `45ab83e3` | 1 file, +22/-2 | ✅ 评审通过 | [codex-hotfix-A.md](codex-hotfix-A.md) | 3 轮迭代（r1 发现 2 × P2、r2 发现 1 × P2，r3 通过） |
 | hotfix-B ZS-BRAND-006.A 门禁失效缺口修复 | `86bca7f7`→`5d11b205` | 6 files, +257/-38 | ✅ 评审通过 | [codex-hotfix-B.md](codex-hotfix-B.md) | 4 轮迭代（r0 结论通过但自带探针证据显示 3 项未闭合→未采信；r1 发现 2 × P2；r2/r3 连续 0 发现） |
+| hotfix-C ZS-BRAND-004.A 迁移工具重写冻结脚本与租户同域冲突 | `27b5f459`→`35a04d78` | r0 13 files；r1 4 files | ✅ 评审通过 | [codex-hotfix-C.md](codex-hotfix-C.md) | 2 轮迭代（r0 发现 3 × P2 + 1 × P3：MySQL 种子被同域门禁漏扫、历史修复 LIKE/REPLACE 误伤端口变体、未校验目标域归属、planScope 路径拼接；r1 0 发现） |
 
 ## 待修复缺陷汇总（按优先级）
 
@@ -38,8 +39,8 @@
 | 1 | ZS-BRAND-002 | verify-backend-naming.mjs 未排除 target/，mvn compile 后误报 | `scripts/brand/verify-backend-naming.mjs:32-34` | ❌ 仍有效 | ZS-BRAND-006.B 或独立 hotfix |
 | 2 | ZS-BRAND-003.A | upload-weixin.js 读取不存在的 zszj-version 字段 | `apps/zhongshu-miniapp/scripts/upload-weixin.js:65` | ❌ 仍有效 | ZS-BRAND-003.B 或 ZS-CLIENT-005.C |
 | 3 | ZS-BRAND-003.A | FAQ 呈现上游链接为产品官网/文档 | `apps/zhongshu-miniapp/src/pages-core/user/faq/data.ts:35-40` | ❌ 仍有效 | ZS-BRAND-003.B |
-| 4 | ZS-BRAND-004.A | apply-naming-migration.mjs sql scope 无排除，重写升级脚本 | `scripts/brand/apply-naming-migration.mjs:42` | ❌ 仍有效 | ZS-BRAND-006.A 增强或独立 hotfix |
-| 5 | ZS-BRAND-004.A | zsxq.iocoder.cn 与 www.iocoder.cn 映射到同一目标 | `scripts/brand/naming-rules.mjs:78` | ❌ 仍有效 | ZS-BRAND-004.B |
+| 4 | ZS-BRAND-004.A | apply-naming-migration.mjs sql scope 无排除，重写升级脚本 | `scripts/brand/apply-naming-migration.mjs:42` | ✅ 已修复（`27b5f459` hotfix-C P2-1；r1 `35a04d78` 补 path.join） | — |
+| 5 | ZS-BRAND-004.A | zsxq.iocoder.cn 与 www.iocoder.cn 映射到同一目标 | `scripts/brand/naming-rules.mjs:78` | ✅ 已修复（`27b5f459` hotfix-C P2-2；r1 `35a04d78` 补齐漏改的 MySQL 种子 + 整词修复谓词） | — |
 | 6 | ZS-BRAND-004.A | 升级脚本 email 映射不完整，yudao@iocoder.cn → yudao@example.com | `sql/postgresql/upgrades/20260908_brand_rename_zszj.sql:45-47` | ✅ 已修复（`45ab83e3` hotfix-A） | — |
 | 7 | ZS-BRAND-006.A | 例外匹配未验证覆盖检测命中，40 字符窗内任一白名单串庇护不相关命中 | `scripts/brand/verify-brand-naming.mjs:59-63` | ✅ 已修复（`86bca7f7` hotfix-B P2-4） | — |
 | 8 | ZS-BRAND-006.A | 署名例外过宽，`芋道源码` 无上下文限定 | `scripts/brand/brand-naming-allowlist.json:133-134` | ✅ 已修复（hotfix-B P2-5：`86bca7f7`/`c21fbea5`/`a5ce1032`） | — |
@@ -70,21 +71,23 @@
 
 ## 本轮评审统计
 
-- **已评审任务**：6 个（ZS-BRAND-001 / 002 / 003.A / 004.A / 005 / 006.A）+ 2 个 hotfix（hotfix-A / hotfix-B）
-- **发现总数**：18 项原始 + 5 项 hotfix 迭代新增（hotfix-A 3 项、hotfix-B 2 项）= **23 项**（5 × P1 + 17 × P2 + 1 × P3）
-- **已修复**：**16 项**（5 × P1 + 11 × P2）
+- **已评审任务**：6 个（ZS-BRAND-001 / 002 / 003.A / 004.A / 005 / 006.A）+ 3 个 hotfix（hotfix-A / hotfix-B / hotfix-C）
+- **发现总数**：18 项原始 + 9 项 hotfix 迭代新增（hotfix-A 3 项、hotfix-B 2 项、hotfix-C 4 项）= **27 项**（5 × P1 + 20 × P2 + 2 × P3）
+- **已修复**：**22 项**（5 × P1 + 16 × P2 + 1 × P3）
   - P1 全部清零：`45ab83e3`（hotfix-A）/ `89af39fc` / `52a537f5` / `fa40af00` / `86bca7f7`（hotfix-B）
-  - P2：`581927d0` + hotfix-B（P2-4/5/6/7）+ hotfix 迭代新增 5 项（均已在同轮内修复）
-- **仍有效**：**7 项**（0 × P1 + 6 × P2 + 1 × P3），已全部分派至 hotfix-C/D/E
+  - P2：`581927d0` + hotfix-B（P2-4/5/6/7）+ hotfix-C（本表 P2 #4/#5）+ hotfix 迭代新增 8 项（均已在同轮内修复）
+  - P3：hotfix-C 迭代新增 1 项（planScope 路径拼接，已在 r1 修复）
+- **仍有效**：**5 项**（0 × P1 + 4 × P2 + 1 × P3），已全部分派至 hotfix-D/E
 - **hotfix-B 量化成果**：修复 P1-3 后，以修复后扫描器回测旧白名单暴露 **257 处命中**（旧门禁报告 0 违规，为假阴性），涵盖全部 5 个品牌模式；现已全部转为「逐命中由 content 例外匹配区间举证」或直接改名
 - **hotfix-B 额外自查成果**：超出 codex 清单另修复 4 项门禁缺陷（缺 `g` 标志导致 970 处假阳性、`yd-*` 例外无 path 而全仓生效、`scope=content` 无模式的静默失效条目、codegen README 模式字面量假阳性）
+- **hotfix-C 关键成果**：codex r0 揭示 r0「P2-2 已闭合」为**假阴性**——G2b 同域门禁正则不接受反引号，从未扫过 MySQL 种子（第 8 个方言被漏改），租户 1/121 真实同域逃过门禁；r1 补齐 MySQL 数据 + 加方言覆盖断言，并把历史修复从 LIKE/REPLACE 子串语义改为与应用 `selectListByWebsite` 一致的整词 `POSITION` 语义、增加目标域归属校验
 - **建议合并 hotfix 进度**：
   - ~~hotfix-A：ZS-BRAND-004.A P1-1 + P2-6~~（✅ 已完成，`45ab83e3`，3 轮 codex 评审通过）
   - ~~hotfix-B：ZS-BRAND-006.A P1-3 + P2-4 + P2-5 + P2-6 + P2-7~~（✅ 已完成，`86bca7f7`→`5d11b205`，4 轮 codex 评审通过）
-  - hotfix-C：ZS-BRAND-004.A P2-4 + P2-5（`apply-naming-migration.mjs` sql 排除、`naming-rules.mjs` zsxq/www 域名冲突）
-  - hotfix-D：ZS-BRAND-003.A P2-2 + P2-3 + P3-1（upload-weixin 版本字段、FAQ 上游链接、logo.png 生成）
-  - hotfix-E：ZS-BRAND-002 P2-1 + ZS-BRAND-001 P2-11（verify-backend-naming 排除 target/、docs/06 执行顺序）
+  - ~~hotfix-C：本表 P2 #4 + P2 #5~~（✅ 已完成，`27b5f459`→`35a04d78`，2 轮 codex 评审通过）
+  - hotfix-D：本表 P2 #2 + P2 #3 + P3 #1（upload-weixin 版本字段、FAQ 上游链接、logo.png 生成）
+  - hotfix-E：本表 P2 #1 + P2 #11（verify-backend-naming 排除 target/、docs/06 执行顺序）
 
 ### 编号口径约定
 
-各任务评审文档内部的发现编号（如 ZS-BRAND-006.A 的 P1-3/P2-4…）与本 README 汇总表的序号（P1 表 #2、P2 表 #7…）**是两套独立编号**。代码注释与各 hotfix 评审文档一律引用**来源评审文档**的编号；对照表见 [codex-hotfix-B.md](codex-hotfix-B.md) 的「编号对照说明」节。
+各任务评审文档内部的发现编号（如 ZS-BRAND-006.A 的 P1-3/P2-4…）与本 README 汇总表的序号（P1 表 #2、P2 表 #7…）**是两套独立编号**。引用时须明示口径：代码注释与各 hotfix 评审文档一律引用**来源评审文档**的编号；本 README 内则一律写作「本表 P2 #n」。对照表见 [codex-hotfix-B.md](codex-hotfix-B.md) 的「编号对照说明」节。
