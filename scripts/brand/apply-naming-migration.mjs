@@ -20,6 +20,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { applyRules, matchesChineseBrandScope, matchesSqlSeedScope, SQL_SEED_REPLACEMENTS } from './naming-rules.mjs';
 
@@ -115,7 +116,9 @@ export function planScope(scope, cwd = root) {
   const wouldChange = [];
   const skipped = [];
   for (const file of files) {
-    const buf = readFileSync(cwd + file);
+    // 用 join 而非 `cwd + file` 拼接：默认 root 恰好以分隔符结尾会掩盖缺陷，
+    // 但调用方传入 process.cwd() 等无尾分隔符的自定义根时会拼出 ENOENT 路径（codex hotfix-C P3）。
+    const buf = readFileSync(join(cwd, file));
     if (buf.subarray(0, 8192).includes(0)) { skipped.push([file, 'binary']); continue; }
     const text = buf.toString('utf8');
     if (text.includes('\uFFFD') && !buf.includes(0)) { skipped.push([file, 'non-utf8']); continue; }
@@ -141,8 +144,8 @@ function main() {
 
   let changed = 0;
   for (const file of plan.wouldChange) {
-    const text = readFileSync(root + file, 'utf8');
-    writeFileSync(root + file, transform(text, scope, file), 'utf8');
+    const text = readFileSync(join(root, file), 'utf8');
+    writeFileSync(join(root, file), transform(text, scope, file), 'utf8');
     changed++;
   }
   console.log(JSON.stringify({

@@ -20,6 +20,7 @@ import { SQL_SEED_REPLACEMENTS } from './naming-rules.mjs';
 const UPGRADE_SQL = 'services/zhongshu-core/sql/postgresql/upgrades/20260908_brand_rename_zszj.sql';
 const CODEGEN_README = 'services/zhongshu-core/zszj-module-infra/src/main/resources/codegen/README.md';
 const PG_SEED = 'services/zhongshu-core/sql/postgresql/ruoyi-vue-pro.sql';
+const MYSQL_SEED = 'services/zhongshu-core/sql/mysql/ruoyi-vue-pro.sql';
 
 const gitFiles = (...args) => execFileSync('git', ['ls-files', '-z', ...args], { cwd: root, maxBuffer: 64 * 1024 * 1024 })
   .toString('utf8').split('\0').filter(Boolean);
@@ -101,6 +102,19 @@ test('P2-1：全部 scope 的 dry-run 试算都不改写冻结文件（按路径
   }
 });
 
+test('P3：planScope 接受无尾分隔符的自定义根（path.join 而非字符串拼接）', () => {
+  // 默认 root 以分隔符结尾，`cwd + file` 恰好可用，掩盖了拼接缺陷。
+  // 去掉尾分隔符模拟 process.cwd() 等常规目录路径：若仍用字符串拼接会抛 ENOENT。
+  const bareRoot = root.replace(/[\\/]+$/, '');
+  assert.ok(bareRoot.length < root.length, '构造的无尾分隔符根应短于默认 root');
+  const viaDefault = planScope('sql');
+  const viaBare = planScope('sql', bareRoot);
+  assert.deepEqual(viaBare.wouldChange, viaDefault.wouldChange);
+  assert.deepEqual(viaBare.skipped, viaDefault.skipped);
+  assert.equal(viaBare.scanned, viaDefault.scanned);
+  assert.ok(viaBare.scanned > 0, 'sql scope 应扫到文件，否则本用例无法证明路径拼接正确');
+});
+
 test('P2-2：租户 websites 上游域名的映射目标互不相同', () => {
   const map = new Map(SQL_SEED_REPLACEMENTS);
   // 这三个域名在上游种子的 system_tenant.websites 中实际出现（租户 1 / 121 / 122），
@@ -124,12 +138,15 @@ test('P2-2：全部 SQL 种子的租户行不存在跨租户同域，且已完�
   const DOMAIN = /([a-z0-9.-]*\.(?:iocoder\.cn|zszj\.example\.com))/g;
   const sqlFiles = gitFiles('*.sql');
   let checked = 0;
+  const checkedFiles = new Set();
   for (const f of sqlFiles) {
     const text = readFileSync(root + f, 'utf8');
     if (!text.includes('system_tenant')) continue;
     const rows = [];
     for (const line of text.split(/\r?\n/)) {
-      if (!/insert\s+into\s+"?system_tenant"?\s/i.test(line)) continue;
+      // 表名可能被反引号（MySQL）、双引号（部分 PG dump）包裹或裸写，三者都要匹配。
+      // 此前仅接受 `"?`，导致反引号包裹的 MySQL 种子被整体跳过（codex hotfix-C P2）。
+      if (!/insert\s+into\s+[`"]?system_tenant[`"]?\s/i.test(line)) continue;
       const id = (line.match(/values\s*\(?\s*'?(\d+)'?/i) || [])[1];
       DOMAIN.lastIndex = 0;
       const doms = [...line.matchAll(DOMAIN)].map((m) => m[1]);
@@ -137,6 +154,7 @@ test('P2-2：全部 SQL 种子的租户行不存在跨租户同域，且已完�
     }
     if (!rows.length) continue;
     checked++;
+    checkedFiles.add(f);
     const owner = new Map();
     for (const { id, doms } of rows) {
       for (const d of doms) {
@@ -149,4 +167,11 @@ test('P2-2：全部 SQL 种子的租户行不存在跨租户同域，且已完�
     }
   }
   assert.ok(checked >= 8, `受检 SQL 种子文件数异常偏少: ${checked}`);
+  // 方言覆盖断言：MySQL 种子以反引号包裹表名，曾因正则只接受双引号/裸写而被整体跳过，
+  // 使租户 1/121 同持 www.zszj.example.com 的真实同域逃过门禁（hotfix-C 漏改的第 8 个方言）。
+  // 显式断言 MySQL 与 PostgreSQL 主种子都确实进入了逐行核对，杜绝「少扫一个方言」的静默漏检。
+  assert.ok(checkedFiles.has(MYSQL_SEED),
+    `MySQL 种子未被租户同域门禁覆盖（反引号表名漏匹配）: ${MYSQL_SEED}`);
+  assert.ok(checkedFiles.has(PG_SEED),
+    `PostgreSQL 主种子未被租户同域门禁覆盖: ${PG_SEED}`);
 });

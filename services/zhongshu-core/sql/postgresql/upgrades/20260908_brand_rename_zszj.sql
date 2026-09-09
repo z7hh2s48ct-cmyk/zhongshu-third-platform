@@ -28,22 +28,71 @@ UPDATE system_tenant
        'zsxq.iocoder.cn', 'zsxq.zszj.example.com')
  WHERE websites LIKE '%iocoder.cn%';
 
--- 1.1 修复历史升级遗留的租户同域冲突（hotfix-C P2-2）：
+-- 1.1 修复历史升级遗留的租户同域冲突（hotfix-C P2-2 / codex r1 P2#2+P2#3）：
 --     早期版本本脚本把 zsxq.iocoder.cn 与 www.iocoder.cn 一并映射到 www.zszj.example.com，
 --     使租户 1（众墅之家）与租户 121（小租户）持有相同的 websites 分词：
 --     getTenantByWebsite() 取首条且无 ORDER BY，域名选租户结果不确定；
 --     validTenantWebsiteDuplicate() 亦拒绝租户 121 后续涉及 websites 的更新。
 --     已升级库中源域已消失，重跑上面的 REPLACE 链无法自愈，故按演示租户身份定点还原。
---     仅当租户 1 确实持有同一域名时才改，避免误伤运维手工配置；还原后不再命中 LIKE，幂等。
-UPDATE system_tenant
-   SET websites = REPLACE(websites, 'www.zszj.example.com', 'zsxq.zszj.example.com')
- WHERE id = 121 AND deleted = 0
-   AND websites LIKE '%www.zszj.example.com%'
-   AND EXISTS (
-     SELECT 1 FROM system_tenant t1
-      WHERE t1.id = 1 AND t1.deleted = 0
-        AND t1.websites LIKE '%www.zszj.example.com%'
-   );
+--
+--     codex r1 修正原实现（LIKE 子串判定 + REPLACE 子串替换）的两处越界：
+--     P2#2 精确分词：websites 是逗号分隔列表，selectListByWebsite 以
+--          POSITION(',value,' IN ',' || websites || ',') 做整词匹配（见 DbTypeEnum.POSTGRE_SQL），
+--          故 www.zszj.example.com 与 www.zszj.example.com:3000 是两个不同绑定。原 LIKE '%...%'
+--          会把带端口变体误判为冲突，且 REPLACE 子串替换会把运维为租户 121 手工配置的 :3000
+--          地址一并改写、破坏其既有路由。改为按整词判定，且仅重写整词相等的分词、保留其余分词与顺序。
+--     P2#3 目标归属：改写前须确认 zsxq.zszj.example.com 未被其他未删除租户占用；否则定点还原会把
+--          该域赋给租户 121，制造新的同域冲突（歧义路由 + 更新被拒）。占用时 RAISE 使事务整体回滚
+--          并给出可操作信息，交由运维人工裁决，绝不写入新重复。
+--     幂等：还原后租户 121 不再持有 www.zszj.example.com 整词，v_src_conflict 为假即 RETURN。
+DO $$
+DECLARE
+    v_src_conflict    boolean;
+    v_target_occupied boolean;
+BEGIN
+    -- 源冲突：租户 121 与租户 1 是否都持有完全相同的 www 整词（排除 :端口 等变体）
+    SELECT EXISTS (
+             SELECT 1 FROM system_tenant
+              WHERE id = 121 AND deleted = 0
+                AND POSITION(',www.zszj.example.com,' IN ',' || websites || ',') > 0
+           )
+       AND EXISTS (
+             SELECT 1 FROM system_tenant
+              WHERE id = 1 AND deleted = 0
+                AND POSITION(',www.zszj.example.com,' IN ',' || websites || ',') > 0
+           )
+      INTO v_src_conflict;
+
+    IF NOT v_src_conflict THEN
+        RETURN;  -- 无源冲突（含已还原后的幂等重跑）：不改动
+    END IF;
+
+    -- 目标占用：zsxq.zszj.example.com 是否已被租户 121 以外的未删除租户持有
+    SELECT EXISTS (
+             SELECT 1 FROM system_tenant
+              WHERE id <> 121 AND deleted = 0
+                AND POSITION(',zsxq.zszj.example.com,' IN ',' || websites || ',') > 0
+           )
+      INTO v_target_occupied;
+
+    IF v_target_occupied THEN
+        RAISE EXCEPTION
+          'hotfix-C P2-2 定点还原受阻：租户 1 与 121 同持 www.zszj.example.com，但目标占位域 zsxq.zszj.example.com 已被其他未删除租户占用；请人工核对 system_tenant.websites 消除占用后再升级（本事务已回滚）';
+    END IF;
+
+    -- 仅重写租户 121 websites 中与之整词相等的分词，保留其余分词（含 :端口 变体）及原顺序
+    UPDATE system_tenant
+       SET websites = (
+             SELECT string_agg(
+                      CASE WHEN tok = 'www.zszj.example.com'
+                           THEN 'zsxq.zszj.example.com'
+                           ELSE tok END,
+                      ',' ORDER BY ord)
+               FROM unnest(string_to_array(system_tenant.websites, ','))
+                    WITH ORDINALITY AS u(tok, ord)
+           )
+     WHERE id = 121 AND deleted = 0;
+END $$;
 
 -- 2. 部门：演示部门名
 UPDATE system_dept
@@ -190,7 +239,7 @@ COMMIT;
 -- =====================================================================
 -- 验证（迁移后人工/脚本执行，期望全部为 0）：
 --   SELECT count(*) FROM system_tenant  WHERE name LIKE '%芋道%' OR websites LIKE '%iocoder.cn%';
---   SELECT count(*) FROM system_tenant  WHERE id = 121 AND websites LIKE '%www.zszj.example.com%';  -- hotfix-C P2-2 租户同域冲突
+--   SELECT count(*) FROM system_tenant  WHERE id = 121 AND POSITION(',www.zszj.example.com,' IN ',' || websites || ',') > 0;  -- hotfix-C P2-2 租户同域整词冲突（勿用 LIKE 子串，会误报 :端口 变体）
 --   SELECT count(*) FROM system_users   WHERE nickname LIKE '%芋道%' OR (username = 'yudao' AND id = 100 AND tenant_id = 1) OR email = 'yudao@iocoder.cn' OR avatar LIKE '%yudao.iocoder.cn%';
 --   SELECT count(*) FROM system_notice  WHERE title LIKE '%芋道%' OR content LIKE '%yudao.iocoder.cn%';
 --   SELECT count(*) FROM system_dept    WHERE name LIKE '%芋道%';
