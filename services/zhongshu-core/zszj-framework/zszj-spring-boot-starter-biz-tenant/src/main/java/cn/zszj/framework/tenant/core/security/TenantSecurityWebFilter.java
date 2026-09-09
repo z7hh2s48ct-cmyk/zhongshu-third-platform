@@ -3,7 +3,6 @@ package cn.zszj.framework.tenant.core.security;
 import cn.hutool.core.collection.CollUtil;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.pojo.CommonResult;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.config.TenantProperties;
@@ -12,6 +11,7 @@ import cn.zszj.framework.tenant.core.service.TenantFrameworkService;
 import cn.zszj.framework.web.config.WebProperties;
 import cn.zszj.framework.web.core.filter.ApiRequestFilter;
 import cn.zszj.framework.web.core.handler.GlobalExceptionHandler;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -77,7 +77,7 @@ public class TenantSecurityWebFilter extends ApiRequestFilter {
                 log.error("[doFilterInternal][租户({}) User({}/{}) 越权访问租户({}) URL({}/{})]",
                         user.getTenantId(), user.getId(), user.getUserType(),
                         TenantContextHolder.getTenantId(), request.getRequestURI(), request.getMethod());
-                ServletUtils.writeJSON(response, CommonResult.error(GlobalErrorCodeConstants.FORBIDDEN.getCode(),
+                WebFrameworkUtils.writeJSON(request, response, CommonResult.error(GlobalErrorCodeConstants.FORBIDDEN.getCode(),
                         "您无权访问该租户的数据"));
                 return;
             }
@@ -88,7 +88,7 @@ public class TenantSecurityWebFilter extends ApiRequestFilter {
             // 2. 如果请求未带租户的编号，不允许访问。
             if (tenantId == null) {
                 log.error("[doFilterInternal][URL({}/{}) 未传递租户编号]", request.getRequestURI(), request.getMethod());
-                ServletUtils.writeJSON(response, CommonResult.error(GlobalErrorCodeConstants.BAD_REQUEST.getCode(),
+                WebFrameworkUtils.writeJSON(request, response, CommonResult.error(GlobalErrorCodeConstants.BAD_REQUEST.getCode(),
                         "请求的租户标识未传递，请进行排查"));
                 return;
             }
@@ -97,7 +97,7 @@ public class TenantSecurityWebFilter extends ApiRequestFilter {
                 tenantFrameworkService.validTenant(tenantId);
             } catch (Throwable ex) {
                 CommonResult<?> result = globalExceptionHandler.allExceptionHandler(request, ex);
-                ServletUtils.writeJSON(response, result);
+                WebFrameworkUtils.writeJSON(request, response, result);
                 return;
             }
         } else { // 如果是允许忽略租户的 URL，若未传递租户编号，则默认忽略租户编号，避免报错

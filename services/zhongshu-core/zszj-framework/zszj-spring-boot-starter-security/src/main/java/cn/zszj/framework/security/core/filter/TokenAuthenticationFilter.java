@@ -6,7 +6,6 @@ import cn.zszj.framework.common.biz.system.oauth2.OAuth2TokenCommonApi;
 import cn.zszj.framework.common.biz.system.oauth2.dto.OAuth2AccessTokenCheckRespDTO;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.pojo.CommonResult;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.security.config.SecurityProperties;
 import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
@@ -59,7 +58,7 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
                 }
             } catch (Throwable ex) {
                 CommonResult<?> result = globalExceptionHandler.allExceptionHandler(request, ex);
-                ServletUtils.writeJSON(response, result);
+                WebFrameworkUtils.writeJSON(request, response, result);
                 return;
             }
         }

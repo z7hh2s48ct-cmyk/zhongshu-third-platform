@@ -3,7 +3,7 @@ package cn.zszj.framework.security.core.handler;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -35,7 +35,7 @@ public class AccessDeniedHandlerImpl implements AccessDeniedHandler {
         log.warn("[commence][访问 URL({}) 时，用户({}) 权限不够]", request.getRequestURI(),
                 SecurityFrameworkUtils.getLoginUserId(), e);
         // 返回 403
-        ServletUtils.writeJSON(response, CommonResult.error(FORBIDDEN));
+        WebFrameworkUtils.writeJSON(request, response, CommonResult.error(FORBIDDEN));
     }
 
 }

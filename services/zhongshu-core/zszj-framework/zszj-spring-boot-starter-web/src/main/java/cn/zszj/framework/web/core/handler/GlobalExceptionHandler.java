@@ -189,12 +189,15 @@ public class GlobalExceptionHandler {
         log.warn("[methodArgumentTypeInvalidFormatExceptionHandler]", ex);
         if (ex.getCause() instanceof InvalidFormatException) {
             InvalidFormatException invalidFormatException = (InvalidFormatException) ex.getCause();
-            return CommonResult.error(BAD_REQUEST.getCode(), String.format("请求参数类型错误:%s", invalidFormatException.getValue()));
+            // 安全（ZS-SEC-005）：不回显原始入参值 invalidFormatException.getValue()，避免泄露敏感数据；仅提示期望类型
+            return CommonResult.error(BAD_REQUEST.getCode(), String.format("请求参数类型错误：期望类型 %s",
+                    invalidFormatException.getTargetType() != null ? invalidFormatException.getTargetType().getSimpleName() : "未知"));
         }
         if (StrUtil.startWith(ex.getMessage(), "Required request body is missing")) {
             return CommonResult.error(BAD_REQUEST.getCode(), "请求参数类型错误: request body 缺失");
         }
-        return defaultExceptionHandler(ServletUtils.getRequest(), ex);
+        // 安全（ZS-SEC-005）：畸形 JSON / 请求体无法解析属于客户端错误，返回 400，不落入 500 系统异常，也不回显原始报文
+        return CommonResult.error(BAD_REQUEST.getCode(), "请求参数格式错误：无法解析请求体，请检查是否为合法 JSON");
     }
 
     /**

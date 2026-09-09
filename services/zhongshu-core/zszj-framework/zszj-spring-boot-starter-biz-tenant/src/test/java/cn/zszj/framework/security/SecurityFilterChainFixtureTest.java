@@ -1,17 +1,22 @@
 package cn.zszj.framework.security;
 
+import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.security.fixture.MockOAuth2TokenApi;
 import cn.zszj.framework.security.fixture.MockTenantFrameworkService;
 import cn.zszj.framework.security.fixture.SecurityFixtureApplication;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultMatcher;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -40,6 +45,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 8. ZS-SEC-002 分类完整性 - 受保护异步端点首次 REQUEST 派发仍需认证（ASYNC permitAll 不泄露）；
  *    ADMIN token→/app-api 403、MEMBER token→/app-api 200（与组 2 的 MEMBER→/admin-api 403 构成 ADMIN/MEMBER 双向串用矩阵）。
  *    注：全面 async/SSE 运行时合同（流式、异步异常出口、跨线程租户上下文、[Web]/[移动端]同步）仍归 ZS-SEC-012.B（见 05 文档 ZS-SEC-012 卡）。
+ * 9. ZS-SEC-005 统一错误响应 - filter-direct 出口（401/403/400）登记 common_result，使访问日志按业务码记录（不误记成功）；
+ *    畸形 JSON / 请求体类型错误归 400 客户端错误且不回显敏感入参值；同类错误跨执行层语义一致（HTTP 200 + 镜像业务码）。
  *
  * @author ZS-SEC-012.A
  */
@@ -510,6 +517,110 @@ class SecurityFilterChainFixtureTest {
                     .andExpect(jsonPath("$.code").value(0))
                     .andExpect(jsonPath("$.data.userId").value(MockOAuth2TokenApi.USER_T1_MEMBER))
                     .andExpect(jsonPath("$.data.userType").value(MockOAuth2TokenApi.USER_TYPE_MEMBER));
+        }
+    }
+
+    // ========== 9. ZS-SEC-005：统一错误响应 / filter-direct 结果登记 / 畸形 JSON ==========
+
+    @Nested
+    @DisplayName("9. ZS-SEC-005：错误响应一致语义 + filter-direct 结果登记 + 畸形 JSON 客户端错误")
+    class UnifiedErrorResponse {
+
+        @Test
+        @DisplayName("filter-direct 401（AuthenticationEntryPoint）登记 common_result=401，访问日志不记为成功")
+        void authenticationEntryPointRegistersResult() throws Exception {
+            // 修复前：AuthenticationEntryPointImpl 用 ServletUtils.writeJSON 只写体、不登记 common_result，
+            // ApiAccessLogFilter 读到 null 且 ex==null → 误记为 SUCCESS(code=0)。
+            // 修复后：WebFrameworkUtils.writeJSON 统一登记，访问日志按业务码 401 记录。
+            mockMvc.perform(get("/admin-api/fixture/auth/profile")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(401))
+                    .andExpect(commonResultCode(401));
+        }
+
+        @Test
+        @DisplayName("filter-direct 400（租户标识缺失）登记 common_result=400")
+        void tenantMissingRegistersResult() throws Exception {
+            mockMvc.perform(get("/admin-api/fixture/open/tenant-required"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(400))
+                    .andExpect(commonResultCode(400));
+        }
+
+        @Test
+        @DisplayName("filter-direct 403（越权访问租户）登记 common_result=403")
+        void tenantMismatchRegistersResult() throws Exception {
+            mockMvc.perform(get("/admin-api/fixture/auth/profile")
+                            .header("Authorization", "Bearer token-t1-admin")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_2))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403))
+                    .andExpect(commonResultCode(403));
+        }
+
+        @Test
+        @DisplayName("畸形 JSON 是客户端错误（400，不再落入 500 系统异常）")
+        void malformedJsonIsBadRequest() throws Exception {
+            // 修复前：非 InvalidFormatException 的解析失败 fall-through 到 defaultExceptionHandler → 500 + 异常日志。
+            // 修复后：畸形 JSON 归 400 客户端错误，不回显原始报文。
+            mockMvc.perform(post("/admin-api/fixture/public/body")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{ this is not valid json "))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(400))
+                    .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                            .contains("无法解析请求体"));
+        }
+
+        @Test
+        @DisplayName("请求体类型错误不回显敏感入参值，仅提示期望类型")
+        void invalidFormatDoesNotEchoSensitiveValue() throws Exception {
+            // 修复前：msg 拼接 invalidFormatException.getValue() → 回显敏感入参值。
+            // 修复后：仅提示期望类型（Integer），响应体不含原始敏感值。
+            String sensitive = "PIN-9f8e7d6c-SECRET";
+            mockMvc.perform(post("/admin-api/fixture/public/body")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"bob\",\"secretPin\":\"" + sensitive + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(400))
+                    .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                            .contains("期望类型")
+                            .doesNotContain(sensitive));
+        }
+
+        @Test
+        @DisplayName("同类 403 跨执行层语义一致：filter-direct（越权）与 MVC（对象授权）均 HTTP200+code403")
+        void forbiddenConsistentAcrossLayers() throws Exception {
+            // filter-direct 层：TenantSecurityWebFilter 越权 → 403
+            mockMvc.perform(get("/admin-api/fixture/auth/profile")
+                            .header("Authorization", "Bearer token-t1-admin")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_2))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403))
+                    .andExpect(commonResultCode(403));
+            // MVC 业务层：TestControllers.objUser 返回 CommonResult.error(403,...) → 同为 HTTP200+code403
+            mockMvc.perform(get("/admin-api/fixture/obj/user/250")
+                            .header("Authorization", "Bearer token-t1-admin")
+                            .header("tenant-id", MockOAuth2TokenApi.TENANT_1))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+        }
+
+        /**
+         * 断言：请求已登记 common_result（业务码 = expected）。
+         *
+         * ApiAccessLogFilter.buildApiAccessLog 读取的正是 {@link WebFrameworkUtils#getCommonResult}；
+         * 修复前 filter-direct 出口不登记 → 访问日志误记 SUCCESS(0)。此断言即“不记为成功”的回归护栏。
+         */
+        private ResultMatcher commonResultCode(int expected) {
+            return result -> {
+                CommonResult<?> cr = WebFrameworkUtils.getCommonResult(result.getRequest());
+                assertThat(cr).as("filter-direct 出口必须登记 common_result，供访问日志按业务码记录").isNotNull();
+                assertThat(cr.getCode()).isEqualTo(expected);
+            };
         }
     }
 }

@@ -9,6 +9,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -57,6 +58,42 @@ public class TestControllers {
     @PermitAll
     public CommonResult<String> openTenantRequired() {
         return CommonResult.success("open-tenant-required");
+    }
+
+    /**
+     * ZS-SEC-005：接收 JSON 请求体的公开端点，用于验证畸形 JSON / 请求体类型错误的客户端错误出口。
+     * secretPin 期望数字类型，传入非数字字符串会触发 InvalidFormatException（验证不回显敏感入参值）。
+     */
+    @PostMapping("/public/body")
+    @PermitAll
+    public CommonResult<Map<String, Object>> publicBody(@RequestBody BodyReq req) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("name", req.getName());
+        data.put("secretPin", req.getSecretPin());
+        return CommonResult.success(data);
+    }
+
+    /** ZS-SEC-005：请求体夹具 DTO（secretPin 为 Integer，用于触发类型转换失败）。 */
+    public static class BodyReq {
+
+        private String name;
+        private Integer secretPin;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public Integer getSecretPin() {
+            return secretPin;
+        }
+
+        public void setSecretPin(Integer secretPin) {
+            this.secretPin = secretPin;
+        }
     }
 
     // ========== 2. 认证端点（需登录，无 @PermitAll） ==========

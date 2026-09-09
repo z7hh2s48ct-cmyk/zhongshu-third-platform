@@ -2,7 +2,6 @@ package cn.zszj.framework.web.core.filter;
 
 import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.common.pojo.CommonResult;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -29,7 +28,7 @@ public class DemoFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) {
         // 直接返回 DEMO_DENY 的结果。即，请求不继续
-        ServletUtils.writeJSON(response, CommonResult.error(DEMO_DENY));
+        WebFrameworkUtils.writeJSON(request, response, CommonResult.error(DEMO_DENY));
     }
 
 }

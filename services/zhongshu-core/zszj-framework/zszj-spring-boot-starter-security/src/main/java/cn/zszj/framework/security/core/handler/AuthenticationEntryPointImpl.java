@@ -2,7 +2,7 @@ package cn.zszj.framework.security.core.handler;
 
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.pojo.CommonResult;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -29,7 +29,7 @@ public class AuthenticationEntryPointImpl implements AuthenticationEntryPoint {
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException e) {
         log.debug("[commence][访问 URL({}) 时，没有登录]", request.getRequestURI(), e);
         // 返回 401
-        ServletUtils.writeJSON(response, CommonResult.error(UNAUTHORIZED));
+        WebFrameworkUtils.writeJSON(request, response, CommonResult.error(UNAUTHORIZED));
     }
 
 }

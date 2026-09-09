@@ -8,12 +8,12 @@ import cn.hutool.crypto.symmetric.SymmetricDecryptor;
 import cn.hutool.crypto.symmetric.SymmetricEncryptor;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.util.object.ObjectUtils;
-import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.encrypt.config.ApiEncryptProperties;
 import cn.zszj.framework.encrypt.core.annotation.ApiEncrypt;
 import cn.zszj.framework.web.config.WebProperties;
 import cn.zszj.framework.web.core.filter.ApiRequestFilter;
 import cn.zszj.framework.web.core.handler.GlobalExceptionHandler;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -105,7 +105,7 @@ public class ApiEncryptFilter extends ApiRequestFilter {
                 }
             } catch (Exception ex) {
                 CommonResult<?> result = globalExceptionHandler.allExceptionHandler(request, ex);
-                ServletUtils.writeJSON(response, result);
+                WebFrameworkUtils.writeJSON(request, response, result);
                 return;
             }
         }
