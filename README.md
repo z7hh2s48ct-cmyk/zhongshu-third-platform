@@ -27,7 +27,7 @@
 | [一期底座需求规格与待决策台账](docs/02-一期底座需求规格与待决策台账.md) | V0.12 | 一期需求、验收条件、决策状态、阻塞关系和变更台账 |
 | [底座二次开发顺序与验收标准](docs/03-底座二次开发顺序与验收标准.md) | V1.6 | 24 个工作包对应 12 个批次，逐批前置条件、修改位置、正反向验收和执行入口 |
 | [源码迁入与验证报告](docs/04-源码迁入与验证报告.md) | V1.0 | 源码范围、凭据净化、文件完整性、构建/测试结果和未通过门禁 |
-| [底座模块分析与开发任务清单](docs/05-底座模块分析与开发任务清单.md) | V1.15 | 12 个模块静态分析；按众墅要求记录代码差距、调整任务、优先级、依赖和验收；累计 91 项主任务 |
+| [底座模块分析与开发任务清单](docs/05-底座模块分析与开发任务清单.md) | V1.16 | 12 个模块静态分析；按众墅要求记录代码差距、调整任务、优先级、依赖和验收；累计 91 项主任务 |
 | [品牌素材与命名映射](docs/06-品牌素材与命名映射.md) | V1.1 | ZS-BRAND-001 冻结稿：品牌依据、zszj 命名映射、保留例外、外部标识排除与首轮执行记录 |
 | [第三方来源与许可证](THIRD_PARTY_NOTICES.md) | 2026-09-08 | 固定 SHA、许可证、供体边界与可追溯差异 |
 | [现阶段底座开发清单与多端架构](.omx/plans/2026-09-08-底座开发清单与多端架构.md) | V1.0 建议稿 | 24 个工作包、当前源码证据、复用/二开/自研边界、Web/小程序/App/iOS 接入与验收 |
@@ -84,11 +84,13 @@ ZS-BRAND-006 交付的品牌/代码命名残留门禁：扫描全部跟踪文件
 ## 本地基线门禁（ZS-OPS-001.A）
 
 ```bash
-node scripts/ops/run-local-gates.mjs           # 全量（含 Web 类型基线，较慢）
-node scripts/ops/run-local-gates.mjs --fast    # 快速静态门禁
+node scripts/ops/run-local-gates.mjs                       # 全量（含 Web 类型基线，较慢）
+node scripts/ops/run-local-gates.mjs --fast                # 快速静态门禁（日常与 CI 同规则）
+node scripts/ops/run-local-gates.mjs --fast --incremental  # 增量：按 git 变更路径只跑受影响门禁
+node scripts/ops/run-local-gates.mjs --fast --plan         # 只预览将跑哪些门禁，不执行
 ```
 
-聚合以下检查并统一失败语义（任一失败阻止放行）：来源复制校验器单测、品牌命名门禁、文档一致性检查、模块白名单、数据源 PG 合同、Flyway 迁移规范、配置秘密门禁、Web 类型检查基线。CI 侧以 [.github/workflows/local-baseline-gates.yml](.github/workflows/local-baseline-gates.yml) 运行同一入口（--fast）；PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入。
+聚合以下检查并统一失败语义（任一失败阻止放行）：来源复制校验器单测、品牌命名门禁、文档一致性检查、模块白名单、数据源 PG 合同、Flyway 迁移规范、配置秘密门禁、Web 类型检查基线。门禁默认按 CPU 核数并发执行（`--jobs N` 覆盖），失败时打印输出末尾详情。`--incremental` 按 git 变更路径只跑受影响门禁（品牌全仓扫描、配置秘密门禁恒定跑）；变更含门禁脚本自身或存在无法归类的非良性路径时 fail-safe 回退全量——增量仅供日常快速反馈，批次收口与 CI 必须跑全量（`--fast` 或含 Web 类型基线），不得以增量结果代替放行。CI 侧以 [.github/workflows/local-baseline-gates.yml](.github/workflows/local-baseline-gates.yml) 运行同一入口（--fast）；PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入。
 
 ## 文档同步规则
 
