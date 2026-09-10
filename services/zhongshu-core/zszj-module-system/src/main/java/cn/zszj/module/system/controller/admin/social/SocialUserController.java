@@ -46,7 +46,7 @@ public class SocialUserController {
 
     @DeleteMapping("/unbind")
     @Operation(summary = "取消社交绑定")
-    public CommonResult<Boolean> socialUnbind(@RequestBody SocialUserUnbindReqVO reqVO) {
+    public CommonResult<Boolean> socialUnbind(@RequestBody @Valid SocialUserUnbindReqVO reqVO) {
         socialUserService.unbindSocialUser(getLoginUserId(), UserTypeEnum.ADMIN.getValue(), reqVO.getType(), reqVO.getOpenid());
         return CommonResult.success(true);
     }

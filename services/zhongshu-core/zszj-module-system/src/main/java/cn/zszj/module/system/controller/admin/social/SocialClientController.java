@@ -87,7 +87,7 @@ public class SocialClientController {
     @PostMapping("/send-subscribe-message")
     @Operation(summary = "发送订阅消息") // 用于测试
     @PreAuthorize("@ss.hasPermission('system:social-client:query')")
-    public void sendSubscribeMessage(@RequestBody SocialWxaSubscribeMessageSendReqDTO reqDTO) {
+    public void sendSubscribeMessage(@Valid @RequestBody SocialWxaSubscribeMessageSendReqDTO reqDTO) {
         socialClientApi.sendWxaSubscribeMessage(reqDTO);
     }
 

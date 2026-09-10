@@ -122,8 +122,10 @@ public class ZszjWebAutoConfiguration {
      * 创建 RequestBodyCacheFilter Bean，可重复读取请求内容
      */
     @Bean
-    public FilterRegistrationBean<CacheRequestBodyFilter> requestBodyCacheFilter() {
-        return createFilterBean(new CacheRequestBodyFilter(), WebFilterOrderEnum.REQUEST_BODY_CACHE_FILTER);
+    public FilterRegistrationBean<CacheRequestBodyFilter> requestBodyCacheFilter(WebProperties webProperties) {
+        // ZS-SEC-008：注入 JSON 请求体缓冲上限，缓冲前受控拒绝超大 body
+        return createFilterBean(new CacheRequestBodyFilter(webProperties.getRequestBody().getMaxCacheSize()),
+                WebFilterOrderEnum.REQUEST_BODY_CACHE_FILTER);
     }
 
     /**

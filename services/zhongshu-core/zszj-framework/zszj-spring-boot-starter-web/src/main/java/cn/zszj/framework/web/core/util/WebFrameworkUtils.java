@@ -1,8 +1,10 @@
 package cn.zszj.framework.web.core.util;
 
 import cn.hutool.core.util.NumberUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.common.enums.TerminalEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
+import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.web.config.WebProperties;
@@ -12,6 +14,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
 
 /**
  * 专属于 web 包的工具类
@@ -49,8 +53,7 @@ public class WebFrameworkUtils {
      * @return 租户编号
      */
     public static Long getTenantId(HttpServletRequest request) {
-        String tenantId = request.getHeader(HEADER_TENANT_ID);
-        return NumberUtil.isNumber(tenantId) ? Long.valueOf(tenantId) : null;
+        return parseTenantIdHeader(request.getHeader(HEADER_TENANT_ID), HEADER_TENANT_ID);
     }
 
     /**
@@ -61,8 +64,45 @@ public class WebFrameworkUtils {
      * @return 租户编号
      */
     public static Long getVisitTenantId(HttpServletRequest request) {
-        String tenantId = request.getHeader(HEADER_VISIT_TENANT_ID);
-        return NumberUtil.isNumber(tenantId)? Long.valueOf(tenantId) : null;
+        return parseTenantIdHeader(request.getHeader(HEADER_VISIT_TENANT_ID), HEADER_VISIT_TENANT_ID);
+    }
+
+    /**
+     * 严格解析租户类上下文头（ZS-SEC-008）。
+     *
+     * <p>规则：缺失 / 空白 → {@code null}（视为未传递，保持既有兜底语义）；present-but-malformed
+     * （含符号、小数点、十六进制、科学计数、内嵌空白、非数字，或十进制数字串超出 {@link Long} 范围）
+     * → 抛受控 {@link cn.zszj.framework.common.exception.ServiceException}（业务码 400），由统一异常出口稳定拒绝、
+     * 不泄露栈。替代原 {@code NumberUtil.isNumber(...) + Long.valueOf(...)} 组合——后者对 {@code "1.5"}、{@code "0x1F"}、
+     * {@code "1e5"} 等 isNumber 通过但 Long.valueOf 失败的输入会抛 {@link NumberFormatException}，
+     * 在 MVC 外的过滤器中逃逸为容器 500 + 栈泄露。
+     *
+     * @param rawValue   上下文头原始值
+     * @param headerName 头名，仅用于错误提示
+     * @return 合法租户编号；缺失 / 空白返回 {@code null}
+     */
+    private static Long parseTenantIdHeader(String rawValue, String headerName) {
+        if (rawValue == null) {
+            return null;
+        }
+        String value = rawValue.trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        // 仅接受纯十进制数字（拒绝符号、小数点、十六进制、科学计数、内嵌空白等一切非数字字符）
+        for (int i = 0; i < value.length(); i++) {
+            if (!Character.isDigit(value.charAt(i))) {
+                throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(),
+                        StrUtil.format("请求头 {} 格式非法，必须为十进制非负整数", headerName));
+            }
+        }
+        try {
+            // 纯数字串但超出 Long 范围（如 99999999999999999999）→ NumberFormatException → 受控 400
+            return Long.parseLong(value);
+        } catch (NumberFormatException ex) {
+            throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(),
+                    StrUtil.format("请求头 {} 超出取值范围", headerName));
+        }
     }
 
     public static void setLoginUserId(ServletRequest request, Long userId) {

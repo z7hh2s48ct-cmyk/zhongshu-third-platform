@@ -1,5 +1,7 @@
 package cn.zszj.framework.tenant.core.web;
 
+import cn.zszj.framework.common.exception.ServiceException;
+import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -21,8 +23,16 @@ public class TenantContextWebFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        // 设置
-        Long tenantId = WebFrameworkUtils.getTenantId(request);
+        // 设置。ZS-SEC-008：上下文头严格解析——畸形/溢出 tenant-id 会抛受控 ServiceException（业务码 400）。
+        // 本过滤器位于 MVC 之外，GlobalExceptionHandler（@RestControllerAdvice）无法捕获，需就地转统一出口 writeJSON，
+        // 避免 NumberFormatException / ServiceException 逃逸为容器 500 + 栈泄露。
+        Long tenantId;
+        try {
+            tenantId = WebFrameworkUtils.getTenantId(request);
+        } catch (ServiceException ex) {
+            WebFrameworkUtils.writeJSON(request, response, CommonResult.error(ex.getCode(), ex.getMessage()));
+            return;
+        }
         if (tenantId != null) {
             TenantContextHolder.setTenantId(tenantId);
         }

@@ -27,6 +27,10 @@ public class WebProperties {
     @Valid
     private Ui adminUi;
 
+    @NotNull(message = "请求体限制不能为空")
+    @Valid
+    private RequestBody requestBody = new RequestBody();
+
     @Data
     @AllArgsConstructor
     @NoArgsConstructor
@@ -61,6 +65,20 @@ public class WebProperties {
          * 访问地址
          */
         private String url;
+
+    }
+
+    @Data
+    public static class RequestBody {
+
+        /**
+         * JSON 请求体缓冲上限（字节）。
+         *
+         * ZS-SEC-008：认证前 CacheRequestBodyFilter 会全量缓冲 JSON 请求体以支持重复读取。超限则在缓冲前受控拒绝
+         * （业务码 400），防止超大 body 耗尽内存。默认 1MB；配置为 {@code <= 0} 表示不限制。
+         * 上传 / 流式接口非 JSON，已被 CacheRequestBodyFilter#shouldNotFilter 排除，不受此限影响。
+         */
+        private long maxCacheSize = 1024 * 1024L;
 
     }
 
