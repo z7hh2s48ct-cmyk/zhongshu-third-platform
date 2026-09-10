@@ -106,3 +106,24 @@
 | ZS-SEC-008 补齐参数校验、上下文头解析与请求资源限制 | `76da2a2f`（首提）→ `3f4fa736`（P1 修复） | r0 13 files, +745/-15；r1 修复 4 files, +130/-8 | ✅ 评审通过（r0 发现 1×P1 → 修复 → r1 复评 0 发现） | [codex-ZS-SEC-008.md](codex-ZS-SEC-008.md) | r0 codex（`gpt-6-astra`/`xhigh`）发现 1×P1：chunked `application/json`（`Content-Length=-1`）绕过声明式早拒、`CacheRequestBodyWrapper` 全量缓冲耗尽堆；修复以「声明式早拒 + 限界读取（8192 buffer 边读边累加超限抛 `TooLargeException`）」两道防线闭合 + 2 例未知长度回归护栏（`CacheRequestBodyFilterTest` 6→8）；r1 `codex review --commit 3f4fa736` 复评，codex 沙箱内亲跑 19 测试全绿、判定「No actionable regressions were found」0 发现通过。附加复核 2 判断点（`parseTenantIdHeader` Unicode Nd 数字归一非越权、过滤器异常出口 catch 面完备）均非缺陷 |
 
 > 本目录另存有同批次的评审交接单（`HANDOFF-ZS-SEC-001.A`/`002`/`005`/`007`/`012.A`、`HANDOFF-ZS-PERM-001.A`/`002.A`、`HANDOFF-ZS-DB-018`），其对应 `codex-<TASK>.md` 评审产物尚待补齐；ZS-SEC-003 为该批次首份完成的 codex 评审，ZS-SEC-008 为第二份（且首个经 r0→修复→r1 两轮闭环的评审）。
+
+## 治理与门禁工具链专项评审状态（ZS-GOV-001 / ZS-OPS-001.A）
+
+> 又一轮评审：治理与门禁**工具链自身**（区别于上方 15.2 品牌专项、B03 接口与安全链路——后两者审的是业务/交付代码，这里审的是 task-stats/verify-docs/close-task/run-local-gates 等治理脚本）。评审工具、严重度定义、后续处理约定均沿用上文。两轮评审当时完成但未收口，处置文档于 2026-09-10 补写入库。
+
+| 任务 | 提交 | 状态 | 评审文档 | 结论摘要 |
+|---|---|---|---|---|
+| ZS-GOV-001 任务仪式自动化（提效方案 P0） | `8c9b6082` | ✅ 评审完成（2×P2 确认成立、非阻塞、列入待办） | [codex-ZS-GOV-001-P0.md](codex-ZS-GOV-001-P0.md) | codex（`gpt-6-astra`/`xhigh`）发现 2×P2：verify-docs R6/R7 只比对已声明状态键（违背 L12「省略按 0 计」契约，人工漏写非零类目仍通过）、close-task §2 回填 replace-only（0→非零状态转换不插入新类目，与同文件 README 整段重建矛盾）；11 测试通过。左窗口独立复核 2 项均成立 |
+| ZS-OPS-001.A 聚合门禁提速（提效方案 P1 步骤④） | `c9d178b2` | ✅ 评审完成（3×P2 确认成立、非阻塞、列入待办） | [codex-ZS-OPS-001-step4.md](codex-ZS-OPS-001-step4.md) | codex（`gpt-6-astra`/`xhigh`）发现 3×P2：`--incremental` 增量选门在 SQL 种子编辑（G2b areas 未纳入种子数据）、跨目录 rename（`git diff --name-only` 只报目标路径、漏 G10）、删除 docs/ 外被链目标（漏 G5 断链校验）三类变更下漏选受影响门禁；14 planner 测试通过但未覆盖这三例。左窗口独立复核 3 项均成立 |
+
+### 待办：治理/门禁工具链健壮性专项（5 × P2，非阻塞，建议合并为一批修复）
+
+| # | 任务 | 缺陷 | 文件:行 | 状态 |
+|---|---|---|---|---|
+| 1 | ZS-GOV-001 | verify-docs R6/R7 只遍历已声明状态键，漏写非零类目仍通过（违背 L12「省略按 0 计」契约） | `scripts/gov/verify-docs.mjs:124,140-142` | 🔲 待处置（P2，非阻塞） |
+| 2 | ZS-GOV-001 | close-task §2 回填 replace-only，0→非零状态转换不插入新类目（与 README 整段重建矛盾） | `scripts/gov/close-task.mjs:69-71` | 🔲 待处置（P2，非阻塞） |
+| 3 | ZS-OPS-001.A | G2b areas 仅 `scripts/brand/`，未纳入其测试消费的 SQL 种子，增量下种子同域重复漏检 | `scripts/ops/run-local-gates.mjs:31` | 🔲 待处置（P2，非阻塞） |
+| 4 | ZS-OPS-001.A | `detectChangedFiles` 对 rename 只取目标路径，跨目录移动漏选源目录门禁（如 G10） | `scripts/ops/run-local-gates.mjs:84` | 🔲 待处置（P2，非阻塞） |
+| 5 | ZS-OPS-001.A | G5 areas 未覆盖 docs/ 外被链目标，删除该目标增量下漏触发断链校验 | `scripts/ops/run-local-gates.mjs:34` | 🔲 待处置（P2，非阻塞） |
+
+> 五项 P2 均已由左窗口独立复核确认成立（非误报），依「后续处理约定」第 2 条「P2/P3 可分批处置」列入待办、本轮不改代码。因二者保护的正是所有后续任务依赖的文档一致性门禁（verify-docs）与本地基线门禁（run-local-gates），建议合并为一个专项批次（5 × P2 + 回归测试）优先闭合；其中 G2b/G5 恒跑（`safety: true`）与 rename `--no-renames` 三处修复代价小、收益直接。
