@@ -8,11 +8,14 @@
  *  R3 状态枚举合法：05 卡片"状态 X"只允许 7 个枚举值；
  *  R4 决策门禁：未确认决策（D-07/D-10/D-11）不得被写成已批准/已确认/已落地；D-09 已于 2026-09-10 确认最小模型与账号唯一性细则，移出守护列表；
  *  R5 版本一致：README 文档索引的版本号与各文档头部"文档版本：V*"一致。
+ *  R6 统计一致：05 §2 声明的状态分布必须等于卡片实际聚合（见 task-stats.mjs）；无声明句则跳过；
+ *  R7 README 摘要一致：README"累计 N 项主任务（…）"的总数与各状态数必须等于 05 卡片实际聚合；无声明句则跳过。
  * 用法：node scripts/gov/verify-docs.mjs（退出码非 0 = 不一致）
  */
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
+import { countStatus, parseSection2Declared, parseReadmeDeclared } from './task-stats.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const DOCS = ['README.md',
@@ -109,6 +112,36 @@ export function checkDocs(files, readFile, rootDir, { exists = existsSync } = {}
     if (!header) issues.push({ rule: 'R5-version', file: docPath, message: '文档缺少"文档版本："头' });
     else if (header[1] !== version) {
       issues.push({ rule: 'R5-version', file: docPath, message: `README 索引版本 ${version} 与文档头 ${header[1]} 不一致` });
+    }
+  }
+
+  // R6 统计一致（仅 05）：§2 声明分布必须等于卡片实际聚合；无声明句则跳过
+  const doc05 = files.find((f) => f.includes('05-'));
+  const actual05 = doc05 ? countStatus(contents.get(doc05) ?? '') : null;
+  if (doc05) {
+    const declared = parseSection2Declared(contents.get(doc05) ?? '');
+    if (declared) {
+      for (const s of Object.keys(declared)) {
+        if (declared[s] !== actual05.counts[s]) {
+          issues.push({ rule: 'R6-count', file: doc05, message: `§2 声明 ${s} ${declared[s]} 项，实际卡片聚合 ${actual05.counts[s]} 项` });
+        }
+      }
+    }
+  }
+
+  // R7 README 摘要一致：README 声明的总数与各状态数必须等于 05 卡片实际聚合；无声明句或缺 05 则跳过
+  const readmeFile = files.find((f) => f === 'README.md');
+  if (readmeFile && actual05) {
+    const rm = parseReadmeDeclared(contents.get(readmeFile) ?? '');
+    if (rm) {
+      if (rm.total !== actual05.cardCount) {
+        issues.push({ rule: 'R7-readme-sync', file: readmeFile, message: `README 累计 ${rm.total} 项主任务，实际 ${actual05.cardCount} 项` });
+      }
+      for (const s of Object.keys(rm.declared)) {
+        if (rm.declared[s] !== actual05.counts[s]) {
+          issues.push({ rule: 'R7-readme-sync', file: readmeFile, message: `README 声明 ${s} ${rm.declared[s]} 项，实际 ${actual05.counts[s]} 项` });
+        }
+      }
     }
   }
 

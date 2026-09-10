@@ -74,3 +74,58 @@ test('仓库外引用与外链跳过，不误报', () => {
   );
   assert.deepEqual(issues, []);
 });
+
+test('R6：§2 声明统计与卡片实际聚合不一致会失败', () => {
+  const doc = [
+    '## 2. 进度',
+    'V1.5 统计（2026-09-10，重新计数）：2 项待开发、0 项待验收。',
+    '### ZS-ENG-001：A',
+    '- 关联：WP；状态 待开发；前置 无。',
+    '### ZS-ENG-002：B',
+    '- 关联：WP；状态 待验收；前置 无。',
+  ].join('\n');
+  // 实际：待开发1、待验收1；声明：待开发2、待验收0 → 不一致
+  const issues = checkDocs(['docs/05-x.md'], read({ 'docs/05-x.md': doc }), root);
+  assert.ok(issues.some((i) => i.rule === 'R6-count'));
+});
+
+test('R6：§2 声明与卡片实际聚合一致时不报 R6', () => {
+  const doc = [
+    '## 2. 进度',
+    'V1.5 统计（2026-09-10）：1 项待开发、1 项待验收。',
+    '### ZS-ENG-001：A',
+    '- 关联：WP；状态 待开发；前置 无。',
+    '### ZS-ENG-002：B',
+    '- 关联：WP；状态 待验收；前置 无。',
+  ].join('\n');
+  const issues = checkDocs(['docs/05-x.md'], read({ 'docs/05-x.md': doc }), root);
+  assert.ok(!issues.some((i) => i.rule === 'R6-count'));
+});
+
+test('R7：README 声明分布与 docs/05 实际不一致会失败', () => {
+  const files = ['README.md', 'docs/05-x.md'];
+  const issues = checkDocs(
+    files,
+    read({
+      'README.md': '累计 91 项主任务（83 待开发、2 待决策、6 待前置）\n',
+      'docs/05-x.md': '### ZS-ENG-001：A\n- 关联：WP；状态 待验收；前置 无。\n',
+    }),
+    root,
+    inFiles(files),
+  );
+  assert.ok(issues.some((i) => i.rule === 'R7-readme-sync'));
+});
+
+test('R6/R7：无声明句时跳过，不误报', () => {
+  const files = ['README.md', 'docs/05-x.md'];
+  const issues = checkDocs(
+    files,
+    read({
+      'README.md': '| [清单](docs/05-x.md) | V1.5 | 索引 |\n',
+      'docs/05-x.md': '> 文档版本：V1.5\n### ZS-ENG-001：A\n- 关联：WP；状态 待验收；前置 无。\n',
+    }),
+    root,
+    inFiles(files),
+  );
+  assert.deepEqual(issues, []);
+});
