@@ -23,15 +23,16 @@ import { cpus } from 'node:os';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
-// 门禁定义。areas：增量模式下命中这些路径前缀才跑；safety：增量模式恒定跑（全仓合规/安全守卫）；
+// 门禁定义。areas：增量模式下命中这些路径前缀才跑；safety：增量模式恒定跑（全仓合规/安全守卫，
+//   或其校验依赖 areas 之外的全仓状态——如 G5 文档链接存在性依赖 docs/ 之外的被链接目标）；
 // slow：--fast 跳过；mvn：仅 --mvn 启用。cmd/mvnArgs 与 id 保持与既有基线一致（CI、README 依赖）。
 export const GATES = [
   { id: 'G1 来源复制校验器单测', cmd: ['node', '--test', 'scripts/verify-source-copy.test.mjs'], areas: ['scripts/verify-source-copy', 'third_party/'] },
   { id: 'G2 品牌命名门禁单测', cmd: ['node', '--test', 'scripts/brand/verify-brand-naming.test.mjs'], areas: ['scripts/brand/'] },
-  { id: 'G2b 命名迁移工具单测（冻结文件排除 + 租户域名唯一）', cmd: ['node', '--test', 'scripts/brand/apply-naming-migration.test.mjs'], areas: ['scripts/brand/'] },
+  { id: 'G2b 命名迁移工具单测（冻结文件排除 + 租户域名唯一）', cmd: ['node', '--test', 'scripts/brand/apply-naming-migration.test.mjs'], areas: ['scripts/brand/', 'services/zhongshu-core/sql/'] },
   { id: 'G3 品牌命名全仓扫描', cmd: ['node', 'scripts/brand/verify-brand-naming.mjs'], areas: ['services/', 'apps/', 'scripts/', 'docs/'], safety: true },
   { id: 'G4 文档一致性单测', cmd: ['node', '--test', 'scripts/gov/verify-docs.test.mjs'], areas: ['scripts/gov/', 'docs/', 'README.md'] },
-  { id: 'G5 文档一致性全量', cmd: ['node', 'scripts/gov/verify-docs.mjs'], areas: ['scripts/gov/', 'docs/', 'README.md'] },
+  { id: 'G5 文档一致性全量', cmd: ['node', 'scripts/gov/verify-docs.mjs'], areas: ['scripts/gov/', 'docs/', 'README.md'], safety: true },
   { id: 'G6 模块白名单', cmd: ['node', 'scripts/eng/verify-module-whitelist.mjs'], areas: ['scripts/eng/', 'services/'] },
   { id: 'G7 数据源 PG 合同', cmd: ['node', 'scripts/db/verify-datasource-pg.mjs'], areas: ['scripts/db/', 'services/'] },
   { id: 'G8 Flyway 迁移规范', cmd: ['node', 'scripts/db/verify-flyway-migrations.mjs'], areas: ['scripts/db/', 'services/'] },
@@ -81,7 +82,9 @@ export function planGates({ fast = false, mvn = false, incremental = false, chan
 function detectChangedFiles() {
   try {
     const opts = { cwd: root, encoding: 'utf8' };
-    const tracked = spawnSync('git', ['-c', 'core.quotepath=false', 'diff', '--name-only', 'HEAD'], opts);
+    // --no-renames：跨目录 rename 默认只报目标路径，会漏掉源路径所属区域的门禁（如 Web→miniapp
+    // 移动 .ts 只报 miniapp 侧、漏选校 Web 导入的 G10）；关闭 rename 检测使源(删)+目标(增)都上报。
+    const tracked = spawnSync('git', ['-c', 'core.quotepath=false', 'diff', '--name-only', '--no-renames', 'HEAD'], opts);
     const untracked = spawnSync('git', ['-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard'], opts);
     if (tracked.status !== 0 || untracked.status !== 0) return [];
     const paths = [...String(tracked.stdout ?? '').split('\n'), ...String(untracked.stdout ?? '').split('\n')]

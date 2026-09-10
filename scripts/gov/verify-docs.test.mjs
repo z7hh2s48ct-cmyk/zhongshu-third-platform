@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { checkDocs } from './verify-docs.mjs';
+import { backfillSection2 } from './task-stats.mjs';
 
 const root = '/repo';
 const read = (files) => (f) => {
@@ -128,4 +129,73 @@ test('R6/R7：无声明句时跳过，不误报', () => {
     inFiles(files),
   );
   assert.deepEqual(issues, []);
+});
+
+// ---- codex P2#4 回归：声明省略非零类别不得逃过校验 ----
+
+test('R6：§2 省略实际非零的类别（漏计）会失败', () => {
+  // 声明只写「1 项待开发」（对），却省略了实际存在的「待验收 1」；
+  // 旧逻辑只遍历声明键 → 漏检；修复后遍历全枚举、省略类别按 0 计 → 0≠1 触发 R6。
+  const doc = [
+    '## 2. 进度',
+    'V1.5 统计（2026-09-10）：1 项待开发。',
+    '### ZS-ENG-001：A',
+    '- 关联：WP；状态 待开发；前置 无。',
+    '### ZS-ENG-002：B',
+    '- 关联：WP；状态 待验收；前置 无。',
+  ].join('\n');
+  const issues = checkDocs(['docs/05-x.md'], read({ 'docs/05-x.md': doc }), root);
+  assert.ok(issues.some((i) => i.rule === 'R6-count' && /待验收/.test(i.message)), '省略非零类别「待验收」应触发 R6');
+});
+
+test('R7：README 省略实际非零的类别（漏计）会失败', () => {
+  // total=2 对、待开发=1 对，但省略了实际存在的「待验收 1」；修复后应触发 R7。
+  const files = ['README.md', 'docs/05-x.md'];
+  const issues = checkDocs(
+    files,
+    read({
+      'README.md': '累计 2 项主任务（1 待开发）\n',
+      'docs/05-x.md': '### ZS-ENG-001：A\n- 关联：WP；状态 待开发；前置 无。\n### ZS-ENG-002：B\n- 关联：WP；状态 待验收；前置 无。\n',
+    }),
+    root,
+    inFiles(files),
+  );
+  assert.ok(issues.some((i) => i.rule === 'R7-readme-sync' && /待验收/.test(i.message)), '省略非零类别「待验收」应触发 R7');
+});
+
+// ---- codex P2#5 回归：backfillSection2（§2 回填纯函数）——改数字 + 补插缺失非零类别 ----
+
+test('backfillSection2：替换句中已有类别的数字，保留其后说明', () => {
+  const text = 'V1.17 统计（2026-09-10）：43 项待开发、6 项待前置；0 项已验收（待验收=ENG）。';
+  const out = backfillSection2(text, { 待开发: 42, 待决策: 0, 待前置: 6, 开发中: 0, 待验收: 0, 已验收: 0, 暂缓: 0 });
+  assert.match(out, /42 项待开发/, '待开发数字应回填为实际值');
+  assert.match(out, /6 项待前置/, '未变类别保持');
+  assert.match(out, /（待验收=ENG）/, '分布串之后的说明必须保留');
+});
+
+test('backfillSection2：补插句中缺失但实际非零的类别（P2#5 漏计修复）', () => {
+  // 原句无「暂缓」；某卡转暂缓后 counts.暂缓=1 → 必须补插，否则 §2 分布漏计（合计 90≠91）。
+  const text = 'V1.17 统计（2026-09-10）：42 项待开发、11 项开发中、32 项待验收、0 项待决策、6 项待前置；0 项已验收（说明）。';
+  const counts = { 待开发: 42, 开发中: 11, 待验收: 31, 待决策: 0, 待前置: 6, 已验收: 0, 暂缓: 1 };
+  const out = backfillSection2(text, counts);
+  assert.match(out, /1 项暂缓/, '缺失的非零类别「暂缓」应被补插');
+  assert.match(out, /31 项待验收/, '待验收应从 32 回填为 31');
+  // 补插后分布合计应等于卡片总数 91（42+11+31+0+6+0+1）
+  const sum = [...out.matchAll(/(\d+)\s*项\s*(?:待开发|开发中|待验收|待决策|待前置|已验收|暂缓)/g)]
+    .reduce((a, m) => a + Number(m[1]), 0);
+  assert.equal(sum, 91, '补插后 §2 分布合计应等于卡片总数（消除漏计）');
+});
+
+test('backfillSection2：幂等——已含全部非零类别时二次回填不重复补插', () => {
+  const counts = { 待开发: 42, 开发中: 11, 待验收: 31, 待决策: 0, 待前置: 6, 已验收: 0, 暂缓: 1 };
+  const base = 'V1.17 统计（2026-09-10）：42 项待开发、11 项开发中、32 项待验收、0 项待决策、6 项待前置；0 项已验收（说明）。';
+  const once = backfillSection2(base, counts);
+  const twice = backfillSection2(once, counts);
+  assert.equal(once, twice, '二次回填应幂等');
+  assert.match(once, /1 项暂缓（说明）/, '暂缓补插在分布串末尾、说明之前');
+});
+
+test('backfillSection2：无 §2 声明句时原样返回', () => {
+  const text = '## 2. 进度\n本版本暂无统计句。\n';
+  assert.equal(backfillSection2(text, { 待开发: 1 }), text);
 });

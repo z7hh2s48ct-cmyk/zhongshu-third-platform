@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { countStatus, STATUS_ENUM } from './task-stats.mjs';
+import { countStatus, STATUS_ENUM, backfillSection2 } from './task-stats.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const DOC05 = 'docs/05-底座模块分析与开发任务清单.md';
@@ -64,11 +64,9 @@ if (zsId) {
 // ---- 2. 重算实际分布（权威）----
 const actual = countStatus(doc05);
 
-// ---- 3. 回填 §2 统计句（只改数字，保持结构与措辞；幂等）----
+// ---- 3. 回填 §2 统计句（改数字 + 补插句中缺失的非零类别，保持结构与措辞；幂等）----
 const b05 = doc05;
-doc05 = doc05.replace(/(统计（[^）]*）：)([^（(]*)/, (m, head, dist) =>
-  head + dist.replace(/(\d+)(\s*项\s*(待开发|开发中|待验收|待决策|待前置|已验收|暂缓))/g,
-    (mm, num, rest, status) => `${actual.counts[status]}${rest}`));
+doc05 = backfillSection2(doc05, actual.counts, ORDER);
 if (doc05 !== b05) changes.push(`§2 统计回填：${ORDER.filter((s) => actual.counts[s] > 0).map((s) => `${s}${actual.counts[s]}`).join('/')}`);
 
 // ---- 4. 回填 README 摘要（重建为全部非零状态；幂等）----
