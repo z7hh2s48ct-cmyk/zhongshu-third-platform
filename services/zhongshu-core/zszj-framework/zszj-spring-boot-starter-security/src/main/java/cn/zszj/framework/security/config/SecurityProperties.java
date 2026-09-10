@@ -28,6 +28,19 @@ public class SecurityProperties {
     private String tokenParameter = "token";
 
     /**
+     * 是否允许通过 URL 请求参数（{@link #tokenParameter}）传递访问令牌（ZS-SEC-003）。
+     *
+     * 默认 {@code true}：保留 WebSocket 等无法设置 Header 的获准连接能力——浏览器 WebSocket 握手不能自定义
+     * Header，只能通过 {@code /ws?token=} 拼接（见 WebSocketProperties#path、LoginUserHandshakeInterceptor）。
+     * 普通 API 请求两端前端一律使用 Authorization Header（Web service.ts、小程序 interceptor.ts，不依赖本开关）。
+     *
+     * 共享/部署环境若未使用 WebSocket/SSE 参数连接，应设为 {@code false}，从服务端禁止普通长效凭据进入 URL，
+     * 规避 URL 被访问日志、浏览器历史、Referer、代理留存导致的泄露。SSE、文件下载两端均走 Header，不受影响。
+     */
+    @NotNull(message = "Token 参数开关不能为空")
+    private Boolean tokenParameterEnabled = true;
+
+    /**
      * mock 模式的开关
      */
     @NotNull(message = "mock 模式的开关不能为空")

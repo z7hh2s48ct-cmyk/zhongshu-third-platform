@@ -75,7 +75,8 @@ public class AuthController {
     @Operation(summary = "登出系统")
     public CommonResult<Boolean> logout(HttpServletRequest request) {
         String token = SecurityFrameworkUtils.obtainAuthorization(request,
-                securityProperties.getTokenHeader(), securityProperties.getTokenParameter());
+                securityProperties.getTokenHeader(), securityProperties.getTokenParameter(),
+                securityProperties.getTokenParameterEnabled());
         if (StrUtil.isNotBlank(token)) {
             authService.logout(token, LoginLogTypeEnum.LOGOUT_SELF.getType());
         }

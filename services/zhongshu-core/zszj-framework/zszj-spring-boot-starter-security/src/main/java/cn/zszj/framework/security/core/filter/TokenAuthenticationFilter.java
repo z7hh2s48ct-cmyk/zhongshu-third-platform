@@ -41,7 +41,8 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String token = SecurityFrameworkUtils.obtainAuthorization(request,
-                securityProperties.getTokenHeader(), securityProperties.getTokenParameter());
+                securityProperties.getTokenHeader(), securityProperties.getTokenParameter(),
+                securityProperties.getTokenParameterEnabled());
         if (StrUtil.isNotEmpty(token)) {
             Integer userType = WebFrameworkUtils.getLoginUserType(request);
             try {

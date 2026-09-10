@@ -54,7 +54,8 @@ public class AppAuthController {
     @PermitAll
     public CommonResult<Boolean> logout(HttpServletRequest request) {
         String token = SecurityFrameworkUtils.obtainAuthorization(request,
-                securityProperties.getTokenHeader(), securityProperties.getTokenParameter());
+                securityProperties.getTokenHeader(), securityProperties.getTokenParameter(),
+                securityProperties.getTokenParameterEnabled());
         if (StrUtil.isNotBlank(token)) {
             authService.logout(token);
         }

@@ -2,7 +2,6 @@ package cn.zszj.framework.security.core.util;
 
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.ObjUtil;
-import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import org.springframework.lang.Nullable;
@@ -14,7 +13,11 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.util.StringUtils;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * 安全服务工具类
@@ -31,26 +34,99 @@ public class SecurityFrameworkUtils {
     private SecurityFrameworkUtils() {}
 
     /**
-     * 从请求中，获得认证 Token
+     * 从请求中，获得认证 Token（向后兼容重载：URL 参数通道默认启用）。
      *
      * @param request 请求
      * @param headerName 认证 Token 对应的 Header 名字
      * @param parameterName 认证 Token 对应的 Parameter 名字
-     * @return 认证 Token
+     * @return 认证 Token；缺失、畸形、重复冲突时返回 {@code null}
      */
     public static String obtainAuthorization(HttpServletRequest request,
                                              String headerName, String parameterName) {
-        // 1. 获得 Token。优先级：Header > Parameter
-        String token = request.getHeader(headerName);
-        if (StrUtil.isEmpty(token)) {
-            token = request.getParameter(parameterName);
-        }
-        if (!StringUtils.hasText(token)) {
+        return obtainAuthorization(request, headerName, parameterName, true);
+    }
+
+    /**
+     * 从请求中，获得认证 Token。
+     *
+     * <p>解析规则（ZS-SEC-003）：
+     * <ol>
+     *     <li><b>来源优先级</b>：Header &gt; Parameter。Parameter 通道仅用于 WebSocket 等无法设置 Header 的获准
+     *     连接；普通 API 两端前端一律使用 Authorization Header。{@code parameterEnabled=false} 时完全忽略
+     *     Parameter，从服务端禁止长效凭据进入 URL。</li>
+     *     <li><b>重复/冲突拒绝</b>：同一来源（Header 或 Parameter）出现多个<b>不同</b>值时视为歧义（凭据走私），
+     *     拒绝并返回 {@code null}；多个相同值归一为一个。</li>
+     *     <li><b>严格 Bearer 前缀</b>（RFC 6750/7235）：仅当值以 {@code Bearer}（scheme 大小写不敏感）+ 空白开头时
+     *     剥离前缀，不再子串查找，避免 {@code "xBearer y"} 被误解析为 {@code "y"}；{@code "Bearer"} 后无空白分隔
+     *     或剥离后为空视为畸形拒绝；无 Bearer 前缀时按裸 Token 兼容既有客户端。</li>
+     * </ol>
+     *
+     * @param request 请求
+     * @param headerName 认证 Token 对应的 Header 名字
+     * @param parameterName 认证 Token 对应的 Parameter 名字
+     * @param parameterEnabled 是否允许 URL 参数通道（WebSocket 等获准连接）
+     * @return 认证 Token；缺失、畸形、重复冲突时返回 {@code null}（统一视为无有效凭据）
+     */
+    public static String obtainAuthorization(HttpServletRequest request,
+                                             String headerName, String parameterName, boolean parameterEnabled) {
+        // 1. Header 优先：同一 Header 多个不同值视为冲突，拒绝
+        Set<String> headerValues = distinctNonEmptyValues(Collections.list(request.getHeaders(headerName)));
+        if (headerValues.size() > 1) {
             return null;
         }
-        // 2. 去除 Token 中带的 Bearer
-        int index = token.indexOf(AUTHORIZATION_BEARER + " ");
-        return index >= 0 ? token.substring(index + 7).trim() : token;
+        String raw = headerValues.isEmpty() ? null : headerValues.iterator().next();
+        // 2. Header 缺失且参数通道启用时，回退 Parameter（WebSocket/SSE/下载等无法设置 Header 的获准连接）
+        if (!StringUtils.hasText(raw) && parameterEnabled && StringUtils.hasText(parameterName)) {
+            String[] parameterValues = request.getParameterValues(parameterName);
+            List<String> parameterList = parameterValues == null
+                    ? Collections.emptyList() : Arrays.asList(parameterValues);
+            Set<String> distinctParameters = distinctNonEmptyValues(parameterList);
+            if (distinctParameters.size() > 1) {
+                return null;
+            }
+            raw = distinctParameters.isEmpty() ? null : distinctParameters.iterator().next();
+        }
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        // 3. 严格解析 Bearer 前缀
+        return parseBearerToken(raw);
+    }
+
+    /**
+     * 归一来源值：剔除空白项并 trim，返回<b>不同值</b>的有序集合，用于重复/冲突判定。
+     */
+    private static Set<String> distinctNonEmptyValues(List<String> values) {
+        Set<String> distinct = new LinkedHashSet<>();
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                distinct.add(value.trim());
+            }
+        }
+        return distinct;
+    }
+
+    /**
+     * 严格解析 Bearer 前缀（RFC 6750）：scheme 大小写不敏感、必须以空白分隔；畸形返回 {@code null}；
+     * 无 Bearer 前缀时按裸 Token 兼容返回。
+     */
+    private static String parseBearerToken(String raw) {
+        String value = raw.trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        // scheme 前缀大小写不敏感匹配（RFC 7235）
+        if (!value.regionMatches(true, 0, AUTHORIZATION_BEARER, 0, AUTHORIZATION_BEARER.length())) {
+            // 无 Bearer 前缀：按裸 Token 兼容既有客户端（如 "abc123"）
+            return value;
+        }
+        // 以 Bearer 开头：scheme 后必须是空白分隔，否则畸形（如 "BearerXyz"、"Bearer" 单独出现）
+        if (value.length() <= AUTHORIZATION_BEARER.length()
+                || !Character.isWhitespace(value.charAt(AUTHORIZATION_BEARER.length()))) {
+            return null;
+        }
+        String token = value.substring(AUTHORIZATION_BEARER.length()).trim();
+        return token.isEmpty() ? null : token;
     }
 
     /**
