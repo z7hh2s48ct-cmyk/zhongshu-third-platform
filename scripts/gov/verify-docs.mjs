@@ -6,7 +6,7 @@
  *  R1 链接有效：内联链接、引用定义的本地目标必须存在（外链/锚点跳过）；
  *  R2 任务编号唯一：05 文档 `### ZS-XXX-NNN` 标题不得重复；
  *  R3 状态枚举合法：05 卡片"状态 X"只允许 7 个枚举值；
- *  R4 决策门禁：未确认决策（D-07/D-09/D-10/D-11）不得被写成已批准/已确认/已落地；
+ *  R4 决策门禁：未确认决策（D-07/D-10/D-11）不得被写成已批准/已确认/已落地；D-09 已于 2026-09-10 确认最小模型与账号唯一性细则，移出守护列表；
  *  R5 版本一致：README 文档索引的版本号与各文档头部"文档版本：V*"一致。
  * 用法：node scripts/gov/verify-docs.mjs（退出码非 0 = 不一致）
  */
@@ -23,7 +23,7 @@ const DOCS = ['README.md',
   'docs/06-品牌素材与命名映射.md'];
 const HISTORICAL = /^docs\/04-/; // 历史报告：只查链接，不重写口径
 const STATUS_ENUM = ['待开发', '待决策', '待前置', '开发中', '待验收', '已验收', '暂缓'];
-const UNCONFIRMED_DECISIONS = ['D-07', 'D-09', 'D-10', 'D-11'];
+const UNCONFIRMED_DECISIONS = ['D-07', 'D-10', 'D-11']; // D-09 已于 2026-09-10 确认，移出守护列表
 const VERSION_HEADER = /文档版本：\s*([A-Za-z0-9.]+)/;
 
 export function checkDocs(files, readFile, rootDir, { exists = existsSync } = {}) {

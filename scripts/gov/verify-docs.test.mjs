@@ -46,11 +46,11 @@ test('非法任务状态会失败，合法枚举通过', () => {
   assert.deepEqual(checkDocs(['docs/05-x.md'], read({ 'docs/05-x.md': good }), root), []);
 });
 
-test('未确认决策（D-09）被写成既成事实会失败，否定表述通过', () => {
-  const bad = '按 D-09 的已确认结论实现组织模型。';
+test('未确认决策（D-10）被写成既成事实会失败，否定表述通过', () => {
+  const bad = '按 D-10 的已确认结论接入真实微信。';
   const issues = checkDocs(['docs/05-x.md'], read({ 'docs/05-x.md': bad }), root);
   assert.ok(issues.some((i) => i.rule === 'R4-decision'));
-  const good = 'D-09 的候选设计输入，不是已确认结论。';
+  const good = 'D-10 的候选接入方案，不是已确认结论。';
   assert.deepEqual(checkDocs(['docs/05-x.md'], read({ 'docs/05-x.md': good }), root), []);
 });
 
