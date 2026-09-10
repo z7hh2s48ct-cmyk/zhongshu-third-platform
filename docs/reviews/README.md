@@ -3,7 +3,7 @@
 本目录记录针对 [05-底座模块分析与开发任务清单.md](../05-底座模块分析与开发任务清单.md) 各任务提交的本地 codex 代码评审结论。
 
 - 评审工具：`codex-cli 0.153.4`（`codex review --commit <SHA>`，模型 `gpt-6-astra`，reasoning effort `xhigh`）
-- 评审范围：① 15.2 节「众墅之家品牌与代码命名统一专项」已完成子项（首轮，见下方各表）；② B03「接口与安全链路」批次（SEC/PERM/DB 等，见文末「B03 接口与安全链路专项评审状态」）。
+- 评审范围：① 15.2 节「众墅之家品牌与代码命名统一专项」已完成子项（首轮，见下方各表）；② B03「接口与安全链路」批次（SEC/PERM/DB 等，见文末「B03 接口与安全链路专项评审状态」）；③ 治理与门禁工具链自身（task-stats/verify-docs/close-task/run-local-gates 等治理脚本，见文末「治理与门禁工具链专项评审状态」）。
 - 原始日志：每份评审的完整 stdout 保存为 `codex-<TASK>.raw.md`；本目录 `README.md` 汇总所有结论。
 
 ## 15.2 节已完成任务清单与评审状态
@@ -113,17 +113,17 @@
 
 | 任务 | 提交 | 状态 | 评审文档 | 结论摘要 |
 |---|---|---|---|---|
-| ZS-GOV-001 任务仪式自动化（提效方案 P0） | `8c9b6082` | ✅ 评审完成（2×P2 确认成立、非阻塞、列入待办） | [codex-ZS-GOV-001-P0.md](codex-ZS-GOV-001-P0.md) | codex（`gpt-6-astra`/`xhigh`）发现 2×P2：verify-docs R6/R7 只比对已声明状态键（违背 L12「省略按 0 计」契约，人工漏写非零类目仍通过）、close-task §2 回填 replace-only（0→非零状态转换不插入新类目，与同文件 README 整段重建矛盾）；11 测试通过。左窗口独立复核 2 项均成立 |
-| ZS-OPS-001.A 聚合门禁提速（提效方案 P1 步骤④） | `c9d178b2` | ✅ 评审完成（3×P2 确认成立、非阻塞、列入待办） | [codex-ZS-OPS-001-step4.md](codex-ZS-OPS-001-step4.md) | codex（`gpt-6-astra`/`xhigh`）发现 3×P2：`--incremental` 增量选门在 SQL 种子编辑（G2b areas 未纳入种子数据）、跨目录 rename（`git diff --name-only` 只报目标路径、漏 G10）、删除 docs/ 外被链目标（漏 G5 断链校验）三类变更下漏选受影响门禁；14 planner 测试通过但未覆盖这三例。左窗口独立复核 3 项均成立 |
+| ZS-GOV-001 任务仪式自动化（提效方案 P0） | `8c9b6082` | ✅ 评审完成（2×P2 确认成立 → 已由 `ea739b9c` 修复） | [codex-ZS-GOV-001-P0.md](codex-ZS-GOV-001-P0.md) | codex（`gpt-6-astra`/`xhigh`）发现 2×P2：verify-docs R6/R7 只比对已声明状态键（违背 L12「省略按 0 计」契约，人工漏写非零类目仍通过）、close-task §2 回填 replace-only（0→非零状态转换不插入新类目，与同文件 README 整段重建矛盾）；11 测试通过。左窗口独立复核 2 项均成立，**已由 `ea739b9c` 修复：R6/R7 遍历 `STATUS_ENUM` 省略按 0 计、§2 回填抽 `backfillSection2` 补插缺失非零类别，+6 回归测试** |
+| ZS-OPS-001.A 聚合门禁提速（提效方案 P1 步骤④） | `c9d178b2` | ✅ 评审完成（3×P2 确认成立 → 已由 `ea739b9c` 修复） | [codex-ZS-OPS-001-step4.md](codex-ZS-OPS-001-step4.md) | codex（`gpt-6-astra`/`xhigh`）发现 3×P2：`--incremental` 增量选门在 SQL 种子编辑（G2b areas 未纳入种子数据）、跨目录 rename（`git diff --name-only` 只报目标路径、漏 G10）、删除 docs/ 外被链目标（漏 G5 断链校验）三类变更下漏选受影响门禁；14 planner 测试通过但未覆盖这三例。左窗口独立复核 3 项均成立，**已由 `ea739b9c` 修复：G2b areas 加 `services/zhongshu-core/sql/`、`git diff` 加 `--no-renames`、G5 标 `safety:true` 恒跑，+3 回归测试（另 4 存量断言更新）** |
 
-### 待办：治理/门禁工具链健壮性专项（5 × P2，非阻塞，建议合并为一批修复）
+### 已闭合：治理/门禁工具链健壮性专项（5 × P2，非阻塞，已由 `ea739b9c` 合并修复）
 
 | # | 任务 | 缺陷 | 文件:行 | 状态 |
 |---|---|---|---|---|
-| 1 | ZS-GOV-001 | verify-docs R6/R7 只遍历已声明状态键，漏写非零类目仍通过（违背 L12「省略按 0 计」契约） | `scripts/gov/verify-docs.mjs:124,140-142` | 🔲 待处置（P2，非阻塞） |
-| 2 | ZS-GOV-001 | close-task §2 回填 replace-only，0→非零状态转换不插入新类目（与 README 整段重建矛盾） | `scripts/gov/close-task.mjs:69-71` | 🔲 待处置（P2，非阻塞） |
-| 3 | ZS-OPS-001.A | G2b areas 仅 `scripts/brand/`，未纳入其测试消费的 SQL 种子，增量下种子同域重复漏检 | `scripts/ops/run-local-gates.mjs:31` | 🔲 待处置（P2，非阻塞） |
-| 4 | ZS-OPS-001.A | `detectChangedFiles` 对 rename 只取目标路径，跨目录移动漏选源目录门禁（如 G10） | `scripts/ops/run-local-gates.mjs:84` | 🔲 待处置（P2，非阻塞） |
-| 5 | ZS-OPS-001.A | G5 areas 未覆盖 docs/ 外被链目标，删除该目标增量下漏触发断链校验 | `scripts/ops/run-local-gates.mjs:34` | 🔲 待处置（P2，非阻塞） |
+| 1 | ZS-GOV-001 | verify-docs R6/R7 只遍历已声明状态键，漏写非零类目仍通过（违背 L12「省略按 0 计」契约） | `scripts/gov/verify-docs.mjs:124,140-142` | ✅ 已修复（`ea739b9c`） |
+| 2 | ZS-GOV-001 | close-task §2 回填 replace-only，0→非零状态转换不插入新类目（与 README 整段重建矛盾） | `scripts/gov/close-task.mjs:69-71` | ✅ 已修复（`ea739b9c`） |
+| 3 | ZS-OPS-001.A | G2b areas 仅 `scripts/brand/`，未纳入其测试消费的 SQL 种子，增量下种子同域重复漏检 | `scripts/ops/run-local-gates.mjs:31` | ✅ 已修复（`ea739b9c`） |
+| 4 | ZS-OPS-001.A | `detectChangedFiles` 对 rename 只取目标路径，跨目录移动漏选源目录门禁（如 G10） | `scripts/ops/run-local-gates.mjs:84` | ✅ 已修复（`ea739b9c`） |
+| 5 | ZS-OPS-001.A | G5 areas 未覆盖 docs/ 外被链目标，删除该目标增量下漏触发断链校验 | `scripts/ops/run-local-gates.mjs:34` | ✅ 已修复（`ea739b9c`） |
 
-> 五项 P2 均已由左窗口独立复核确认成立（非误报），依「后续处理约定」第 2 条「P2/P3 可分批处置」列入待办、本轮不改代码。因二者保护的正是所有后续任务依赖的文档一致性门禁（verify-docs）与本地基线门禁（run-local-gates），建议合并为一个专项批次（5 × P2 + 回归测试）优先闭合；其中 G2b/G5 恒跑（`safety: true`）与 rename `--no-renames` 三处修复代价小、收益直接。
+> 五项 P2 均已由左窗口独立复核确认成立（非误报）。评审当时依「后续处理约定」第 2 条列入待办；因其保护的正是所有后续任务依赖的文档一致性门禁（verify-docs）与本地基线门禁（run-local-gates），建议合并为一个专项批次优先闭合。**该建议已由提交 `ea739b9c` 落实**——5 × P2 同批修复：#1 verify-docs R6/R7 遍历 `STATUS_ENUM`（省略按 0 计）、#2 §2 回填抽 `backfillSection2` 纯函数（补插缺失非零类别）、#3 G2b `areas` 加 `services/zhongshu-core/sql/`、#4 `git diff` 加 `--no-renames`（rename 源+目标双上报）、#5 G5 标 `safety: true`（增量恒跑）；`verify-docs.test.mjs` +6、`run-local-gates.test.mjs` +3（另 4 存量断言更新），`node --test` 17/17 + 17/17、`run-local-gates --fast` 10/10、`verify-docs` 全量 0 issue 全绿。
