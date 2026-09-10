@@ -103,5 +103,6 @@
 | 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
 |---|---|---|---|---|---|
 | ZS-SEC-003 规范 Token 传输与特殊连接凭据 | `59b59227` | 10 files, +378/-18 | ✅ 评审通过（r0 直接 0 发现） | [codex-ZS-SEC-003.md](codex-ZS-SEC-003.md) | codex（`gpt-6-astra`/`xhigh`）判定 token 解析 / 配置传播 / 三处调用方无可归因回归；左窗口独立复核交接单六判断点全部成立；2 × P3（交接单「新增常量」口径、docs/05 §2 括注日期串），均非代码缺陷、不阻塞。codex 沙箱跑测试因 `~/.m2` `AccessDeniedException` 受阻（环境限制，非本提交缺陷），测试通过性以右窗口本机 18/18 BUILD SUCCESS 为准 |
+| ZS-SEC-008 补齐参数校验、上下文头解析与请求资源限制 | `76da2a2f`（首提）→ `3f4fa736`（P1 修复） | r0 13 files, +745/-15；r1 修复 4 files, +130/-8 | ✅ 评审通过（r0 发现 1×P1 → 修复 → r1 复评 0 发现） | [codex-ZS-SEC-008.md](codex-ZS-SEC-008.md) | r0 codex（`gpt-6-astra`/`xhigh`）发现 1×P1：chunked `application/json`（`Content-Length=-1`）绕过声明式早拒、`CacheRequestBodyWrapper` 全量缓冲耗尽堆；修复以「声明式早拒 + 限界读取（8192 buffer 边读边累加超限抛 `TooLargeException`）」两道防线闭合 + 2 例未知长度回归护栏（`CacheRequestBodyFilterTest` 6→8）；r1 `codex review --commit 3f4fa736` 复评，codex 沙箱内亲跑 19 测试全绿、判定「No actionable regressions were found」0 发现通过。附加复核 2 判断点（`parseTenantIdHeader` Unicode Nd 数字归一非越权、过滤器异常出口 catch 面完备）均非缺陷 |
 
-> 本目录另存有同批次的评审交接单（`HANDOFF-ZS-SEC-001.A`/`002`/`005`/`007`/`012.A`、`HANDOFF-ZS-PERM-001.A`/`002.A`、`HANDOFF-ZS-DB-018`），其对应 `codex-<TASK>.md` 评审产物尚待补齐；ZS-SEC-003 为该批次首份完成的 codex 评审。
+> 本目录另存有同批次的评审交接单（`HANDOFF-ZS-SEC-001.A`/`002`/`005`/`007`/`012.A`、`HANDOFF-ZS-PERM-001.A`/`002.A`、`HANDOFF-ZS-DB-018`），其对应 `codex-<TASK>.md` 评审产物尚待补齐；ZS-SEC-003 为该批次首份完成的 codex 评审，ZS-SEC-008 为第二份（且首个经 r0→修复→r1 两轮闭环的评审）。
