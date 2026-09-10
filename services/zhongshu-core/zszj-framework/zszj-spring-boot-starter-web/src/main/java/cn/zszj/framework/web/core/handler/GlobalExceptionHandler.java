@@ -12,6 +12,7 @@ import cn.zszj.framework.common.exception.util.ServiceExceptionUtil;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.util.collection.SetUtils;
 import cn.zszj.framework.common.util.json.JsonUtils;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import cn.zszj.framework.common.util.monitor.TracerUtils;
 import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
@@ -358,7 +359,7 @@ public class GlobalExceptionHandler {
             // 执行插入 errorLog
             apiErrorLogApi.createApiErrorLogAsync(errorLog);
         } catch (Throwable th) {
-            log.error("[createExceptionLog][url({}) log({}) 发生异常]", req.getRequestURI(),  JsonUtils.toJsonString(errorLog), th);
+            log.error("[createExceptionLog][url({}) traceId({}) 写入错误日志失败]", req.getRequestURI(), TracerUtils.getTraceId(), th);
         }
     }
 
@@ -383,8 +384,8 @@ public class GlobalExceptionHandler {
         errorLog.setApplicationName(applicationName);
         errorLog.setRequestUrl(request.getRequestURI());
         Map<String, Object> requestParams = MapUtil.<String, Object>builder()
-                .put("query", ServletUtils.getParamMap(request))
-                .put("body", ServletUtils.getBody(request)).build();
+                .put("query", LogSanitizeUtils.sanitizeMap(ServletUtils.getParamMap(request)))
+                .put("body", LogSanitizeUtils.sanitizeJson(ServletUtils.getBody(request))).build();
         errorLog.setRequestParams(JsonUtils.toJsonString(requestParams));
         errorLog.setRequestMethod(request.getMethod());
         errorLog.setUserAgent(ServletUtils.getUserAgent(request));

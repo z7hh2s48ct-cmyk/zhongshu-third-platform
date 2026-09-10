@@ -3,6 +3,7 @@ package cn.zszj.framework.idempotent.core.aop;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import cn.zszj.framework.idempotent.core.annotation.Idempotent;
 import cn.zszj.framework.idempotent.core.keyresolver.IdempotentKeyResolver;
 import cn.zszj.framework.idempotent.core.redis.IdempotentRedisDAO;
@@ -48,7 +49,7 @@ public class IdempotentAspect {
         boolean success = idempotentRedisDAO.setIfAbsent(key, idempotent.timeout(), idempotent.timeUnit());
         // 锁定失败，抛出异常
         if (!success) {
-            log.info("[aroundPointCut][方法({}) 参数({}) 存在重复请求]", joinPoint.getSignature().toString(), joinPoint.getArgs());
+            log.info("[aroundPointCut][方法({}) 参数({}) 存在重复请求]", joinPoint.getSignature().toString(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
             throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), idempotent.message());
         }
 

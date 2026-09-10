@@ -8,6 +8,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.signature.core.annotation.ApiSignature;
 import cn.zszj.framework.signature.core.redis.ApiSignatureRedisDAO;
@@ -45,8 +46,9 @@ public class ApiSignatureAspect {
         }
 
         // 2. 验证不通过，抛出异常
+        // 安全（ZS-SEC-007）：方法参数先经 LogSanitizeUtils.sanitizeArgs 脱敏，避免密码/令牌等凭据随签名失败日志泄露
         log.error("[beforePointCut][方法{} 参数({}) 签名失败]", joinPoint.getSignature().toString(),
-                joinPoint.getArgs());
+                LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
         throw new ServiceException(BAD_REQUEST.getCode(),
                 StrUtil.blankToDefault(signature.message(), BAD_REQUEST.getMsg()));
     }
@@ -73,7 +75,8 @@ public class ApiSignatureAspect {
         String nonce = request.getHeader(signature.nonce());
         if (BooleanUtil.isFalse(signatureRedisDAO.setNonce(appId, nonce, signature.timeout() * 2, signature.timeUnit()))) {
             String timestamp = request.getHeader(signature.timestamp());
-            log.info("[verifySignature][appId({}) timestamp({}) nonce({}) sign({}) 存在重复请求]", appId, timestamp, nonce, clientSignature);
+            // 安全（ZS-SEC-007）：sign 为凭据派生值，掩码处理；appId/timestamp/nonce 保留用于定位重复请求
+            log.info("[verifySignature][appId({}) timestamp({}) nonce({}) sign({}) 存在重复请求]", appId, timestamp, nonce, LogSanitizeUtils.MASK);
             throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), "存在重复请求");
         }
         return true;

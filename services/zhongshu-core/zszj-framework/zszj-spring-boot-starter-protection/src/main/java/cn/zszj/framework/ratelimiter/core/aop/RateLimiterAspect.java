@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import cn.zszj.framework.ratelimiter.core.annotation.RateLimiter;
 import cn.zszj.framework.ratelimiter.core.keyresolver.RateLimiterKeyResolver;
 import cn.zszj.framework.ratelimiter.core.redis.RateLimiterRedisDAO;
@@ -49,7 +50,7 @@ public class RateLimiterAspect {
         boolean success = rateLimiterRedisDAO.tryAcquire(key,
                 rateLimiter.count(), rateLimiter.time(), rateLimiter.timeUnit());
         if (!success) {
-            log.info("[beforePointCut][方法({}) 参数({}) 请求过于频繁]", joinPoint.getSignature().toString(), joinPoint.getArgs());
+            log.info("[beforePointCut][方法({}) 参数({}) 请求过于频繁]", joinPoint.getSignature().toString(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
             String message = StrUtil.blankToDefault(rateLimiter.message(),
                     GlobalErrorCodeConstants.TOO_MANY_REQUESTS.getMsg());
             throw new ServiceException(GlobalErrorCodeConstants.TOO_MANY_REQUESTS.getCode(), message);
