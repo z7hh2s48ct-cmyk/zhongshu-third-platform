@@ -141,4 +141,60 @@ public class CacheRequestBodyFilterTest {
         assertNull(chain.getRequest(), "按字节数（非字符数）判定超限");
     }
 
+    @Test
+    @DisplayName("chunked/未知长度超大 JSON（Content-Length=-1）→ 限界读取时受控拒绝 400，不进入过滤链")
+    public void testUnknownLengthOversizedJsonRejected() throws Exception {
+        CacheRequestBodyFilter filter = new CacheRequestBodyFilter(10);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(unknownLengthJsonRequest(100), response, chain);
+
+        assertNull(chain.getRequest(), "未知长度超大 body 应在限界读取时拒绝，不进入过滤链（codex P1 回归护栏）");
+        String content = response.getContentAsString();
+        assertTrue(content.contains("400"), "应写业务码 400，实际：" + content);
+        assertTrue(content.contains("请求体大小超过上限"), "应提示请求体超限，实际：" + content);
+    }
+
+    @Test
+    @DisplayName("chunked/未知长度合法 JSON → 限界读取内正常缓冲放行")
+    public void testUnknownLengthNormalJsonPasses() throws Exception {
+        CacheRequestBodyFilter filter = new CacheRequestBodyFilter(1024);
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(unknownLengthJsonRequest(20), new MockHttpServletResponse(), chain);
+
+        ServletRequest passed = chain.getRequest();
+        assertNotNull(passed, "未知长度但合法大小 JSON 应放行");
+        assertTrue(passed instanceof CacheRequestBodyWrapper, "放行请求应被包装为可重复读取的 Wrapper");
+        assertTrue(passed.getContentLength() == 20, "缓冲后应保持实际 20 字节，实际：" + passed.getContentLength());
+    }
+
+    /**
+     * 构造 chunked / 未知长度 JSON 请求：body 实际有 bodySize 字节，但 getContentLength(Long)() 返回 -1，
+     * 模拟 Transfer-Encoding: chunked 绕过声明式 Content-Length 早拒的场景（codex P1 回归护栏）。
+     */
+    private static MockHttpServletRequest unknownLengthJsonRequest(int bodySize) {
+        MockHttpServletRequest request = new MockHttpServletRequest() {
+
+            @Override
+            public int getContentLength() {
+                return -1;
+            }
+
+            @Override
+            public long getContentLengthLong() {
+                return -1L;
+            }
+
+        };
+        request.setMethod("POST");
+        request.setRequestURI(JSON_URI);
+        request.setContentType("application/json");
+        byte[] body = new byte[bodySize];
+        Arrays.fill(body, (byte) 'a');
+        request.setContent(body);
+        return request;
+    }
+
 }

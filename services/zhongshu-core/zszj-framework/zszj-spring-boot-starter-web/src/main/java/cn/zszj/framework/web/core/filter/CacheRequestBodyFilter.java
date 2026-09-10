@@ -47,14 +47,25 @@ public class CacheRequestBodyFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws IOException, ServletException {
-        // ZS-SEC-008：缓冲前约束 JSON 大小。声明的 Content-Length 超过上限则受控拒绝，不进入全量缓冲。
+        // ZS-SEC-008：缓冲前约束 JSON 大小，两道防线——
+        // ① 声明的 Content-Length 超上限则早拒（快速路径，不读 body）；
+        // ② chunked / 未知长度（Content-Length = -1）会绕过 ①，故限界读取时边读边累计，
+        //    实际字节超上限即受控拒绝，防止认证前无界缓冲耗尽堆内存（codex P1 修复）。
         // 上传 / 流式接口非 JSON，已被 shouldNotFilter 排除，不会进入此处。
         if (maxCacheSize > 0 && request.getContentLengthLong() > maxCacheSize) {
             WebFrameworkUtils.writeJSON(request, response, CommonResult.error(
                     GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "请求体大小超过上限"));
             return;
         }
-        filterChain.doFilter(new CacheRequestBodyWrapper(request), response);
+        CacheRequestBodyWrapper wrapper;
+        try {
+            wrapper = new CacheRequestBodyWrapper(request, maxCacheSize);
+        } catch (CacheRequestBodyWrapper.TooLargeException e) {
+            WebFrameworkUtils.writeJSON(request, response, CommonResult.error(
+                    GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "请求体大小超过上限"));
+            return;
+        }
+        filterChain.doFilter(wrapper, response);
     }
 
     @Override
