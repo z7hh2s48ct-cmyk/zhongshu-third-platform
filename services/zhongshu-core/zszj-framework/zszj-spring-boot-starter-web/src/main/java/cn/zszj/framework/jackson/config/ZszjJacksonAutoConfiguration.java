@@ -1,7 +1,6 @@
 package cn.zszj.framework.jackson.config;
 
 import cn.zszj.framework.common.util.json.JsonUtils;
-import cn.zszj.framework.common.util.json.databind.IdToStringAnnotationIntrospector;
 import cn.zszj.framework.common.util.json.databind.NumberSerializer;
 import cn.zszj.framework.common.util.json.databind.TimestampLocalDateTimeDeserializer;
 import cn.zszj.framework.common.util.json.databind.TimestampLocalDateTimeSerializer;
@@ -32,10 +31,10 @@ public class ZszjJacksonAutoConfiguration {
     @Bean
     public Jackson2ObjectMapperBuilderCustomizer ldtEpochMillisCustomizer() {
         return builder -> builder
-                // ZS-SEC-009：ID 语义 Long 字段（id/*Id/*Ids，含 Set<Long> 等集合元素）在边界恒输出 string，
-                // 消除同字段随数值大小在 number/string 漂移；计数/金额等非 ID 的 Long 不受影响
-                .annotationIntrospector(IdToStringAnnotationIntrospector.INSTANCE)
-                // Long -> Number（非 ID 的 Long 安全网：超 JS 安全整数转 string）
+                // Long -> Number（安全网：超 JS 安全整数 2^53-1 转 string，避免前端精度丢失）
+                // ZS-SEC-009.B：ID 语义 Long（id/*Id/*Ids，含 Set<Long> 集合元素）恒输出 string 的全局合同，
+                // 待两端前端 ID 数值比较（如 parentId === 0）迁移后再激活；IdToStringAnnotationIntrospector
+                // 已就绪但此处暂不注册，避免 string ID 断裂现有客户端的菜单/部门/角色等界面
                 .serializerByType(Long.class, NumberSerializer.INSTANCE)
                 .serializerByType(Long.TYPE, NumberSerializer.INSTANCE)
                 // LocalDate / LocalTime

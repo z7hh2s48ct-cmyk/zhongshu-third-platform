@@ -39,6 +39,17 @@ public class DateUtils {
     public static final String FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND = "yyyy-MM-dd HH:mm:ss";
 
     /**
+     * 当前时间（固定 {@link #ZONE_DEFAULT} GMT+8）
+     *
+     * ZS-SEC-009：接口边界时间合同的「生产端」原语。替代 {@link LocalDateTime#now()}（依赖部署 JVM 默认时区），
+     * 使被序列化/比较的 LocalDateTime（如令牌过期时间）与固定时区的 TimestampLocalDateTimeSerializer 对齐，
+     * 消除 UTC 部署下 creation(systemDefault) 与 serialization(GMT+8) 失配导致的时间偏移。
+     */
+    public static LocalDateTime now() {
+        return LocalDateTime.now(ZONE_DEFAULT);
+    }
+
+    /**
      * 将 LocalDateTime 转换成 Date
      *
      * @param date LocalDateTime
@@ -77,7 +88,8 @@ public class DateUtils {
     }
 
     public static boolean isExpired(LocalDateTime time) {
-        LocalDateTime now = LocalDateTime.now();
+        // ZS-SEC-009：用固定时区的 now() 比较，与令牌 expiresTime 的生产端（DateUtils.now()）对齐
+        LocalDateTime now = now();
         return now.isAfter(time);
     }
 

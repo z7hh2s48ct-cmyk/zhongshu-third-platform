@@ -182,7 +182,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
                 .setUserInfo(buildUserInfo(refreshTokenDO.getUserId(), refreshTokenDO.getUserType()))
                 .setClientId(clientDO.getClientId()).setScopes(refreshTokenDO.getScopes())
                 .setRefreshToken(refreshTokenDO.getRefreshToken())
-                .setExpiresTime(LocalDateTime.now().plusSeconds(clientDO.getAccessTokenValiditySeconds()));
+                .setExpiresTime(DateUtils.now().plusSeconds(clientDO.getAccessTokenValiditySeconds()));
         // 优先从 refreshToken 获取租户编号，避免 ThreadLocal 被污染时导致 tenantId 为 null
         // 可能关联的 issue：https://t.zsxq.com/JIi5G
         Long tenantId = refreshTokenDO.getTenantId();
@@ -200,7 +200,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         OAuth2RefreshTokenDO refreshToken = new OAuth2RefreshTokenDO().setRefreshToken(generateRefreshToken())
                 .setUserId(userId).setUserType(userType)
                 .setClientId(clientDO.getClientId()).setScopes(scopes)
-                .setExpiresTime(LocalDateTime.now().plusSeconds(clientDO.getRefreshTokenValiditySeconds()));
+                .setExpiresTime(DateUtils.now().plusSeconds(clientDO.getRefreshTokenValiditySeconds()));
         oauth2RefreshTokenMapper.insert(refreshToken);
         return refreshToken;
     }
@@ -246,7 +246,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Override
     public Integer cleanRefreshToken(Integer exceedDay, Integer deleteLimit) {
         int count = 0;
-        LocalDateTime expireDate = LocalDateTime.now().minusDays(exceedDay);
+        LocalDateTime expireDate = DateUtils.now().minusDays(exceedDay);
         // 循环删除，直到没有满足条件的数据
         for (int i = 0; i < Short.MAX_VALUE; i++) {
             int deleteCount = oauth2RefreshTokenMapper.deleteByExpiresTimeLt(expireDate, deleteLimit);
@@ -262,7 +262,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Override
     public Integer cleanAccessToken(Integer exceedDay, Integer deleteLimit) {
         int count = 0;
-        LocalDateTime expireDate = LocalDateTime.now().minusDays(exceedDay);
+        LocalDateTime expireDate = DateUtils.now().minusDays(exceedDay);
         // 循环删除，直到没有满足条件的数据
         for (int i = 0; i < Short.MAX_VALUE; i++) {
             int deleteCount = oauth2AccessTokenMapper.deleteByExpiresTimeLt(expireDate, deleteLimit);
