@@ -4,11 +4,17 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import cn.hutool.crypto.SecureUtil;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
+import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.framework.idempotent.core.annotation.Idempotent;
 import cn.zszj.framework.idempotent.core.keyresolver.IdempotentKeyResolver;
+import cn.zszj.framework.idempotent.core.keyresolver.impl.DefaultIdempotentKeyResolver;
 import cn.zszj.framework.idempotent.core.redis.IdempotentRedisDAO;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.Signature;
@@ -17,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 
@@ -33,8 +40,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -43,6 +53,14 @@ import static org.mockito.Mockito.when;
  * 覆盖 SEC-007：重复提交被拒绝时，方法参数必须先经 {@code LogSanitizeUtils.sanitizeArgs} 脱敏再写日志，
  * 秘密值（password/token/嵌套 apiKey/数组内 secret）不得出现在应用日志中；
  * 同时保留可定位的方法描述与非敏感字段，并抛出携带正确错误码的 ServiceException。
+ *
+ * ZS-SEC-011.A：同键异参冲突检测 + 同键同参重复请求检测。
+ * IMP-6：摘要输入统一走 sanitizeArgs 脱敏口径，测试期望 digest 亦按此口径重算。
+ *
+ * ZS-SEC-011.A 合同测试边界：本测试类验证「窗口锁短时防重」合同——
+ * 同键同参重复拒绝、同键异参冲突拒绝、主体/租户隔离。
+ * 显式声明：窗口锁不承诺持久化幂等（重启/超时/缓存故障后不保证返回原业务结果），
+ * 持久化幂等归 ZS-SEC-011.B。本批不对持久化结果做断言。
  */
 @ExtendWith(MockitoExtension.class)
 public class IdempotentAspectTest {
@@ -89,14 +107,26 @@ public class IdempotentAspectTest {
         // 准备 joinPoint：可定位的方法描述 + 含秘密的参数
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
         when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
-        when(joinPoint.getArgs()).thenReturn(new Object[]{buildSensitiveArgs()});
-        // 锁定失败 -> 触发重复请求拒绝
-        when(idempotentRedisDAO.setIfAbsent(anyString(), anyLong(), any())).thenReturn(false);
+        Object[] sensitiveArgs = new Object[]{buildSensitiveArgs()};
+        when(joinPoint.getArgs()).thenReturn(sensitiveArgs);
+        // 锁定失败 -> 触发重复请求拒绝（同键同参，getDigest 返回 null）
+        when(idempotentRedisDAO.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(false);
+        when(idempotentRedisDAO.getDigest(anyString())).thenReturn(null);
 
         // 调用，断言抛出 ServiceException 且错误码保留
         ServiceException ex = assertThrows(ServiceException.class,
                 () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
         assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
+
+        // C1（IMP-6 验证）：钉死传给 DAO 的摘要 = MD5(脱敏后入参)，而非 MD5(原文)
+        String expectedDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(sensitiveArgs));
+        verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(expectedDigest), eq(1L), eq(TimeUnit.SECONDS));
+        // C1（MIN-5）：脱敏后的摘要输入串不得含明文秘密，证明 IMP-6 生效（摘要输入已脱敏）
+        String sanitized = LogSanitizeUtils.sanitizeArgs(sensitiveArgs);
+        assertFalse(sanitized.contains(SECRET_PASSWORD), "摘要输入不得含明文 password（IMP-6）");
+        assertFalse(sanitized.contains(SECRET_TOKEN), "摘要输入不得含明文 token（IMP-6）");
+        assertFalse(sanitized.contains(SECRET_APIKEY), "摘要输入不得含明文嵌套 apiKey（IMP-6）");
+        assertFalse(sanitized.contains(SECRET_LIST), "摘要输入不得含明文数组内 secret（IMP-6）");
 
         // 断言日志：秘密值不出现，非敏感字段与方法描述保留，敏感字段被掩码
         String logText = capturedLog();
@@ -117,13 +147,168 @@ public class IdempotentAspectTest {
         doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
         when(joinPoint.proceed()).thenReturn("OK");
-        when(idempotentRedisDAO.setIfAbsent(anyString(), anyLong(), any())).thenReturn(true);
+        when(idempotentRedisDAO.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(true);
 
         Object result = idempotentAspect.aroundPointCut(joinPoint, idempotent);
 
         assertEquals("OK", result);
         assertTrue(listAppender.list.isEmpty(), "首次请求不应产生拒绝日志");
     }
+
+    // ========== ZS-SEC-011.A 新增测试：同键异参冲突 + 同键同参重复 ==========
+
+    @Test
+    public void testAroundPointCut_sameKeyDifferentArgs_shouldThrowConflict() throws Throwable {
+        // 准备：幂等注解
+        Idempotent idempotent = mock(Idempotent.class);
+        doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
+        when(idempotent.timeout()).thenReturn(5);
+        when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        // 准备：joinPoint 带参数 argB
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
+        Object[] argsB = new Object[]{"argB"};
+        when(joinPoint.getArgs()).thenReturn(argsB);
+
+        // 模拟：setIfAbsent 返回 false（key 已存在），getDigest 返回不同的摘要（stored=argA）
+        // IMP-6：期望 digest 按 sanitizeArgs 脱敏口径重算
+        String argsDigestB = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(argsB));
+        String storedDigestA = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(new Object[]{"argA"}));
+        when(idempotentRedisDAO.setIfAbsent(anyString(), eq(argsDigestB), anyLong(), any())).thenReturn(false);
+        when(idempotentRedisDAO.getDigest(anyString())).thenReturn(storedDigestA);
+
+        // 调用，断言抛出 ServiceException 且 message 包含冲突信息
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
+        assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("幂等键冲突") || ex.getMessage().contains("相同幂等键携带了不同请求内容"),
+                "同键异参应抛冲突专属 message，实际: " + ex.getMessage());
+        // C2（MIN-6）：钉死传给 DAO 的摘要确为 MD5(脱敏 argB)，使"摘要是否真按口径 MD5"可被捕获（原 stub 对此是盲的）
+        verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(argsDigestB), eq(5L), eq(TimeUnit.SECONDS));
+    }
+
+    @Test
+    public void testAroundPointCut_sameKeySameArgs_shouldThrowRepeat() throws Throwable {
+        // 准备：幂等注解
+        Idempotent idempotent = mock(Idempotent.class);
+        doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
+        when(idempotent.timeout()).thenReturn(5);
+        when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        when(idempotent.message()).thenReturn("repeated-request");
+        // 准备：joinPoint 带参数 argA
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
+        Object[] argsA = new Object[]{"argA"};
+        when(joinPoint.getArgs()).thenReturn(argsA);
+
+        // 模拟：setIfAbsent 返回 false，getDigest 返回相同的摘要
+        // IMP-6：期望 digest 按 sanitizeArgs 脱敏口径重算
+        String argsDigestA = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(argsA));
+        when(idempotentRedisDAO.setIfAbsent(anyString(), eq(argsDigestA), anyLong(), any())).thenReturn(false);
+        when(idempotentRedisDAO.getDigest(anyString())).thenReturn(argsDigestA);
+
+        // 调用，断言抛出 ServiceException 且 message 为普通重复提示
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
+        assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("repeated-request"),
+                "同键同参应抛普通重复 message，实际: " + ex.getMessage());
+    }
+
+    @Test
+    public void testAroundPointCut_getDigestThrows_shouldStillRejectAsRepeatNot500() throws Throwable {
+        // C3（IMP-2 回归）：getDigest 抛异常（Redis 抖动）→ 仍为干净的 900，不得升级为 500/RuntimeException 逃逸
+        Idempotent idempotent = mock(Idempotent.class);
+        doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
+        when(idempotent.timeout()).thenReturn(5);
+        when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        when(idempotent.message()).thenReturn("repeated-request");
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
+        when(joinPoint.getArgs()).thenReturn(new Object[]{"argA"});
+        when(idempotentRedisDAO.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(false);
+        when(idempotentRedisDAO.getDigest(anyString())).thenThrow(new RuntimeException("redis down"));
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
+        // digest 降级 null → conflict=false → 仍 900，message 回落注解 message()
+        assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("repeated-request"),
+                "getDigest 异常应降级按重复处理，回落注解 message，实际: " + ex.getMessage());
+    }
+
+    @Test
+    public void testAroundPointCut_legacyEmptyDigest_shouldTreatAsRepeatNotConflict() throws Throwable {
+        // C4（IMP-3 回归）：滚动升级期旧格式空串值（旧实现存 ""）→ 判为重复而非冲突
+        Idempotent idempotent = mock(Idempotent.class);
+        doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
+        when(idempotent.timeout()).thenReturn(5);
+        when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        when(idempotent.message()).thenReturn("repeated-request");
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
+        when(joinPoint.getArgs()).thenReturn(new Object[]{"argA"});
+        when(idempotentRedisDAO.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(false);
+        when(idempotentRedisDAO.getDigest(anyString())).thenReturn("");
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
+        assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("repeated-request"),
+                "旧格式空串值应判为重复，回落注解 message，实际: " + ex.getMessage());
+        assertFalse(ex.getMessage().contains("冲突"),
+                "旧格式空串值不应误判为冲突（StrUtil.isNotEmpty 兼容），实际: " + ex.getMessage());
+    }
+
+    @Test
+    public void testAroundPointCut_realDefaultResolver_sameKeyForcesRepeatNotConflict() throws Throwable {
+        // C5（MIN-7 + IMP-1 可执行契约）：用真实 DefaultIdempotentKeyResolver 驱动切面。
+        // 默认解析器把 argsStr 烘入 Key → 同 Key 必然同参 → 切面 conflict 分支恒不可达。
+        // 构造同 Key 场景（同 method/tenant/user/type/args），把"默认路径冲突不可达"钉成可执行文档。
+        Idempotent idempotent = mock(Idempotent.class);
+        doReturn(DefaultIdempotentKeyResolver.class).when(idempotent).keyResolver();
+        when(idempotent.timeout()).thenReturn(5);
+        when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        when(idempotent.message()).thenReturn("repeated-request");
+
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
+        Object[] args = new Object[]{"argA"};
+        when(joinPoint.getArgs()).thenReturn(args);
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        // 用真实解析器构造独立切面（不复用 setUp 里 FixedKeyResolver 的切面）
+        IdempotentAspect realAspect = new IdempotentAspect(
+                List.of(new DefaultIdempotentKeyResolver()), idempotentRedisDAO);
+
+        try (MockedStatic<ServletUtils> servletMs = mockStatic(ServletUtils.class);
+             MockedStatic<WebFrameworkUtils> webMs = mockStatic(WebFrameworkUtils.class)) {
+            servletMs.when(ServletUtils::getRequest).thenReturn(request);
+            webMs.when(() -> WebFrameworkUtils.getTenantId(request)).thenReturn(1L);
+            webMs.when(() -> WebFrameworkUtils.getLoginUserId(request)).thenReturn(100L);
+            webMs.when(() -> WebFrameworkUtils.getLoginUserType(request)).thenReturn(2);
+
+            // 真实解析器算出的 Key（固定主体上下文 → 唯一确定），与切面内部解析结果必然一致
+            String expectedKey = new DefaultIdempotentKeyResolver().resolver(joinPoint, idempotent);
+            String argsDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(args));
+            // 同 Key 已存在 → setIfAbsent 返回 false；默认路径 storedDigest 必等于 argsDigest
+            when(idempotentRedisDAO.setIfAbsent(eq(expectedKey), eq(argsDigest), anyLong(), any())).thenReturn(false);
+            when(idempotentRedisDAO.getDigest(eq(expectedKey))).thenReturn(argsDigest);
+
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> realAspect.aroundPointCut(joinPoint, idempotent));
+            assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
+            // conflict 恒 false → message 为重复文案，非冲突文案（默认解析器路径冲突分支不可达）
+            assertTrue(ex.getMessage().contains("repeated-request"),
+                    "默认解析器同 Key 场景 conflict 必为 false，应回落重复文案，实际: " + ex.getMessage());
+            assertFalse(ex.getMessage().contains("冲突"),
+                    "默认解析器路径冲突分支不可达，不应出现冲突文案，实际: " + ex.getMessage());
+            // 钉死：真实解析器算出的 Key 与脱敏摘要确被用于 setIfAbsent
+            verify(idempotentRedisDAO).setIfAbsent(eq(expectedKey), eq(argsDigest), eq(5L), eq(TimeUnit.SECONDS));
+        }
+    }
+
+    // ========== Helper methods ==========
 
     private static Map<String, Object> buildSensitiveArgs() {
         Map<String, Object> req = new LinkedHashMap<>();
