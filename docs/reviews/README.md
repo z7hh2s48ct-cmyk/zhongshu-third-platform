@@ -2,7 +2,7 @@
 
 本目录记录针对 [05-底座模块分析与开发任务清单.md](../05-底座模块分析与开发任务清单.md) 各任务提交的本地 codex 代码评审结论。
 
-- 评审工具：`codex-cli 0.153.4`（`codex review --commit <SHA>`，模型 `gpt-6-astra`，reasoning effort `xhigh`）
+- 评审工具：`codex review --commit <SHA>`（OpenAI Codex CLI，模型 `gpt-6-astra`，reasoning effort `xhigh`；具体 CLI 版本以各评审文档头部标注为准，近期评审为 `0.154.0`）
 - 评审范围：① 15.2 节「众墅之家品牌与代码命名统一专项」已完成子项（首轮，见下方各表）；② B03「接口与安全链路」批次（SEC/PERM/DB 等，见文末「B03 接口与安全链路专项评审状态」）；③ 治理与门禁工具链自身（task-stats/verify-docs/close-task/run-local-gates 等治理脚本，见文末「治理与门禁工具链专项评审状态」）。
 - 原始日志：每份评审的完整 stdout 保存为 `codex-<TASK>.raw.md`；本目录 `README.md` 汇总所有结论。
 
@@ -104,8 +104,9 @@
 |---|---|---|---|---|---|
 | ZS-SEC-003 规范 Token 传输与特殊连接凭据 | `59b59227` | 10 files, +378/-18 | ✅ 评审通过（r0 直接 0 发现） | [codex-ZS-SEC-003.md](codex-ZS-SEC-003.md) | codex（`gpt-6-astra`/`xhigh`）判定 token 解析 / 配置传播 / 三处调用方无可归因回归；左窗口独立复核交接单六判断点全部成立；2 × P3（交接单「新增常量」口径、docs/05 §2 括注日期串），均非代码缺陷、不阻塞。codex 沙箱跑测试因 `~/.m2` `AccessDeniedException` 受阻（环境限制，非本提交缺陷），测试通过性以右窗口本机 18/18 BUILD SUCCESS 为准 |
 | ZS-SEC-008 补齐参数校验、上下文头解析与请求资源限制 | `76da2a2f`（首提）→ `3f4fa736`（P1 修复） | r0 13 files, +745/-15；r1 修复 4 files, +130/-8 | ✅ 评审通过（r0 发现 1×P1 → 修复 → r1 复评 0 发现） | [codex-ZS-SEC-008.md](codex-ZS-SEC-008.md) | r0 codex（`gpt-6-astra`/`xhigh`）发现 1×P1：chunked `application/json`（`Content-Length=-1`）绕过声明式早拒、`CacheRequestBodyWrapper` 全量缓冲耗尽堆；修复以「声明式早拒 + 限界读取（8192 buffer 边读边累加超限抛 `TooLargeException`）」两道防线闭合 + 2 例未知长度回归护栏（`CacheRequestBodyFilterTest` 6→8）；r1 `codex review --commit 3f4fa736` 复评，codex 沙箱内亲跑 19 测试全绿、判定「No actionable regressions were found」0 发现通过。附加复核 2 判断点（`parseTenantIdHeader` Unicode Nd 数字归一非越权、过滤器异常出口 catch 面完备）均非缺陷 |
+| ZS-SEC-009 固定接口边界 ID/时间/分页/校验四合同 | `77ad9531`（首提）→ `d13a50b4`（返工）→ `1f6bbb1c`（P2 修复） | r0 11 files, +647/-9；返工 5 files, +62/-14；P2 修复 2 files, +3/-4 | ✅ 评审通过（r0 FAIL 2×P1+1×P2 → 分批返工 → r1 PASS 0×P1+1×P2 → P2 修复 → r2 PASS 0 发现） | [codex-ZS-SEC-009.md](codex-ZS-SEC-009.md) | r0 codex（`gpt-6-astra`/`xhigh`）发现 2×P1+1×P2：① 时区生产端 `LocalDateTime.now()` 未对齐固定 GMT+8 序列化端（UTC 令牌过期前移 8h、miniapp 拒收）；② 全局字符串 ID 断裂两端前端 `parentId===0` 等 ~23 处数值比较；③ `CommonResult<Set<Long>>` 裸集合 ID 未覆盖命名规则。用户拍板 **Option B 分批**：SEC-009.A 修好时间合同（`DateUtils.now()` 生产/比较/序列化三端对齐 + bootstrap TZ + 令牌生命周期测试）、unwire ID 序列化器（`IdToStringAnnotationIntrospector` 脚手架保留、wire 退回 `NumberSerializer` 兜底），破坏性 ID 合同拆 **SEC-009.B** 跨栈批次；r1 复评 PASS 但发现新 P2（授权码生产端未对齐共享 `isExpired`，`OAuth2CodeServiceImplTest` UTC 回归），`1f6bbb1c` 迁移 OAuth2Code/OAuth2Approve 过期生产端 → `DateUtils.now()`；r2 复评 PASS / 0 发现确认消除。本机 UTC+GMT+8 双时区 26×2 tests 全绿 |
 
-> 本目录另存有同批次的评审交接单（`HANDOFF-ZS-SEC-001.A`/`002`/`005`/`007`/`012.A`、`HANDOFF-ZS-PERM-001.A`/`002.A`、`HANDOFF-ZS-DB-018`），其对应 `codex-<TASK>.md` 评审产物尚待补齐；ZS-SEC-003 为该批次首份完成的 codex 评审，ZS-SEC-008 为第二份（且首个经 r0→修复→r1 两轮闭环的评审）。
+> 本目录另存有同批次的评审交接单（`HANDOFF-ZS-SEC-001.A`/`002`/`005`/`007`/`012.A`、`HANDOFF-ZS-PERM-001.A`/`002.A`、`HANDOFF-ZS-DB-018`），其对应 `codex-<TASK>.md` 评审产物尚待补齐；ZS-SEC-003 为该批次首份完成的 codex 评审，ZS-SEC-008 为第二份（首个经 r0→修复→r1 两轮闭环），ZS-SEC-009 为第三份（首个经 r0→返工→r1→P2 修复→r2 三轮闭环、且触发 Option B 分批拆出 SEC-009.B 的评审）。
 
 ## 治理与门禁工具链专项评审状态（ZS-GOV-001 / ZS-OPS-001.A）
 
@@ -127,3 +128,9 @@
 | 5 | ZS-OPS-001.A | G5 areas 未覆盖 docs/ 外被链目标，删除该目标增量下漏触发断链校验 | `scripts/ops/run-local-gates.mjs:34` | ✅ 已修复（`ea739b9c`） |
 
 > 五项 P2 均已由左窗口独立复核确认成立（非误报）。评审当时依「后续处理约定」第 2 条列入待办；因其保护的正是所有后续任务依赖的文档一致性门禁（verify-docs）与本地基线门禁（run-local-gates），建议合并为一个专项批次优先闭合。**该建议已由提交 `ea739b9c` 落实**——5 × P2 同批修复：#1 verify-docs R6/R7 遍历 `STATUS_ENUM`（省略按 0 计）、#2 §2 回填抽 `backfillSection2` 纯函数（补插缺失非零类别）、#3 G2b `areas` 加 `services/zhongshu-core/sql/`、#4 `git diff` 加 `--no-renames`（rename 源+目标双上报）、#5 G5 标 `safety: true`（增量恒跑）；`verify-docs.test.mjs` +6、`run-local-gates.test.mjs` +3（另 4 存量断言更新），`node --test` 17/17 + 17/17、`run-local-gates --fast` 10/10、`verify-docs` 全量 0 issue 全绿。
+
+### 复核闭环：对 5×P2 修复提交 `ea739b9c` 的再评审（1×P2 → `19b736f4` 修复 → 0 发现）
+
+`ea739b9c` 落实上述 5×P2 修复后，另行 `codex review --commit ea739b9c`（`gpt-6-astra`/`xhigh`）复核该修复提交本身：判定 **PASS（0×P1）+ 1×P2**——codex 亲跑 `node --test scripts/gov/*.test.mjs` 34 pass / 0 fail 确认 5 项修复正确，同时现场复现出 `backfillSection2` 的新边界缺陷：分布串正则 `[^（(]*` 在「§2 声明无尾随括注」时越过 `。\n` 吞掉后续 task cards，把补插的缺失类别写进 §2 之外（34 测试均带 `（说明）` 尾注，未覆盖此插入场景）。
+
+已由 `19b736f4` 修复：抽出共用跨度常量 `DIST_SPAN = '[^（(\n。]*'`（止于首个左括注/句号/换行，限界到句/行），同时用于 `parseSection2Declared`（读）与 `backfillSection2`（写）杜绝读写分歧，缺失类别插在分布串末尾（尾随标点之前）落在 §2 内；对真实 §2 句（有 `（说明）` 尾注）行为零变化；`verify-docs.test.mjs` +1 无括注插入回归。r1 `codex review --commit 19b736f4` 复评 **PASS / 0 发现**（codex 亲跑 18 测试全绿、确认「共用边界一致约束解析与回填、防止溢出到后续卡片」）。详见 [codex-fix-5p2-ea739b9c.md](codex-fix-5p2-ea739b9c.md)（r0 [raw](codex-fix-5p2-ea739b9c.raw.md)、r1 [raw](codex-fix-5p2-ea739b9c-r1.raw.md)）。
