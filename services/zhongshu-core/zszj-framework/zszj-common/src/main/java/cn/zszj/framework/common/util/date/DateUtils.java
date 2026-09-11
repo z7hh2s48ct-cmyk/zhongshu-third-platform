@@ -5,6 +5,7 @@ import cn.hutool.core.date.LocalDateTimeUtil;
 import java.time.*;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.TimeZone;
 
 /**
  * 时间工具类
@@ -17,6 +18,16 @@ public class DateUtils {
      * 时区 - 默认
      */
     public static final String TIME_ZONE_DEFAULT = "GMT+8";
+
+    /**
+     * 时区 - 默认 ZoneId
+     *
+     * ZS-SEC-009：接口边界时间序列化/反序列化的单一事实源，由 {@link #TIME_ZONE_DEFAULT} 派生
+     * （GMT+8 固定偏移，等价 Asia/Shanghai，中国无夏令时），替代易受部署 JVM 影响的
+     * {@link ZoneId#systemDefault()}，保证同一 LocalDateTime 在任意部署时区下得到一致的 epoch millis。
+     * 与 {@code LocalDateTimeUtils#DEFAULT_ZONE_ID} 采用同一派生方式，全项目时区约定唯一。
+     */
+    public static final ZoneId ZONE_DEFAULT = TimeZone.getTimeZone(TIME_ZONE_DEFAULT).toZoneId();
 
     /**
      * 秒转换成毫秒

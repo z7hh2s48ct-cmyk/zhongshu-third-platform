@@ -1,6 +1,7 @@
 package cn.zszj.framework.jackson.config;
 
 import cn.zszj.framework.common.util.json.JsonUtils;
+import cn.zszj.framework.common.util.json.databind.IdToStringAnnotationIntrospector;
 import cn.zszj.framework.common.util.json.databind.NumberSerializer;
 import cn.zszj.framework.common.util.json.databind.TimestampLocalDateTimeDeserializer;
 import cn.zszj.framework.common.util.json.databind.TimestampLocalDateTimeSerializer;
@@ -31,7 +32,10 @@ public class ZszjJacksonAutoConfiguration {
     @Bean
     public Jackson2ObjectMapperBuilderCustomizer ldtEpochMillisCustomizer() {
         return builder -> builder
-                // Long -> Number
+                // ZS-SEC-009：ID 语义 Long 字段（id/*Id/*Ids，含 Set<Long> 等集合元素）在边界恒输出 string，
+                // 消除同字段随数值大小在 number/string 漂移；计数/金额等非 ID 的 Long 不受影响
+                .annotationIntrospector(IdToStringAnnotationIntrospector.INSTANCE)
+                // Long -> Number（非 ID 的 Long 安全网：超 JS 安全整数转 string）
                 .serializerByType(Long.class, NumberSerializer.INSTANCE)
                 .serializerByType(Long.TYPE, NumberSerializer.INSTANCE)
                 // LocalDate / LocalTime

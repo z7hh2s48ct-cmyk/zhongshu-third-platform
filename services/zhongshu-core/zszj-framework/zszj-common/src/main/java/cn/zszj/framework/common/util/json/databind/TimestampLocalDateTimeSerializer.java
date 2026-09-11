@@ -3,6 +3,7 @@ package cn.zszj.framework.common.util.json.databind;
 import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.ReflectUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.common.util.date.DateUtils;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -13,7 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
@@ -57,7 +57,9 @@ public class TimestampLocalDateTimeSerializer extends JsonSerializer<LocalDateTi
         }
 
         // 情况二：默认将 LocalDateTime 对象，转换为 Long 时间戳
-        gen.writeNumber(value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
+        // ZS-SEC-009：使用固定时区 DateUtils.ZONE_DEFAULT（GMT+8）替代 ZoneId.systemDefault()，
+        // 避免同一 LocalDateTime 因部署 JVM 时区不同而得到不同 epoch millis
+        gen.writeNumber(value.atZone(DateUtils.ZONE_DEFAULT).toInstant().toEpochMilli());
     }
 
     /**

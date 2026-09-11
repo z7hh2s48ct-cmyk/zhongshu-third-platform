@@ -107,7 +107,7 @@ public class Demo03StudentErpController {
     @Operation(summary = "获得学生课程分页")
     @Parameter(name = "studentId", description = "学生编号")
     @PreAuthorize("@ss.hasPermission('infra:demo03-student:query')")
-    public CommonResult<PageResult<Demo03CourseDO>> getDemo03CoursePage(PageParam pageReqVO,
+    public CommonResult<PageResult<Demo03CourseDO>> getDemo03CoursePage(@Valid PageParam pageReqVO,
                                                                         @RequestParam("studentId") Long studentId) {
         return success(demo03StudentErpService.getDemo03CoursePage(pageReqVO, studentId));
     }
@@ -159,7 +159,7 @@ public class Demo03StudentErpController {
     @Operation(summary = "获得学生班级分页")
     @Parameter(name = "studentId", description = "学生编号")
     @PreAuthorize("@ss.hasPermission('infra:demo03-student:query')")
-    public CommonResult<PageResult<Demo03GradeDO>> getDemo03GradePage(PageParam pageReqVO,
+    public CommonResult<PageResult<Demo03GradeDO>> getDemo03GradePage(@Valid PageParam pageReqVO,
                                                                       @RequestParam("studentId") Long studentId) {
         return success(demo03StudentErpService.getDemo03GradePage(pageReqVO, studentId));
     }
