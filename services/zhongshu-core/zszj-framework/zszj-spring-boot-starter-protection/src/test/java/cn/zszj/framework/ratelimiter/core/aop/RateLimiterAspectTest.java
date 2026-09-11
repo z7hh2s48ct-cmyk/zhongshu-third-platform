@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.redisson.api.RedissonClient;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
@@ -25,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -42,6 +44,8 @@ import static org.mockito.Mockito.when;
  * 覆盖 SEC-007：限流被拒绝时，方法参数必须先经 {@code LogSanitizeUtils.sanitizeArgs} 脱敏再写日志，
  * 秘密值（password/token/嵌套 apiKey/数组内 secret）不得出现在应用日志中；
  * 同时保留可定位的方法描述与非敏感字段，并抛出携带正确错误码的 ServiceException。
+ *
+ * 覆盖 SEC-010：Redis 故障时，限流按 fail-open（放行 + 告警）降级，不得因缓存抖动锁死全站登录。
  */
 @ExtendWith(MockitoExtension.class)
 public class RateLimiterAspectTest {
@@ -121,6 +125,51 @@ public class RateLimiterAspectTest {
         rateLimiterAspect.beforePointCut(joinPoint, rateLimiter);
 
         assertTrue(listAppender.list.isEmpty(), "放行请求不应产生拒绝日志");
+    }
+
+    /**
+     * SEC-010：Redis 故障时按 fail-open 降级——放行请求（不抛 TOO_MANY_REQUESTS），并记录告警日志。
+     *
+     * <p>fail-open 策略实现在真实的 {@link RateLimiterRedisDAO#tryAcquire} 内（捕获 Redisson 异常返回 TRUE），
+     * 故此处用「真实 DAO + 抛异常的 RedissonClient」贯穿切面链路验证，而非 mock DAO（mock 会绕过真实 catch）。
+     */
+    @Test
+    public void testBeforePointCut_redisDown_shouldFailOpenByDefault() {
+        // 真实 DAO 包裹一个访问即抛异常的 RedissonClient，模拟 Redis 连接故障
+        RedissonClient redissonClient = mock(RedissonClient.class);
+        when(redissonClient.getRateLimiter(anyString())).thenThrow(new RuntimeException("Redis connection refused"));
+        RateLimiterRedisDAO realDao = new RateLimiterRedisDAO(redissonClient);
+        RateLimiterAspect aspectWithRealDao = new RateLimiterAspect(List.of(new FixedKeyResolver()), realDao);
+
+        // 捕获 DAO 日志，验证 fail-open 告警到位
+        Logger daoLogger = (Logger) LoggerFactory.getLogger(RateLimiterRedisDAO.class);
+        Level originalLevel = daoLogger.getLevel();
+        daoLogger.setLevel(Level.ERROR);
+        ListAppender<ILoggingEvent> daoAppender = new ListAppender<>();
+        daoAppender.start();
+        daoLogger.addAppender(daoAppender);
+        try {
+            RateLimiter rateLimiter = mock(RateLimiter.class);
+            doReturn(FixedKeyResolver.class).when(rateLimiter).keyResolver();
+            when(rateLimiter.count()).thenReturn(2);
+            when(rateLimiter.time()).thenReturn(60);
+            when(rateLimiter.timeUnit()).thenReturn(TimeUnit.SECONDS);
+            JoinPoint joinPoint = mock(JoinPoint.class);
+
+            // fail-open：Redis 故障不得抛 TOO_MANY_REQUESTS，应放行
+            assertDoesNotThrow(() -> aspectWithRealDao.beforePointCut(joinPoint, rateLimiter),
+                    "Redis 故障应 fail-open 放行，而非拒绝或异常逃逸");
+
+            // 告警到位：DAO 记录 error 级日志，显式标明 fail-open
+            String daoLog = daoAppender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .collect(Collectors.joining("\n"));
+            assertTrue(daoLog.contains("fail-open"), "Redis 故障应记录 fail-open 告警以便运维感知");
+        } finally {
+            daoLogger.detachAppender(daoAppender);
+            daoAppender.stop();
+            daoLogger.setLevel(originalLevel);
+        }
     }
 
     private static Map<String, Object> buildSensitiveArgs() {

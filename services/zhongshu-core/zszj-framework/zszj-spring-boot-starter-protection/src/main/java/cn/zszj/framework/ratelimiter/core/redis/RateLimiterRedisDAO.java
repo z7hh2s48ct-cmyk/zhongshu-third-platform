@@ -1,6 +1,7 @@
 package cn.zszj.framework.ratelimiter.core.redis;
 
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.*;
 
 import java.time.Duration;
@@ -12,6 +13,7 @@ import java.util.concurrent.TimeUnit;
  *
  * @author 芋道源码
  */
+@Slf4j
 @AllArgsConstructor
 public class RateLimiterRedisDAO {
 
@@ -27,10 +29,17 @@ public class RateLimiterRedisDAO {
     private final RedissonClient redissonClient;
 
     public Boolean tryAcquire(String key, int count, int time, TimeUnit timeUnit) {
-        // 1. 获得 RRateLimiter，并设置 rate 速率
-        RRateLimiter rateLimiter = getRRateLimiter(key, count, time, timeUnit);
-        // 2. 尝试获取 1 个
-        return rateLimiter.tryAcquire();
+        try {
+            // 1. 获得 RRateLimiter，并设置 rate 速率
+            RRateLimiter rateLimiter = getRRateLimiter(key, count, time, timeUnit);
+            // 2. 尝试获取 1 个
+            return rateLimiter.tryAcquire();
+        } catch (Exception ex) {
+            // ZS-SEC-010：Redis 故障默认 fail-open（放行 + 告警），避免缓存抖动锁死全站登录。
+            // 未来如需 fail-closed，可在此接入 zszj.ratelimiter.fail-strategy 策略开关（本批不实现，YAGNI）。
+            log.error("[tryAcquire][限流 Key({}) Redis 故障，按 fail-open 放行]", key, ex);
+            return Boolean.TRUE;
+        }
     }
 
     private static String formatKey(String key) {
