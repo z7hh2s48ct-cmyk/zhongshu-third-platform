@@ -49,7 +49,9 @@ export const PILOT_TASKS = ['ZS-CFG-001.B', 'ZS-CFG-002.B', 'ZS-SEC-010'];
  * @returns {string[]}
  */
 export function provisionTargets({ node = false } = {}) {
-  return node ? ['tools', 'node_modules'] : ['tools'];
+  // node_modules 在「前端 app 目录」下（apps/zhongshu-admin-web/node_modules），仓库根无 node_modules；
+  // G10 verify-ts-baseline.mjs 以 app 为 cwd 跑 ./node_modules/vue-tsc，故必须供给 app 级依赖目录。
+  return node ? ['tools', 'apps/zhongshu-admin-web/node_modules'] : ['tools'];
 }
 
 /**
@@ -98,13 +100,18 @@ export function planCreate({ taskId, wtRoot = DEFAULT_WT_ROOT, baseRef = 'main',
 /**
  * 规划 merge 步骤（纯数据）+ 文档串行同步清单。
  * 合并只在主树做；工具「绝不自动改 docs」——文档同步由主树手动/close-task 串行完成，避免并行冲突回流。
+ * 首步为分支断言：git merge 合入的是「当前检出分支」，故先校验主树 HEAD==into，不符即中止（不擅自切分支）。
  */
 export function planMerge({ taskId, into = 'main', ffOnly = false, wtRoot = DEFAULT_WT_ROOT }) {
   const p = resolvePaths({ taskId, wtRoot });
   return {
     ...p, into,
-    steps: [{ kind: 'git-merge', desc: `合并 ${p.branch} → ${into}（${ffOnly ? '--ff-only' : '--no-ff 保留任务边界'}）`,
-      args: ['-C', mainRoot, 'merge', ffOnly ? '--ff-only' : '--no-ff', p.branch] }],
+    steps: [
+      { kind: 'git-assert-branch', desc: `校验主树当前分支 == ${into}（否则中止，不擅自切分支/合错目标）`, expected: into,
+        args: ['-C', mainRoot, 'rev-parse', '--abbrev-ref', 'HEAD'] },
+      { kind: 'git-merge', desc: `合并 ${p.branch} → ${into}（${ffOnly ? '--ff-only' : '--no-ff 保留任务边界'}）`,
+        args: ['-C', mainRoot, 'merge', ffOnly ? '--ff-only' : '--no-ff', p.branch] },
+    ],
     docSyncReminder: [
       `合并后在主树(${into})「串行」同步文档（不在 worktree 改，避免 §2/§16.1/§19/README 冲突）：`,
       `  1) 写 ${taskId} 卡片「开发记录」（docs/05 各卡独立行段，天然不冲突）`,
@@ -150,7 +157,7 @@ function doJunction(step) {
   }
 }
 
-/** 逐步执行 plan 的 steps；返回是否全绿。 */
+/** 逐步执行 plan 的 steps；返回是否全绿。git-assert-branch 失败即「中止」后续步骤（防合错目标分支）。 */
 function execSteps(steps) {
   let allOk = true;
   for (const s of steps) {
@@ -158,6 +165,12 @@ function execSteps(steps) {
       const r = doJunction(s);
       console.log(`${r.ok ? '✓' : '✗'} ${s.desc} — ${r.msg}`);
       allOk = allOk && r.ok;
+    } else if (s.kind === 'git-assert-branch') {
+      const r = runGit(s.args);
+      const cur = r.out.trim();
+      if (!r.ok) { console.error(`✗ ${s.desc}：无法读取当前分支\n${r.err.trimEnd()}`); return false; }
+      if (cur !== s.expected) { console.error(`✗ ${s.desc}：主树当前在「${cur}」≠ 目标「${s.expected}」，中止合并（请先手动切到 ${s.expected}，或改用 --into ${cur}）`); return false; }
+      console.log(`✓ ${s.desc}（当前 ${cur}）`);
     } else {
       console.log(`→ git ${s.args.join(' ')}`);
       const r = runGit(s.args);

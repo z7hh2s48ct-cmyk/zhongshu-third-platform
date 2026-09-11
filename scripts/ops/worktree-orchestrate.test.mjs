@@ -63,8 +63,8 @@ test('provisionTargets：默认只供给 tools（--fast 门禁不需 node_module
   assert.deepEqual(provisionTargets({ node: false }), ['tools']);
 });
 
-test('provisionTargets：--node 追加 node_modules（前端 G10 门禁需要）', () => {
-  assert.deepEqual(provisionTargets({ node: true }), ['tools', 'node_modules']);
+test('P2 fix：provisionTargets --node 供给 app 级 node_modules（仓库根无 node_modules；G10 以 app 为 cwd 跑 vue-tsc）', () => {
+  assert.deepEqual(provisionTargets({ node: true }), ['tools', 'apps/zhongshu-admin-web/node_modules']);
 });
 
 // ---- planCreate ----
@@ -98,17 +98,22 @@ test('planCreate：--no-provision 只留 worktree add 一步', () => {
   assert.equal(plan.steps[0].kind, 'git-worktree-add');
 });
 
-test('planCreate：--node 供给 tools + node_modules 两个 junction', () => {
+test('P2 fix：planCreate --node 供给 tools + app 级 node_modules 两个 junction（link/target 指向 app 目录）', () => {
   const plan = planCreate({ taskId: 'ZS-CFG-001.B', node: true });
-  const junctions = plan.steps.filter((s) => s.kind === 'junction').map((s) => s.dir);
-  assert.deepEqual(junctions, ['tools', 'node_modules']);
+  const junctions = plan.steps.filter((s) => s.kind === 'junction');
+  assert.deepEqual(junctions.map((s) => s.dir), ['tools', 'apps/zhongshu-admin-web/node_modules']);
+  const nm = junctions[1];
+  assert.equal(norm(nm.link), `${norm(plan.wtPath)}/apps/zhongshu-admin-web/node_modules`);
+  assert.equal(norm(nm.target), `${norm(mainRoot)}/apps/zhongshu-admin-web/node_modules`);
 });
 
 // ---- planMerge ----
 
-test('planMerge：默认 --no-ff 保留任务边界，并给出文档串行同步清单', () => {
+test('planMerge：默认先断言主树分支==into，再 --no-ff 合并；含文档串行同步清单', () => {
   const plan = planMerge({ taskId: 'ZS-CFG-002.B' });
-  const m = plan.steps[0];
+  assert.equal(plan.steps[0].kind, 'git-assert-branch');
+  assert.equal(plan.steps[0].expected, 'main');
+  const m = plan.steps[1];
   assert.equal(m.kind, 'git-merge');
   assert.deepEqual(m.args.slice(2), ['merge', '--no-ff', 'feat/cfg-002-b']);
   assert.equal(plan.into, 'main');
@@ -117,11 +122,15 @@ test('planMerge：默认 --no-ff 保留任务边界，并给出文档串行同�
   assert.ok(plan.docSyncReminder.some((l) => l.includes('不在 worktree 改')), '应强调文档只在主树串行改');
 });
 
-test('planMerge：--ff-only 切换合并策略；--into 切换目标分支', () => {
+test('P1 fix：planMerge --ff-only 切换合并策略；--into 驱动分支断言目标（防合错分支）', () => {
   const ff = planMerge({ taskId: 'ZS-SEC-010', ffOnly: true });
-  assert.deepEqual(ff.steps[0].args.slice(2), ['merge', '--ff-only', 'feat/sec-010']);
+  assert.deepEqual(ff.steps[1].args.slice(2), ['merge', '--ff-only', 'feat/sec-010']);
   const into = planMerge({ taskId: 'ZS-SEC-010', into: 'release' });
   assert.equal(into.into, 'release');
+  // P1 核心：--into release 时首步断言主树必须在 release，否则中止（绝不静默合入当前检出的 main）
+  assert.equal(into.steps[0].kind, 'git-assert-branch');
+  assert.equal(into.steps[0].expected, 'release');
+  assert.deepEqual(into.steps[0].args.slice(2), ['rev-parse', '--abbrev-ref', 'HEAD']);
 });
 
 // ---- planCleanup ----
