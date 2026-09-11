@@ -68,6 +68,7 @@ public interface ErrorCodeConstants {
     ErrorCode DICT_TYPE_NAME_DUPLICATE = new ErrorCode(1_002_006_003, "已经存在该名字的字典类型");
     ErrorCode DICT_TYPE_TYPE_DUPLICATE = new ErrorCode(1_002_006_004, "已经存在该类型的字典类型");
     ErrorCode DICT_TYPE_HAS_CHILDREN = new ErrorCode(1_002_006_005, "无法删除，该字典类型还有字典数据");
+    ErrorCode DICT_TYPE_HAS_CHILDREN_ON_TYPE_CHANGE = new ErrorCode(1_002_006_006, "无法修改字典类型编码，该类型下还有字典数据");
 
     // ========== 字典数据 1-002-007-000 ==========
     ErrorCode DICT_DATA_NOT_EXISTS = new ErrorCode(1_002_007_001, "当前字典数据不存在");

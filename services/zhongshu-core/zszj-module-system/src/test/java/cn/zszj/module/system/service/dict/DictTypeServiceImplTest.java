@@ -137,6 +137,62 @@ public class DictTypeServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testUpdateDictType_typeChangeWithChildren_rejected() {
+        // ZS-CFG-002.B 改码受控：字典类型编码被字典项以字符串引用（dict_data.dict_type，无外键），
+        // 原编码下仍有字典项时改码会产生孤儿引用 → 拒绝
+        DictTypeDO dbDictType = randomDictTypeDO(o -> o.setType("cfg002b_old"));
+        dictTypeMapper.insert(dbDictType);
+        // mock：原编码下仍有 1 条字典项
+        when(dictDataService.getDictDataCountByDictType(eq("cfg002b_old"))).thenReturn(1L);
+        // 准备参数：改编码，名字不变（避开名字唯一校验）
+        DictTypeSaveReqVO reqVO = randomPojo(DictTypeSaveReqVO.class, o -> {
+            o.setId(dbDictType.getId());
+            o.setType("cfg002b_new");
+            o.setName(dbDictType.getName());
+        });
+
+        // 调用，并断言异常
+        assertServiceException(() -> dictTypeService.updateDictType(reqVO), DICT_TYPE_HAS_CHILDREN_ON_TYPE_CHANGE);
+    }
+
+    @Test
+    public void testUpdateDictType_typeChangeWithoutChildren_success() {
+        // 改码但原编码下无字典项 → 合法改码成功（改码受控不误拦无引用的改码）
+        DictTypeDO dbDictType = randomDictTypeDO(o -> o.setType("cfg002b_src"));
+        dictTypeMapper.insert(dbDictType);
+        when(dictDataService.getDictDataCountByDictType(eq("cfg002b_src"))).thenReturn(0L);
+        DictTypeSaveReqVO reqVO = randomPojo(DictTypeSaveReqVO.class, o -> {
+            o.setId(dbDictType.getId());
+            o.setType("cfg002b_dst");
+            o.setName(dbDictType.getName());
+        });
+
+        // 调用
+        dictTypeService.updateDictType(reqVO);
+        // 断言：编码已更新为新值
+        assertEquals("cfg002b_dst", dictTypeMapper.selectById(reqVO.getId()).getType());
+    }
+
+    @Test
+    public void testUpdateDictType_renameOnly_sameType_success() {
+        // 编码不变的更新（如改名）不触发改码受控校验：仅当「编码变化」才查子项计数
+        DictTypeDO dbDictType = randomDictTypeDO(o -> o.setType("cfg002b_keep"));
+        dictTypeMapper.insert(dbDictType);
+        DictTypeSaveReqVO reqVO = randomPojo(DictTypeSaveReqVO.class, o -> {
+            o.setId(dbDictType.getId());
+            o.setType("cfg002b_keep"); // 编码不变
+            o.setName("cfg002b_renamed"); // 仅改名
+        });
+
+        // 调用
+        dictTypeService.updateDictType(reqVO);
+        // 断言：编码保持、名字更新
+        DictTypeDO updated = dictTypeMapper.selectById(reqVO.getId());
+        assertEquals("cfg002b_keep", updated.getType());
+        assertEquals("cfg002b_renamed", updated.getName());
+    }
+
+    @Test
     public void testDeleteDictType_success() {
         // mock 数据
         DictTypeDO dbDictType = randomDictTypeDO();

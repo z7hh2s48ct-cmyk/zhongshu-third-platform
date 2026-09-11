@@ -64,11 +64,18 @@ public class DictTypeServiceImpl implements DictTypeService {
     @Override
     public void updateDictType(DictTypeSaveReqVO updateReqVO) {
         // 校验自己存在
-        validateDictTypeExists(updateReqVO.getId());
+        DictTypeDO oldDictType = validateDictTypeExists(updateReqVO.getId());
         // 校验字典类型的名字的唯一性
         validateDictTypeNameUnique(updateReqVO.getId(), updateReqVO.getName());
         // 校验字典类型的类型的唯一性
         validateDictTypeUnique(updateReqVO.getId(), updateReqVO.getType());
+        // ZS-CFG-002.B 改码受控：字典类型编码（type）被字典项以字符串引用（dict_data.dict_type，无外键约束）。
+        // 若原编码下仍有字典项，改码会使这些字典项成为孤儿引用 → 拒绝；须先迁移/清理子项再改码。
+        // 仅在「编码确实变化」时校验：只改名/状态/备注等不动编码的更新不受影响。
+        if (oldDictType != null && !StrUtil.equals(oldDictType.getType(), updateReqVO.getType())
+                && dictDataService.getDictDataCountByDictType(oldDictType.getType()) > 0) {
+            throw exception(DICT_TYPE_HAS_CHILDREN_ON_TYPE_CHANGE);
+        }
 
         // 更新字典类型
         DictTypeDO updateObj = BeanUtils.toBean(updateReqVO, DictTypeDO.class);

@@ -202,6 +202,25 @@ public class DictDataServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testCreateDictData_dictTypeNotEnable_rejected() {
+        // ZS-CFG-002.B 停用不能新写入：字典类型停用时，端到端经 createDictData 新增字典项被拒
+        String dictType = randomString();
+        // mock：字典类型存在但停用
+        when(dictTypeService.getDictType(eq(dictType))).thenReturn(
+                randomPojo(DictTypeDO.class, o -> {
+                    o.setType(dictType);
+                    o.setStatus(CommonStatusEnum.DISABLE.getStatus());
+                }));
+        DictDataSaveReqVO reqVO = randomPojo(DictDataSaveReqVO.class, o -> {
+            o.setId(null);
+            o.setDictType(dictType);
+        });
+
+        // 调用，并断言异常
+        assertServiceException(() -> dictDataService.createDictData(reqVO), DICT_TYPE_NOT_ENABLE);
+    }
+
+    @Test
     public void testValidateDictDataValueUnique_success() {
         // 调用，成功
         dictDataService.validateDictDataValueUnique(randomLongId(), randomString(), randomString());
@@ -253,6 +272,32 @@ public class DictDataServiceImplTest extends BaseDbUnitTest {
         long count = dictDataService.getDictDataCountByDictType(dictType);
         // 校验
         assertEquals(2L, count);
+    }
+
+    @Test
+    public void testGetDictDataListByDictType_historyReadable() {
+        // ZS-CFG-002.B 历史仍可解释：字典项读路径不以「字典类型是否停用」为准入门槛——
+        // 类型停用只拦新写入（见 testCreateDictData_dictTypeNotEnable_rejected），已有历史项（含停用数据项）仍可读、可解释。
+        String dictType = "cfg002b_hist";
+        DictDataDO enabled = randomDictDataDO(o -> {
+            o.setDictType(dictType);
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+            o.setSort(1);
+        });
+        dictDataMapper.insert(enabled);
+        DictDataDO disabled = randomDictDataDO(o -> {
+            o.setDictType(dictType);
+            o.setStatus(CommonStatusEnum.DISABLE.getStatus());
+            o.setSort(2);
+        });
+        dictDataMapper.insert(disabled);
+
+        // 调用：读该类型全部历史字典项（含停用的数据项）
+        List<DictDataDO> list = dictDataService.getDictDataListByDictType(dictType);
+        // 断言：两条历史项均可读（按 sort 排序）
+        assertEquals(2, list.size());
+        assertPojoEquals(enabled, list.get(0));
+        assertPojoEquals(disabled, list.get(1));
     }
 
     @Test
