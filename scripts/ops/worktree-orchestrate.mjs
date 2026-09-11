@@ -43,6 +43,16 @@ export const DEFAULT_WT_ROOT = dirname(mainRoot);
 export const PILOT_TASKS = ['ZS-CFG-001.B', 'ZS-CFG-002.B', 'ZS-SEC-010'];
 
 /**
+ * 路径规范化：反斜杠统一为正斜杠；win32 下再转小写。
+ * 用于 worktree 路径比对——规避「--wt-root 传小写 e: 而 git 规范输出大写 E:/」及大小写差异
+ * 导致的假阴性（配合 parseWorktrees 的 -z 逐字输出，彻底消除中文路径 octal 转义/引号失配）。
+ */
+export function normPath(s) {
+  const n = String(s).replaceAll('\\', '/');
+  return process.platform === 'win32' ? n.toLowerCase() : n;
+}
+
+/**
  * 供给目标：新树因 gitignore 而缺失、需从主树 junction 的工具链目录。
  *   tools 恒定（env.sh/JDK/Maven，直接 mvn 与 G11 依赖）；
  *   node_modules 仅前端门禁(G10 vue-tsc)需要——B03 三任务后端为主，默认不供给，--node 显式开启。
@@ -145,6 +155,24 @@ function runGit(args) {
   return { ok: r.status === 0, out: String(r.stdout ?? ''), err: String(r.stderr ?? ''), status: r.status };
 }
 
+/**
+ * 解析 `git worktree list --porcelain -z` → [{path,head,branch}]；git 失败返回 null。
+ * 用 `-z`（逐字 UTF-8、NUL 分隔）而非默认 porcelain：后者对中文路径做 octal 转义并加引号
+ * （如 "E:/\344\274\227..."），直接字符串比对会假阴性；`-z` 输出即原始路径，再交 normPath 统一大小写/分隔符。
+ */
+function parseWorktrees() {
+  const r = runGit(['-C', mainRoot, 'worktree', 'list', '--porcelain', '-z']);
+  if (!r.ok) return null;
+  const entries = [];
+  let cur = null;
+  for (const f of r.out.split('\0').map((s) => s.trim()).filter(Boolean)) {
+    if (f.startsWith('worktree ')) { cur = { path: f.slice(9), head: '?', branch: 'detached' }; entries.push(cur); }
+    else if (cur && f.startsWith('HEAD ')) cur.head = f.slice(5, 13);
+    else if (cur && f.startsWith('branch ')) cur.branch = f.slice(7).replace('refs/heads/', '');
+  }
+  return entries;
+}
+
 /** 建目录 junction（win32 用 junction、其余用 dir）；幂等：link 已存在则跳过。 */
 function doJunction(step) {
   if (!existsSync(step.target)) return { ok: false, msg: `供给目标不存在：${step.target}` };
@@ -186,8 +214,7 @@ function execSteps(steps) {
 function isolationReport(p) {
   const branchInWt = runGit(['-C', p.wtPath, 'rev-parse', '--abbrev-ref', 'HEAD']).out.trim();
   const mainHead = runGit(['-C', mainRoot, 'rev-parse', '--abbrev-ref', 'HEAD']).out.trim();
-  const registered = runGit(['-C', mainRoot, 'worktree', 'list', '--porcelain']).out.includes(p.wtPath.replaceAll('\\', '/'))
-    || runGit(['-C', mainRoot, 'worktree', 'list']).out.includes(p.wtPath);
+  const registered = (parseWorktrees() ?? []).some((e) => normPath(e.path) === normPath(p.wtPath));
   const toolsOk = existsSync(join(p.wtPath, 'tools', 'env.sh'));
   const ok = branchInWt === p.branch && mainHead === 'main' && registered;
   console.log(`\n----- 隔离校验 -----\n新树分支=${branchInWt}（期望 ${p.branch}）\n主树 HEAD=${mainHead}（期望 main 未被动）\nworktree 已登记=${registered}\ntools 供给=${toolsOk}\n结论：${ok ? 'PASS 隔离完好' : 'FAIL 需排查'}`);
@@ -203,19 +230,15 @@ function doGates(p, flags) {
   return r.status === 0;
 }
 
-/** list：解析 worktree --porcelain，标注分支/供给/是否试点。 */
+/** list：经 parseWorktrees（--porcelain -z 逐字路径）标注分支/供给/是否主树。 */
 function doList() {
-  const r = runGit(['-C', mainRoot, 'worktree', 'list', '--porcelain']);
-  if (!r.ok) { console.error(r.err.trimEnd()); return false; }
-  const blocks = r.out.split('\n\n').map((b) => b.trim()).filter(Boolean);
-  console.log(`主树：${mainRoot}\n共 ${blocks.length} 个 worktree：`);
-  for (const b of blocks) {
-    const path = (b.match(/^worktree (.+)$/m) || [])[1] ?? '?';
-    const head = (b.match(/^HEAD ([0-9a-f]+)/m) || [])[1]?.slice(0, 8) ?? '?';
-    const branch = ((b.match(/^branch (.+)$/m) || [])[1] ?? 'detached').replace('refs/heads/', '');
-    const isMain = path.replaceAll('\\', '/') === mainRoot.replaceAll('\\', '/');
-    const tools = isMain ? '(主树)' : existsSync(join(path, 'tools', 'env.sh')) ? 'tools✓' : 'tools✗未供给';
-    console.log(`  ${head}  ${branch.padEnd(24)} ${path}  ${tools}`);
+  const entries = parseWorktrees();
+  if (!entries) { console.error('✗ 无法读取 worktree 列表（git worktree list --porcelain -z 失败）'); return false; }
+  console.log(`主树：${mainRoot}\n共 ${entries.length} 个 worktree：`);
+  for (const e of entries) {
+    const isMain = normPath(e.path) === normPath(mainRoot);
+    const tools = isMain ? '(主树)' : existsSync(join(e.path, 'tools', 'env.sh')) ? 'tools✓' : 'tools✗未供给';
+    console.log(`  ${e.head}  ${e.branch.padEnd(24)} ${e.path}  ${tools}`);
   }
   console.log(`试点任务：${PILOT_TASKS.join('、')}`);
   return true;

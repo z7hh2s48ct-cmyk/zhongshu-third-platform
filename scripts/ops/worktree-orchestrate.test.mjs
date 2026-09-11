@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import {
-  slugify, branchName, worktreeDirName, resolvePaths, provisionTargets,
+  slugify, branchName, worktreeDirName, resolvePaths, provisionTargets, normPath,
   planCreate, planMerge, planCleanup, PILOT_TASKS, mainRoot, DEFAULT_WT_ROOT,
 } from './worktree-orchestrate.mjs';
 
@@ -37,6 +37,17 @@ test('branchName / worktreeDirName：feat/<slug> 与 zszj-wt-<slug>', () => {
 
 test('PILOT_TASKS：步骤⑤ 三试点任务', () => {
   assert.deepEqual(PILOT_TASKS, ['ZS-CFG-001.B', 'ZS-CFG-002.B', 'ZS-SEC-010']);
+});
+
+test('normPath：统一正斜杠；win32 下大小写不敏感（修复 isolationReport 假阴性：--wt-root 传小写 e: 而 git 规范输出大写 E:/）', () => {
+  assert.equal(normPath('a\\b\\c'), 'a/b/c'); // 反斜杠一律转正斜杠（跨平台，小写不变）
+  if (process.platform === 'win32') {
+    // 关键回归：盘符/大小写差异不应致「worktree 已登记=false」的假阴性
+    assert.equal(normPath('E:/众墅之家AI赋能平台底座/.wt/zszj-wt-cfg-002-b'),
+                 normPath('e:/众墅之家AI赋能平台底座/.wt/zszj-wt-cfg-002-b'));
+  } else {
+    assert.equal(normPath('E:/A/b'), 'E:/A/b'); // posix 大小写敏感、仅统一分隔符
+  }
 });
 
 // ---- resolvePaths ----

@@ -38,3 +38,7 @@ dist-prod/
 !apps/zhongshu-miniapp/.vscode/settings.json
 !apps/zhongshu-miniapp/.vscode/vue3.code-snippets
 tools/
+
+# 步骤⑤ git worktree 并行编排：在工作区内建的隔离树容器（--wt-root <repo>/.wt）。
+# 各 worktree 内容独立跟踪，容器目录须忽略，以维持「主树 status 仅 outputs/ 未跟踪」的隔离不变量。
+.wt/
