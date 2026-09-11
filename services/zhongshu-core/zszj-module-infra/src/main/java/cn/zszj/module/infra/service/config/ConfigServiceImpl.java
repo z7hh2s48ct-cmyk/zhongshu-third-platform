@@ -2,6 +2,7 @@ package cn.zszj.module.infra.service.config;
 
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigPageReqVO;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.zszj.module.infra.convert.config.ConfigConvert;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
@@ -29,6 +30,9 @@ public class ConfigServiceImpl implements ConfigService {
     @Resource
     private ConfigMapper configMapper;
 
+    @Resource
+    private ConfigSensitiveClassifier sensitiveClassifier;
+
     @Override
     public Long createConfig(ConfigSaveReqVO createReqVO) {
         // 校验参数配置 key 的唯一性
@@ -44,12 +48,19 @@ public class ConfigServiceImpl implements ConfigService {
     @Override
     public void updateConfig(ConfigSaveReqVO updateReqVO) {
         // 校验自己存在
-        validateConfigExists(updateReqVO.getId());
+        ConfigDO exists = validateConfigExists(updateReqVO.getId());
         // 校验参数配置 key 的唯一性
         validateConfigKeyUnique(updateReqVO.getId(), updateReqVO.getKey());
 
-        // 更新参数配置
+        // ZS-CFG-001.B：秘密键（无论新旧 key）禁止置为 visible，堵住"改 key 成秘密模式 + 翻可见"的 TOCTOU 旁路
         ConfigDO updateObj = ConfigConvert.INSTANCE.convert(updateReqVO);
+        boolean wasSecret = sensitiveClassifier.classify(exists) == ConfigSensitiveClassifier.SensitiveLevel.SECRET;
+        boolean nowSecret = sensitiveClassifier.classify(updateObj) == ConfigSensitiveClassifier.SensitiveLevel.SECRET;
+        boolean toVisible = Boolean.TRUE.equals(updateReqVO.getVisible());
+        if ((wasSecret || nowSecret) && toVisible) {
+            throw exception(CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE);
+        }
+
         configMapper.updateById(updateObj);
     }
 
@@ -92,6 +103,21 @@ public class ConfigServiceImpl implements ConfigService {
     @Override
     public PageResult<ConfigDO> getConfigPage(ConfigPageReqVO pageReqVO) {
         return configMapper.selectPage(pageReqVO);
+    }
+
+    @Override
+    public ConfigRespVO getMaskedConfigRespVO(ConfigDO config) {
+        ConfigRespVO vo = ConfigConvert.INSTANCE.convert(config);
+        if (vo != null) {
+            // ZS-CFG-001.B：秘密/敏感项仅掩码 value，其余字段保持可读
+            vo.setValue(sensitiveClassifier.maskValue(config));
+        }
+        return vo;
+    }
+
+    @Override
+    public ConfigSensitiveClassifier.SensitiveLevel classifySensitive(ConfigDO config) {
+        return sensitiveClassifier.classify(config);
     }
 
     @VisibleForTesting
