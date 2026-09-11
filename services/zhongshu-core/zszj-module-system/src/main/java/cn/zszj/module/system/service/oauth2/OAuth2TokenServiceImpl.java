@@ -23,7 +23,10 @@ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import cn.zszj.module.system.service.user.AdminUserService;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +44,7 @@ import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSe
  *
  * @author 芋道源码
  */
+@Slf4j
 @Service
 public class OAuth2TokenServiceImpl implements OAuth2TokenService {
 
@@ -57,6 +61,29 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Resource
     @Lazy // 懒加载，避免循环依赖
     private AdminUserService adminUserService;
+
+    /**
+     * ZS-LOGIN-001：令牌用途分离门控开关——是否允许把「刷新令牌」静默当作「访问令牌」使用。
+     * <p>代码默认 {@code false}（安全默认：{@link #getAccessToken} 只认访问令牌；刷新令牌当访问令牌用 → 返回 null → checkAccessToken 抛 UNAUTHORIZED）。
+     * <p><b>现网为何临时置 true：</b>admin-web IM 与 miniapp IM/客服的 WebSocket 握手以 {@code ?token=<refreshToken>} 作凭据
+     * （浏览器 WebSocket 不能自定义 Header，只能拼 URL 参数），依赖本回退放行；须在 LOGIN-001.B（短时握手票据 + 前端 WS 迁移）完成前保持 true 以不破坏现网连接。
+     * 注：积木报表走 {@code X-Access-Token} 真访问令牌，<b>不</b>依赖本回退。
+     * <p><b>开启风险：</b>转换出的"访问令牌"继承刷新令牌 TTL（default client 达 30 天）、不落 system_oauth2_access_token 表
+     * （管理端令牌分页/踢出不可见）、{@link #removeAccessToken(String)} 无法撤销，仅随 Redis TTL 自然过期。故仅为迁移期临时兼容。
+     */
+    @Value("${zszj.security.refresh-token-as-access-token-enabled:false}")
+    private boolean refreshTokenAsAccessTokenEnabled;
+
+    @PostConstruct
+    public void warnRefreshTokenAsAccessTokenCompat() {
+        if (refreshTokenAsAccessTokenEnabled) {
+            log.warn("[warnRefreshTokenAsAccessTokenCompat][ZS-LOGIN-001 令牌用途分离兼容开关已开启"
+                    + "（zszj.security.refresh-token-as-access-token-enabled=true）：刷新令牌可被当作访问令牌使用，"
+                    + "将产生长效（继承刷新令牌 TTL）、不落库、removeAccessToken 无法撤销、仅随 Redis TTL 过期的凭据。"
+                    + "此为 admin-web IM / miniapp IM·客服 WebSocket 迁移期临时兼容，"
+                    + "须在 LOGIN-001.B 短时票据迁移完成后关闭]");
+        }
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -110,7 +137,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
 
         // 获取不到，从 MySQL 中获取访问令牌
         accessTokenDO = oauth2AccessTokenMapper.selectByAccessToken(accessToken);
-        if (accessTokenDO == null) {
+        // ZS-LOGIN-001：令牌用途分离，默认门控关闭时不再静默把刷新令牌当访问令牌
+        if (accessTokenDO == null && refreshTokenAsAccessTokenEnabled) {
             // 特殊：从 MySQL 中获取刷新令牌。原因：解决部分场景不方便刷新访问令牌场景
             // 例如说，积木报表只允许传递 token，不允许传递 refresh_token，导致无法刷新访问令牌
             // 再例如说，前端 WebSocket 的 token 直接跟在 url 上，无法传递 refresh_token
