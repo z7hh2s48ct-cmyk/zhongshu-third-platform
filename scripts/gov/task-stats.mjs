@@ -25,9 +25,12 @@ const CARD_RE = /^### (ZS-[A-Z]+-\d{3})/gm;
 // 卡片状态：内联在“- 关联…状态 X；”行（复用 verify-docs R3 正则）。
 // §16.1 分批子项在表格里、不以“- 关联”开头，天然不计入 → 符合“子项不进 91”。
 const STATUS_RE = /^-\s*关联[^\n]*?状态\s*([^\s；;，]+)/gm;
-// §2 当前统计句：“…统计（日期，…）：43 项待开发、…；0 项已验收（…）”，截到首个左括号前，
-// 以此排除历史变更记录里“48 待开发”（无“项”字）等旧数字噪声。
-const SECTION2_DECL_RE = /统计（[^）]*）：([^（(]*)/;
+// §2 分布串匹配跨度（parseSection2Declared 与 backfillSection2 共用，杜绝读写分歧）：
+// 从「：」后起，止于首个左括注「（/(」、句号「。」或换行。限界到句/行，避免「§2 声明无
+// 尾随括注」时越界吞掉后续 task cards——否则补插的缺失类别会被写进 §2 之外的卡片内容
+// （codex 对 ea739b9c 的 P2）。仍截到首个左括号前，排除历史变更里“48 待开发”（无“项”字）噪声。
+const DIST_SPAN = '[^（(\\n。]*';
+const SECTION2_DECL_RE = new RegExp(`统计（[^）]*）：(${DIST_SPAN})`);
 const DECL_ITEM_RE = /(\d+)\s*项\s*(待开发|开发中|待验收|待决策|待前置|已验收|暂缓)/g;
 // README：“累计 91 项主任务（83 待开发、2 待决策、6 待前置）”
 const README_DECL_RE = /累计\s*(\d+)\s*项主任务（([^）]*)）/;
@@ -72,14 +75,15 @@ const SECTION2_ITEM_RE = /(\d+)(\s*项\s*(待开发|开发中|待验收|待决�
  *  ① 把句中已有类别的数字替换为实际计数；
  *  ② 补插句中缺失但实际非零的类别——修复「某状态首次出现（如暂缓）时只改已有数字、
  *     从不插入新类别，导致 §2 分布漏计、合计对不上卡片总数」的缺陷（codex P2）。
- * 只改「：」到首个「（/」之间的分布串，保留其后说明；无 §2 声明句时原样返回。
+ * 只改「：」到首个「（/」、句号或换行之间的分布串（限界到句/行，防越界写入后续卡片），
+ * 保留其后说明；缺失类别插在分布串末尾（即尾随标点之前）；无 §2 声明句时原样返回。
  * @param {string} text docs/05 全文
  * @param {Record<string, number>} counts 各状态实际计数（countStatus().counts）
  * @param {string[]} order 补插缺失类别时的遍历顺序（默认 STATUS_ENUM）
  * @returns {string} 回填后的全文
  */
 export function backfillSection2(text, counts, order = STATUS_ENUM) {
-  return text.replace(/(统计（[^）]*）：)([^（(]*)/, (m, head, dist) => {
+  return text.replace(new RegExp(`(统计（[^）]*）：)(${DIST_SPAN})`), (m, head, dist) => {
     let d = dist.replace(SECTION2_ITEM_RE, (mm, num, rest, status) => `${counts[status] ?? 0}${rest}`);
     for (const s of order) {
       if ((counts[s] ?? 0) > 0 && !new RegExp(`项\\s*${s}`).test(d)) d += `、${counts[s]} 项${s}`;
