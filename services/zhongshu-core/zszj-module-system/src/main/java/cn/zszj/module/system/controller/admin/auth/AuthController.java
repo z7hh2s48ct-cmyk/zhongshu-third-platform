@@ -6,6 +6,8 @@ import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.datapermission.core.annotation.DataPermission;
+import cn.zszj.framework.ratelimiter.core.annotation.RateLimiter;
+import cn.zszj.framework.ratelimiter.core.keyresolver.impl.ExpressionRateLimiterKeyResolver;
 import cn.zszj.framework.security.config.SecurityProperties;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.module.system.controller.admin.auth.vo.*;
@@ -65,6 +67,8 @@ public class AuthController {
 
     @PostMapping("/login")
     @PermitAll
+    // ZS-SEC-010：账号密码登录，按固定主体 username 限流（改密码等普通参数不换 Key、伪造 IP 不绕过）
+    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.username")
     @Operation(summary = "使用账号密码登录")
     public CommonResult<AuthLoginRespVO> login(@RequestBody @Valid AuthLoginReqVO reqVO) {
         return success(authService.login(reqVO));
@@ -85,6 +89,8 @@ public class AuthController {
 
     @PostMapping("/refresh-token")
     @PermitAll
+    // ZS-SEC-010：刷新令牌，按固定主体 refreshToken 限流，压制令牌爆破 / 刷取
+    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#refreshToken")
     @Operation(summary = "刷新令牌")
     @Parameter(name = "refreshToken", description = "刷新令牌", required = true)
     public CommonResult<AuthLoginRespVO> refreshToken(@RequestParam("refreshToken") String refreshToken) {
@@ -129,15 +135,17 @@ public class AuthController {
 
     @PostMapping("/sms-login")
     @PermitAll
+    // ZS-SEC-010：短信验证码登录，按固定主体 mobile 限流，改验证码不换 Key
+    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile")
     @Operation(summary = "使用短信验证码登录")
-    // 可按需开启限流：https://github.com/YunaiV/ruoyi-vue-pro/issues/851
-    // @RateLimiter(time = 60, count = 6, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile")
     public CommonResult<AuthLoginRespVO> smsLogin(@RequestBody @Valid AuthSmsLoginReqVO reqVO) {
         return success(authService.smsLogin(reqVO));
     }
 
     @PostMapping("/send-sms-code")
     @PermitAll
+    // ZS-SEC-010：发送短信验证码，按固定主体 mobile 限流，阈值更严（60s/3 次）防短信轰炸与通道滥用
+    @RateLimiter(time = 60, count = 3, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile")
     @Operation(summary = "发送手机验证码")
     public CommonResult<Boolean> sendLoginSmsCode(@RequestBody @Valid AuthSmsSendReqVO reqVO) {
         authService.sendSmsCode(reqVO);
@@ -146,6 +154,8 @@ public class AuthController {
 
     @PostMapping("/reset-password")
     @PermitAll
+    // ZS-SEC-010：重置密码，按固定主体 mobile 限流，改密码 / 验证码等普通参数不换 Key
+    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile")
     @Operation(summary = "重置密码")
     public CommonResult<Boolean> resetPassword(@RequestBody @Valid AuthResetPasswordReqVO reqVO) {
         authService.resetPassword(reqVO);
