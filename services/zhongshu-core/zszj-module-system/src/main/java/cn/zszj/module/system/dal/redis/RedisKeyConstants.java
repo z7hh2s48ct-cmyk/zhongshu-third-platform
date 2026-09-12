@@ -34,7 +34,7 @@ public interface RedisKeyConstants {
     String USER_ROLE_ID_LIST = "user_role_ids";
 
     /**
-     * 拥有指定菜单的角色编号的缓存
+     * 拥有指定菜单的角色编号数组的缓存
      * <p>
      * KEY 格式：user_role_ids:{menuId}
      * VALUE 数据类型：String 角色编号集合
@@ -68,6 +68,28 @@ public interface RedisKeyConstants {
     String OAUTH2_ACCESS_TOKEN = "oauth2_access_token:%s";
 
     /**
+     * ZS-LOGIN-002：会话代际号（以刷新令牌为会话标识；本底座刷新沿用原 refresh token 不轮换）
+     * <p>
+     * KEY 格式：oauth2_refresh_session_generation:{refreshToken}
+     * VALUE 数据类型：String 代际号（Long，从 1 开始随每次成功刷新单调递增）
+     * <p>
+     * 用途：① 为每次刷新提供可定位的会话代际标识，便于审计；② 作为并发串行化的「无丢失更新」证据
+     * （代际号 == 成功刷新次数）。刻意存 Redis 而非新增 DB 列，避免 Flyway 迁移与 ZS-DB-019.B 的 PG 回归耦合。
+     */
+    String OAUTH2_REFRESH_SESSION_GENERATION = "oauth2_refresh_session_generation:%s";
+
+    /**
+     * ZS-LOGIN-002：访问令牌所属的会话代际号
+     * <p>
+     * KEY 格式：oauth2_access_session_generation:{accessToken}
+     * VALUE 数据类型：String 代际号（Long）
+     * <p>
+     * 用途：把某个访问令牌反查定位到「第几代会话」，用于重放辨识与审计。旧代际令牌被刷新取代后，
+     * 本标识仍保留至自然过期（TTL 取访问令牌有效期）。
+     */
+    String OAUTH2_ACCESS_SESSION_GENERATION = "oauth2_access_session_generation:%s";
+
+    /**
      * 站内信模版的缓存
      * <p>
      * KEY 格式：notify_template:{code}
@@ -86,7 +108,7 @@ public interface RedisKeyConstants {
     /**
      * 邮件模版的缓存
      * <p>
-     * KEY 格式：mail_template:{code}
+     * KEY 格式：mail_template:{id}
      * VALUE 数据格式：String 模版信息
      */
     String MAIL_TEMPLATE = "mail_template";
