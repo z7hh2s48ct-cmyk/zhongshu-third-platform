@@ -9,6 +9,7 @@ import cn.zszj.module.system.controller.admin.dept.vo.dept.DeptListReqVO;
 import cn.zszj.module.system.controller.admin.dept.vo.dept.DeptSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
 import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.redis.RedisKeyConstants;
 import com.google.common.annotations.VisibleForTesting;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +37,8 @@ public class DeptServiceImpl implements DeptService {
 
     @Resource
     private DeptMapper deptMapper;
+    @Resource
+    private AdminUserMapper adminUserMapper; // 注入 Mapper 而非 AdminUserService，避免服务层循环依赖
 
     @Override
     @CacheEvict(cacheNames = RedisKeyConstants.DEPT_CHILDREN_ID_LIST,
@@ -84,6 +87,10 @@ public class DeptServiceImpl implements DeptService {
         if (deptMapper.selectCountByParentId(id) > 0) {
             throw exception(DEPT_EXITS_CHILDREN);
         }
+        // 校验部门下是否挂有成员，避免删除后 AdminUserDO.deptId 悬空；受控迁移待 D-09 任职模型
+        if (adminUserMapper.selectCountByDeptId(id) > 0) {
+            throw exception(DEPT_EXITS_USERS);
+        }
         // 删除部门
         deptMapper.deleteById(id);
     }
@@ -92,10 +99,13 @@ public class DeptServiceImpl implements DeptService {
     @CacheEvict(cacheNames = RedisKeyConstants.DEPT_CHILDREN_ID_LIST,
             allEntries = true) // allEntries 清空所有缓存，因为操作一个部门，涉及到多个缓存
     public void deleteDeptList(List<Long> ids) {
-        // 校验是否有子部门
+        // 校验是否有子部门、部门下是否挂有成员；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
         for (Long id : ids) {
             if (deptMapper.selectCountByParentId(id) > 0) {
                 throw exception(DEPT_EXITS_CHILDREN);
+            }
+            if (adminUserMapper.selectCountByDeptId(id) > 0) {
+                throw exception(DEPT_EXITS_USERS);
             }
         }
 

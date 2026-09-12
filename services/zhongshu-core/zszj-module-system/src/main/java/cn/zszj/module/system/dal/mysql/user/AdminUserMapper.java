@@ -54,4 +54,16 @@ public interface AdminUserMapper extends BaseMapperX<AdminUserDO> {
         return selectList(AdminUserDO::getDeptId, deptIds);
     }
 
+    /**
+     * 统计指定部门下的用户数量
+     *
+     * 用于删除部门前的引用保护：部门下挂有成员时，禁止删除，避免 {@link AdminUserDO#getDeptId()} 悬空
+     *
+     * @param deptId 部门编号
+     * @return 用户数量
+     */
+    default Long selectCountByDeptId(Long deptId) {
+        return selectCount(AdminUserDO::getDeptId, deptId);
+    }
+
 }

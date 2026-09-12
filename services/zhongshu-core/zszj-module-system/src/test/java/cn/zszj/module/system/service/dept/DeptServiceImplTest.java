@@ -6,7 +6,10 @@ import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.system.controller.admin.dept.vo.dept.DeptListReqVO;
 import cn.zszj.module.system.controller.admin.dept.vo.dept.DeptSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
+import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
+import cn.zszj.module.system.enums.common.SexEnum;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
 
@@ -34,6 +37,8 @@ public class DeptServiceImplTest extends BaseDbUnitTest {
     private DeptServiceImpl deptService;
     @Resource
     private DeptMapper deptMapper;
+    @Resource
+    private AdminUserMapper adminUserMapper;
 
     @Test
     public void testCreateDept() {
@@ -139,6 +144,49 @@ public class DeptServiceImplTest extends BaseDbUnitTest {
 
         // 调用, 并断言异常
         assertServiceException(() -> deptService.deleteDeptList(ids), DEPT_EXITS_CHILDREN);
+    }
+
+    @Test
+    public void testDeleteDept_exitsUsers() {
+        // mock 数据：部门下挂有成员
+        DeptDO dbDeptDO = randomPojo(DeptDO.class);
+        deptMapper.insert(dbDeptDO);// @Sql: 先插入出一条存在的数据
+        AdminUserDO memberUser = randomPojo(AdminUserDO.class, o -> {
+            o.setStatus(randomCommonStatus()); // 保证 status 的范围
+            o.setSex(SexEnum.MALE.getSex()); // 保证 sex 的范围
+            o.setDeptId(dbDeptDO.getId());
+        });
+        adminUserMapper.insert(memberUser);
+        // 准备参数
+        Long id = dbDeptDO.getId();
+
+        // 调用, 并断言异常
+        assertServiceException(() -> deptService.deleteDept(id), DEPT_EXITS_USERS);
+        // 校验部门未被删除
+        assertNotNull(deptMapper.selectById(id));
+    }
+
+    @Test
+    public void testDeleteDeptList_exitsUsers() {
+        // mock 数据：其中一个部门下挂有成员
+        DeptDO deptDO1 = randomPojo(DeptDO.class);
+        deptMapper.insert(deptDO1);
+        AdminUserDO memberUser = randomPojo(AdminUserDO.class, o -> {
+            o.setStatus(randomCommonStatus()); // 保证 status 的范围
+            o.setSex(SexEnum.MALE.getSex()); // 保证 sex 的范围
+            o.setDeptId(deptDO1.getId());
+        });
+        adminUserMapper.insert(memberUser);
+        DeptDO deptDO2 = randomPojo(DeptDO.class);
+        deptMapper.insert(deptDO2);
+        // 准备参数
+        List<Long> ids = Arrays.asList(deptDO1.getId(), deptDO2.getId());
+
+        // 调用, 并断言异常（批量删除前先完成全部校验，避免部分删除）
+        assertServiceException(() -> deptService.deleteDeptList(ids), DEPT_EXITS_USERS);
+        // 校验两个部门都未被删除
+        assertNotNull(deptMapper.selectById(deptDO1.getId()));
+        assertNotNull(deptMapper.selectById(deptDO2.getId()));
     }
 
     @Test

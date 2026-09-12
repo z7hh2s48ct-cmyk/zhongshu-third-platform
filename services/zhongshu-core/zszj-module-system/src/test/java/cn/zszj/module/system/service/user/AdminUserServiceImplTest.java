@@ -21,6 +21,7 @@ import cn.zszj.module.system.dal.dataobject.dept.PostDO;
 import cn.zszj.module.system.dal.dataobject.dept.UserPostDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
 import cn.zszj.module.system.dal.mysql.dept.UserPostMapper;
 import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.enums.common.SexEnum;
@@ -70,6 +71,8 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
     private AdminUserMapper userMapper;
     @Resource
     private UserPostMapper userPostMapper;
+    @Resource
+    private DeptMapper deptMapper;
 
     @MockitoBean
     private DeptService deptService;
@@ -303,6 +306,66 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         assertNull(userMapper.selectById(userId));
         // 校验调用次数
         verify(permissionService, times(1)).processUserDeleted(eq(userId));
+    }
+
+    @Test
+    public void testDeleteUser_isDeptLeader() {
+        // mock 数据
+        AdminUserDO dbUser = randomAdminUserDO();
+        userMapper.insert(dbUser);
+        // mock 数据：用户是部门负责人
+        DeptDO dbDept = randomPojo(DeptDO.class, o -> o.setLeaderUserId(dbUser.getId()));
+        deptMapper.insert(dbDept);
+        // 准备参数
+        Long userId = dbUser.getId();
+
+        // 调用数据, 并断言异常
+        assertServiceException(() -> userService.deleteUser(userId), USER_IS_DEPT_LEADER);
+        // 校验用户未被删除
+        assertNotNull(userMapper.selectById(userId));
+        // 校验未触发用户关联数据的清理
+        verify(permissionService, never()).processUserDeleted(any());
+    }
+
+    @Test
+    public void testDeleteUserList_success() {
+        // mock 数据：两个用户都不是部门负责人
+        AdminUserDO dbUser1 = randomAdminUserDO();
+        userMapper.insert(dbUser1);
+        AdminUserDO dbUser2 = randomAdminUserDO();
+        userMapper.insert(dbUser2);
+        // 准备参数
+        List<Long> ids = newArrayList(dbUser1.getId(), dbUser2.getId());
+
+        // 调用数据
+        userService.deleteUserList(ids);
+        // 校验结果
+        assertNull(userMapper.selectById(dbUser1.getId()));
+        assertNull(userMapper.selectById(dbUser2.getId()));
+        // 校验调用次数
+        verify(permissionService, times(1)).processUserDeleted(eq(dbUser1.getId()));
+        verify(permissionService, times(1)).processUserDeleted(eq(dbUser2.getId()));
+    }
+
+    @Test
+    public void testDeleteUserList_isDeptLeader() {
+        // mock 数据：其中一个用户是部门负责人
+        AdminUserDO dbUser1 = randomAdminUserDO();
+        userMapper.insert(dbUser1);
+        DeptDO dbDept = randomPojo(DeptDO.class, o -> o.setLeaderUserId(dbUser1.getId()));
+        deptMapper.insert(dbDept);
+        AdminUserDO dbUser2 = randomAdminUserDO();
+        userMapper.insert(dbUser2);
+        // 准备参数
+        List<Long> ids = newArrayList(dbUser1.getId(), dbUser2.getId());
+
+        // 调用数据, 并断言异常（批量删除前先完成全部校验，避免部分删除）
+        assertServiceException(() -> userService.deleteUserList(ids), USER_IS_DEPT_LEADER);
+        // 校验两个用户都未被删除
+        assertNotNull(userMapper.selectById(dbUser1.getId()));
+        assertNotNull(userMapper.selectById(dbUser2.getId()));
+        // 校验未触发用户关联数据的清理
+        verify(permissionService, never()).processUserDeleted(any());
     }
 
     @Test
