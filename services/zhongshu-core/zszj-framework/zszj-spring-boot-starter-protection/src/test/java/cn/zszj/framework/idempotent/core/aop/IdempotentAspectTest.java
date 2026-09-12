@@ -27,6 +27,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -45,7 +47,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -312,18 +313,21 @@ public class IdempotentAspectTest {
 
     @Test
     public void testAroundPointCut_firstRequest_servletArgsExcludedFromDigest() throws Throwable {
-        // codex r0 P1 回归：@Idempotent 方法若含 servlet 基础设施入参（如 HttpServletResponse），
-        // 计算参数摘要时不得用 Jackson 序列化它——序列化会调用 getWriter()/getOutputStream() 等 getter，
-        // 提前「选定」响应输出模式，破坏后续二进制输出（如 ServletUtils.writeAttachment 附件下载抛 IllegalStateException），
-        // 且首次放行请求即触发（SEC-011.A 把 sanitizeArgs 从「仅拒绝分支」提升为「每请求必算摘要」）。
-        // 修复：摘要与拒绝日志的入参先排除 servlet/spring-web 对象（与 StrUtils.joinMethodArgs 既有排除口径一致）。
+        // codex r0 P1 + r1 P1 回归：@Idempotent 方法若含 servlet 响应入参，计算「每请求必算」的参数摘要时不得用 Jackson 序列化它——
+        // 序列化会调用 getWriter()/getOutputStream() 等 getter，提前「选定」响应输出模式，破坏后续二进制输出
+        //（如 ServletUtils.writeAttachment 附件下载抛 IllegalStateException），且首次放行请求即触发
+        //（SEC-011.A 把 sanitizeArgs 从「仅拒绝分支」提升为「每请求必算摘要」）。
+        // r1 关键：运行时实现类（Tomcat org.apache.catalina.connector.ResponseFacade）不以 servlet 包名开头，
+        //「按包名前缀排除」会漏排它——必须「按类型 instanceof 排除」。故用 ContainerLikeResponse（具体实现 +
+        // 运行时类名落在业务包 cn.zszj 下 + IS-A ServletResponse）精确复现该特征，接口 mock（ByteBuddy 名以 jakarta.servlet 开头）覆盖不到此运行时场景。
         Idempotent idempotent = mock(Idempotent.class);
         doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
         when(idempotent.timeout()).thenReturn(5);
         when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
         when(joinPoint.proceed()).thenReturn("OK");
-        HttpServletResponse response = mock(HttpServletResponse.class);
+        // 具体容器响应（非接口 mock）：模拟 Tomcat ResponseFacade 的「非 servlet 包名 + servlet 类型」运行时特征
+        HttpServletResponse response = new ContainerLikeResponse();
         Object businessArg = "orderPayload";
         // 入参含 servlet 响应对象 + 业务参数
         when(joinPoint.getArgs()).thenReturn(new Object[]{businessArg, response});
@@ -332,12 +336,14 @@ public class IdempotentAspectTest {
         Object result = idempotentAspect.aroundPointCut(joinPoint, idempotent);
         assertEquals("OK", result);
 
-        // 摘要应仅由「排除 servlet 对象后」的业务入参计算——含 servlet 的口径与此不同（RED），排除后一致（GREEN）
+        // C1：摘要应仅由「排除 servlet 对象后」的业务入参计算——含 servlet 的口径与此不同（RED），排除后一致（GREEN）
         String expectedDigestExcludingServlet = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(new Object[]{businessArg}));
         verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(expectedDigestExcludingServlet), eq(5L), eq(TimeUnit.SECONDS));
-        // 钉死：绝不因序列化触碰 servlet 响应的 writer / 输出流（避免响应被提前选定 writer，破坏后续附件等二进制输出）
-        verify(response, never()).getWriter();
-        verify(response, never()).getOutputStream();
+        // C2：端到端复现生产症状——摘要计算后业务仍能安全走二进制输出。若摘要序列化提前调用了 getWriter()
+        //（前缀漏排 Tomcat 式实现时会发生），MockHttpServletResponse 置 usingWriter，此处 getOutputStream() 将抛
+        // IllegalStateException（正是 ServletUtils.writeAttachment 的生产故障）；类型排除生效后 response 未被触碰，故不抛。
+        assertDoesNotThrow(response::getOutputStream,
+                "摘要计算不得提前选定 response 的 writer，否则后续二进制输出（writeAttachment）会抛 IllegalStateException");
     }
 
     // ========== Helper methods ==========
@@ -412,6 +418,14 @@ public class IdempotentAspectTest {
         public String getDeclaringTypeName() {
             return "Object";
         }
+    }
+
+    /**
+     * 模拟 Tomcat 运行时响应实现（{@code org.apache.catalina.connector.ResponseFacade}）的关键特征：
+     * 具体实现（非接口 mock）+ 运行时类名落在业务包 {@code cn.zszj} 下（不以任何 servlet 包名开头）+ IS-A {@code ServletResponse}。
+     * 用于证明「按包名前缀排除」会漏排真实容器响应（RED），只有「按类型 instanceof 排除」能命中（GREEN）。
+     */
+    static class ContainerLikeResponse extends MockHttpServletResponse {
     }
 
 }
