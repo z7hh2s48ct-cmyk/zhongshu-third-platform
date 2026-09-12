@@ -36,6 +36,8 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
@@ -261,6 +263,11 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
      * <p>与 {@link #removeAccessToken(String)} 同样遵循「先锁刷新令牌行，再撤销访问令牌」的锁序，
      * 并在获锁后重读，避免与并发刷新互相复活。
      *
+     * <p>ZS-LOGIN-002 P2-A（codex r0 修复）：获取锁前对 refresh-token 标识<b>去重并按自然序排序</b>。
+     * 原因：access-token 查询结果的 ID 顺序跨刷新不稳定（刷新会删旧插新、改变 ID 序），
+     * 若按该顺序逐个 FOR UPDATE，两个并发的用户级批量撤销可能以相反顺序获取锁 → 死锁。
+     * 排序后所有并发调用者以相同顺序竞争行锁，从根本上消除锁环（Coffman 条件之「循环等待」）。
+     *
      * <p>本方法此前<b>无 {@code @Transactional}</b>：加上事务既是原子性要求（批量撤销不应半途而废），
      * 也是行锁生效的前提（无事务则每条语句自动提交、锁立即释放）。
      */
@@ -271,11 +278,29 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         if (CollUtil.isEmpty(accessTokens)) {
             return;
         }
-        accessTokens.forEach(accessToken -> {
+        // ZS-LOGIN-002 P2-A：去重 + 自然序排序 refresh-token，确保并发批量撤销以稳定顺序获取行锁
+        Set<String> sortedRefreshTokens = new TreeSet<>();
+        for (OAuth2AccessTokenDO accessToken : accessTokens) {
+            if (StrUtil.isNotEmpty(accessToken.getRefreshToken())) {
+                sortedRefreshTokens.add(accessToken.getRefreshToken());
+            }
+        }
+        // 按稳定顺序逐个锁定并撤销
+        for (String refreshToken : sortedRefreshTokens) {
             // ZS-LOGIN-002：行锁 + 获锁后重读
-            String refreshToken = accessToken.getRefreshToken();
             oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
-            for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessToken)) {
+            // 找到该 refresh-token 对应的任一 access-token 作为 fallback
+            OAuth2AccessTokenDO fallback = null;
+            for (OAuth2AccessTokenDO at : accessTokens) {
+                if (refreshToken.equals(at.getRefreshToken())) {
+                    fallback = at;
+                    break;
+                }
+            }
+            if (fallback == null) {
+                continue;
+            }
+            for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
                 oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
             }
@@ -284,7 +309,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             oauth2AccessTokenRedisDAO.delete(refreshToken);
             // ZS-LOGIN-002：会话终结，清理代际键
             deleteSessionGenerationQuietly(refreshToken);
-        });
+        }
     }
 
     @Override
@@ -354,14 +379,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
      * <p>best-effort：Redis 抖动<b>不得</b>阻断合法刷新，故整体 try/catch 降级为告警。
      * 真正的重放拒绝由「刷新时撤销旧代际访问令牌（DB + Redis）」保证，与本登记无关。
      * 代际状态只存 Redis、<b>不新增 DB 列</b>（避开 Flyway 迁移与 ZS-DB-019.B 耦合）。
+     *
+     * <p>ZS-LOGIN-002 P2-B（codex r0 修复）：改用毫秒精度 TTL（{@link #millisUntil}），
+     * 对正的亚秒剩余时间仍设有限 TTL（而非误当"无限期"），对已过期条目跳过写入。
      */
     private void recordSessionGeneration(OAuth2RefreshTokenDO refreshTokenDO, OAuth2AccessTokenDO accessTokenDO) {
         String refreshToken = refreshTokenDO.getRefreshToken();
         try {
             long generation = oauth2AccessTokenRedisDAO.nextSessionGeneration(refreshToken,
-                    secondsUntil(refreshTokenDO.getExpiresTime()));
+                    millisUntil(refreshTokenDO.getExpiresTime()));
             oauth2AccessTokenRedisDAO.setAccessTokenGeneration(accessTokenDO.getAccessToken(), generation,
-                    secondsUntil(accessTokenDO.getExpiresTime()));
+                    millisUntil(accessTokenDO.getExpiresTime()));
             if (log.isInfoEnabled()) {
                 log.info("[recordSessionGeneration][ZS-LOGIN-002 会话(user={}/{}, refresh={}) 刷新至代际({})，"
                                 + "旧代际访问令牌已撤销，新访问令牌({})]",
@@ -386,11 +414,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         }
     }
 
-    private static long secondsUntil(LocalDateTime expiresTime) {
+    /**
+     * ZS-LOGIN-002 P2-B：返回到期剩余毫秒数。
+     * <p>返回值 <= 0 表示已过期或无到期时间（调用方应跳过写入，避免创建永不过期的键）。
+     * <p>相比原 {@code secondsUntil}（截断为秒、亚秒返回 0 被误当"无限期"），毫秒精度确保
+     * 配置 1 秒 access-token 生命周期的客户端每次刷新都得到有限 TTL 的代际键。
+     */
+    private static long millisUntil(LocalDateTime expiresTime) {
         if (expiresTime == null) {
-            return 0L;
+            return -1L;
         }
-        return Math.max(Duration.between(LocalDateTime.now(), expiresTime).getSeconds(), 0L);
+        return Duration.between(LocalDateTime.now(), expiresTime).toMillis();
     }
 
     /**
