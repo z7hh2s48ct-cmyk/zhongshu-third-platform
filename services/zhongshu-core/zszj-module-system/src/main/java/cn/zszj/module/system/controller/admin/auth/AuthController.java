@@ -135,8 +135,8 @@ public class AuthController {
 
     @PostMapping("/sms-login")
     @PermitAll
-    // ZS-SEC-010：短信验证码登录，按固定主体 mobile 限流，改验证码不换 Key
-    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile")
+    // ZS-SEC-010：短信验证码登录，按固定主体 mobile 限流，改验证码不换 Key；code 经 maskKeys 端点级掩码，避免验证码落限流拒绝日志
+    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile", maskKeys = {"code"})
     @Operation(summary = "使用短信验证码登录")
     public CommonResult<AuthLoginRespVO> smsLogin(@RequestBody @Valid AuthSmsLoginReqVO reqVO) {
         return success(authService.smsLogin(reqVO));
@@ -154,8 +154,8 @@ public class AuthController {
 
     @PostMapping("/reset-password")
     @PermitAll
-    // ZS-SEC-010：重置密码，按固定主体 mobile 限流，改密码 / 验证码等普通参数不换 Key
-    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile")
+    // ZS-SEC-010：重置密码，按固定主体 mobile 限流，改密码 / 验证码等普通参数不换 Key；code 经 maskKeys 端点级掩码（password 已由内置根集掩码）
+    @RateLimiter(time = 60, count = 5, keyResolver = ExpressionRateLimiterKeyResolver.class, keyArg = "#reqVO.mobile", maskKeys = {"code"})
     @Operation(summary = "重置密码")
     public CommonResult<Boolean> resetPassword(@RequestBody @Valid AuthResetPasswordReqVO reqVO) {
         authService.resetPassword(reqVO);

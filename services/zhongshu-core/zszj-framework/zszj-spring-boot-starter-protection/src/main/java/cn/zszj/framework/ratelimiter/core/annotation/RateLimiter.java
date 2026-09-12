@@ -59,4 +59,14 @@ public @interface RateLimiter {
      */
     String keyArg() default "";
 
+    /**
+     * 端点级附加脱敏键：限流被拒绝时，除内置凭据根集（password / token / secret 等）外，
+     * 额外需要掩码的参数名或字段名（如短信验证码 code），避免其明文落入限流拒绝日志。
+     *
+     * <p>键名大小写不敏感，内部会归一（小写、去下划线 / 连字符）后精确匹配。
+     *
+     * @see cn.zszj.framework.common.util.log.LogSanitizeUtils
+     */
+    String[] maskKeys() default {};
+
 }

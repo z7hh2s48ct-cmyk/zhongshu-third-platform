@@ -11,6 +11,7 @@ import cn.zszj.framework.ratelimiter.core.keyresolver.RateLimiterKeyResolver;
 import cn.zszj.framework.ratelimiter.core.redis.RateLimiterRedisDAO;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.Signature;
+import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -54,6 +56,7 @@ public class RateLimiterAspectTest {
     private static final String SECRET_TOKEN = "TOKEN-SECRET-DoNotLog";
     private static final String SECRET_APIKEY = "APIKEY-SECRET-DoNotLog";
     private static final String SECRET_LIST = "LIST-SECRET-DoNotLog";
+    private static final String SECRET_CODE = "888888-CODE-SECRET-DoNotLog";
     private static final String SAFE_USERNAME = "zhangsan-user";
     private static final String SAFE_NOTE = "hello-note";
     private static final String METHOD_DESC = "UserService.submitOrder(..)";
@@ -112,6 +115,68 @@ public class RateLimiterAspectTest {
         assertTrue(logText.contains(SAFE_NOTE), "非敏感 note 应保留");
         assertTrue(logText.contains(METHOD_DESC), "方法描述应保留以便定位");
         assertTrue(logText.contains("***"), "敏感字段应被掩码");
+    }
+
+    /**
+     * SEC-010：refresh-token 端点入参是标量 String refreshToken。
+     * 旧 {@code sanitizeArgs} 只掩码对象字段、放过标量，导致完整可复用的刷新令牌明文落限流拒绝日志。
+     * 修复后借「参数名感知」（refreshToken 归一后含 token 根集）自动掩码该标量凭据。
+     */
+    @Test
+    public void testBeforePointCut_tooManyRequests_scalarRefreshTokenMasked() {
+        RateLimiter rateLimiter = mock(RateLimiter.class);
+        doReturn(FixedKeyResolver.class).when(rateLimiter).keyResolver();
+        when(rateLimiter.count()).thenReturn(5);
+        when(rateLimiter.time()).thenReturn(60);
+        when(rateLimiter.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        when(rateLimiter.message()).thenReturn("");
+        // joinPoint：MethodSignature 提供参数名 refreshToken，入参为标量令牌（复刻 controller 真实入参形态）
+        JoinPoint joinPoint = mock(JoinPoint.class);
+        MethodSignature signature = mock(MethodSignature.class);
+        lenient().when(signature.getParameterNames()).thenReturn(new String[]{"refreshToken"});
+        when(joinPoint.getSignature()).thenReturn(signature);
+        when(joinPoint.getArgs()).thenReturn(new Object[]{SECRET_TOKEN});
+        when(rateLimiterRedisDAO.tryAcquire(anyString(), anyInt(), anyInt(), any())).thenReturn(false);
+
+        assertThrows(ServiceException.class,
+                () -> rateLimiterAspect.beforePointCut(joinPoint, rateLimiter));
+
+        String logText = capturedLog();
+        assertFalse(logText.contains(SECRET_TOKEN), "标量 refreshToken 凭据不应出现在限流拒绝日志");
+        assertTrue(logText.contains("***"), "标量凭据应经参数名感知被掩码");
+    }
+
+    /**
+     * SEC-010：sms-login / reset-password 端点的 code（短信验证码）不在内置凭据根集，
+     * 旧 {@code sanitizeArgs} 未接收端点级 extraKeys，导致验证码明文落限流拒绝日志。
+     * 修复后经 {@code @RateLimiter(maskKeys = {"code"})} 端点级精确掩码（复刻 controller 真实入参形态）。
+     */
+    @Test
+    public void testBeforePointCut_tooManyRequests_smsCodeMaskedViaMaskKeys() {
+        RateLimiter rateLimiter = mock(RateLimiter.class);
+        doReturn(FixedKeyResolver.class).when(rateLimiter).keyResolver();
+        when(rateLimiter.count()).thenReturn(5);
+        when(rateLimiter.time()).thenReturn(60);
+        when(rateLimiter.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        when(rateLimiter.message()).thenReturn("");
+        lenient().when(rateLimiter.maskKeys()).thenReturn(new String[]{"code"});
+        // joinPoint：MethodSignature 参数名 reqVO，入参为含 code 的短信请求体
+        JoinPoint joinPoint = mock(JoinPoint.class);
+        MethodSignature signature = mock(MethodSignature.class);
+        lenient().when(signature.getParameterNames()).thenReturn(new String[]{"reqVO"});
+        when(joinPoint.getSignature()).thenReturn(signature);
+        Map<String, Object> smsReq = new LinkedHashMap<>();
+        smsReq.put("mobile", "13800138000");
+        smsReq.put("code", SECRET_CODE);
+        when(joinPoint.getArgs()).thenReturn(new Object[]{smsReq});
+        when(rateLimiterRedisDAO.tryAcquire(anyString(), anyInt(), anyInt(), any())).thenReturn(false);
+
+        assertThrows(ServiceException.class,
+                () -> rateLimiterAspect.beforePointCut(joinPoint, rateLimiter));
+
+        String logText = capturedLog();
+        assertFalse(logText.contains(SECRET_CODE), "短信验证码 code 不应出现在限流拒绝日志");
+        assertTrue(logText.contains("***"), "端点级 maskKeys 应将 code 掩码");
     }
 
     @Test
