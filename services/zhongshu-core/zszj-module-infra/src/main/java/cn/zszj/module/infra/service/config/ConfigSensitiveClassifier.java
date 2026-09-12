@@ -92,4 +92,35 @@ public class ConfigSensitiveClassifier {
         return MASK_VALUE.equals(submittedValue) && classify(exists) != SensitiveLevel.NORMAL;
     }
 
+    /**
+     * ZS-CFG-001.B r1 P1 修复：判定「保留掩码回显值」的更新是否下调了敏感级保护。
+     *
+     * <p>保护强度 SECRET &gt; SENSITIVE &gt; NORMAL。调用方回传掩码 {@link #MASK_VALUE} 表示其并不掌握库中真值，
+     * 此时若同一更新把保护级下调（如把 SECRET 键改名为非秘密键降到 SENSITIVE，或把 SENSITIVE 翻为 visible 降到 NORMAL），
+     * 攻击者即可在不知秘密值的前提下，经一到两次更新把秘密洗成可读的普通项，再由 {@code /get-value-by-key} 与详情读出明文。
+     * 故保留掩码值时禁止下调保护级（守卫见 {@code ConfigServiceImpl#updateConfig}）。</p>
+     *
+     * @param exists  库中现有配置
+     * @param updated 本次更新后的配置（value 尚未回填为原值；分类只看 key/visible，故不受影响）
+     * @return true 表示更新降低了保护级
+     */
+    public boolean isProtectionDowngrade(ConfigDO exists, ConfigDO updated) {
+        return protectionRank(classify(updated)) < protectionRank(classify(exists));
+    }
+
+    /**
+     * 敏感级保护强度打分：SECRET 最强、NORMAL 最弱。独立于枚举声明序，避免重排枚举引入隐患。
+     */
+    private static int protectionRank(SensitiveLevel level) {
+        switch (level) {
+            case SECRET:
+                return 2;
+            case SENSITIVE:
+                return 1;
+            case NORMAL:
+            default:
+                return 0;
+        }
+    }
+
 }

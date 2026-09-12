@@ -12,9 +12,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -145,6 +148,46 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
         verify(configMapper).updateById(captor.capture());
         assertEquals("******", captor.getValue().getValue(), "普通项字面 ****** 应原样持久化，不做往返保护");
+    }
+
+    @Test
+    public void updateConfig_renameSecretToNonSecretKeyWithMask_shouldRejectDowngrade() {
+        // ZS-CFG-001.B r1 P1 回归（codex jshell 实证复现）：有更新权限者不知秘密真值，试图两步洗密——
+        // 第一步把 SECRET 键 sys.db.password 改名为非秘密键 biz.alias 并回传掩码 ******（触发保留原值），
+        // 保护级由 SECRET 降为 SENSITIVE；若放行，第二步翻 visible=true 即降为 NORMAL，
+        // 秘密经 /get-value-by-key 与详情明文可读。故保留掩码值时下调保护级必须被拒绝，且不落库。
+        ConfigSaveReqVO req = new ConfigSaveReqVO();
+        req.setId(1L);
+        req.setCategory("biz");
+        req.setName("业务别名");
+        req.setKey("biz.alias"); // 非秘密键
+        req.setValue("******");  // 回显掩码，调用方并不掌握真值
+        req.setVisible(false);
+        when(configMapper.selectById(1L)).thenReturn(config("sys.db.password", "RealDbSecret", false));
+
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(req));
+        assertEquals(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO.getCode(), ex.getCode(),
+                "改名脱密（SECRET→SENSITIVE）且回传掩码保留真值时必须被拒绝，否则秘密可被两步洗白暴露");
+        verify(configMapper, never()).updateById(any(ConfigDO.class));
+    }
+
+    @Test
+    public void updateConfig_maskedEchoSetSensitiveVisible_shouldRejectDowngrade() {
+        // ZS-CFG-001.B r1 P1 回归：SENSITIVE 项（非秘密键但 visible=false，库中藏真实敏感值）回传掩码并翻 visible=true，
+        // 保护级由 SENSITIVE 降为 NORMAL，被保留的真值随即可读。现有 TOCTOU 守卫只拦 SECRET→visible，拦不住此路径。
+        ConfigSaveReqVO req = new ConfigSaveReqVO();
+        req.setId(2L);
+        req.setCategory("biz");
+        req.setName("业务配置");
+        req.setKey("biz.internal.endpoint"); // 非秘密键
+        req.setValue("******");
+        req.setVisible(true); // 翻为可见 → 降为 NORMAL
+        when(configMapper.selectById(2L)).thenReturn(config("biz.internal.endpoint", "RealSensitiveVal", false));
+
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(req));
+        assertEquals(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO.getCode(), ex.getCode(),
+                "SENSITIVE→NORMAL 且回传掩码保留真值时必须被拒绝，否则敏感值被暴露");
+        verify(configMapper, never()).updateById(any(ConfigDO.class));
     }
 
 }

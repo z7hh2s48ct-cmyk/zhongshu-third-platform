@@ -61,10 +61,16 @@ public class ConfigServiceImpl implements ConfigService {
             throw exception(CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE);
         }
 
-        // ZS-CFG-001.B P1 修复：脱敏往返保护——敏感项详情/分页/导出输出被掩码为 ******，前端 ConfigForm.vue
+        // ZS-CFG-001.B r0 P1 修复：脱敏往返保护——敏感项详情/分页/导出输出被掩码为 ******，前端 ConfigForm.vue
         // 仅编辑名称/备注后会把掩码原样回传；若直接持久化会用掩码覆盖库中真实秘密值（如 system.user.init-password），
         // 造成数据损坏。故提交值为掩码哨兵且库中项为敏感级时保留原值（管理员改真值时提交新值、非哨兵，不受影响）。
         if (sensitiveClassifier.isMaskedEcho(exists, updateObj.getValue())) {
+            // ZS-CFG-001.B r1 P1 修复：回传掩码=调用方不掌握真值，禁止在同一更新里下调该值保护级，否则可两步洗密
+            // （SECRET 改名脱密降 SENSITIVE → 翻 visible 降 NORMAL）后经 /get-value-by-key 与详情读出明文；现有
+            // TOCTOU 守卫只拦 SECRET→visible，拦不住改名降级链，故此处补齐。
+            if (sensitiveClassifier.isProtectionDowngrade(exists, updateObj)) {
+                throw exception(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO);
+            }
             updateObj.setValue(exists.getValue());
         }
 

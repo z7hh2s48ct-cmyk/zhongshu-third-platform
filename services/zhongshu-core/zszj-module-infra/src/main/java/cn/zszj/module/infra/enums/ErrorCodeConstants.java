@@ -15,6 +15,7 @@ public interface ErrorCodeConstants {
     ErrorCode CONFIG_CAN_NOT_DELETE_SYSTEM_TYPE = new ErrorCode(1_001_000_003, "不能删除类型为系统内置的参数配置");
     ErrorCode CONFIG_GET_VALUE_ERROR_IF_VISIBLE = new ErrorCode(1_001_000_004, "获取参数配置失败，原因：不允许获取不可见配置");
     ErrorCode CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE = new ErrorCode(1_001_000_005, "敏感/秘密参数不允许设置为可见");
+    ErrorCode CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO = new ErrorCode(1_001_000_006, "敏感/秘密参数在值未变更（回显掩码 ******）时，不允许降低其保护级别（改名为非秘密键或设置为可见）；如需调整请重新填写真实值");
 
     // ========== 定时任务 1-001-001-000 ==========
     ErrorCode JOB_NOT_EXISTS = new ErrorCode(1_001_001_000, "定时任务不存在");
