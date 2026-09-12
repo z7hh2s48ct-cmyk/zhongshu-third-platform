@@ -368,4 +368,49 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
                 new ErrorCode(401, "访问令牌不存在"));
     }
 
+    /**
+     * ZS-LOGIN-001（codex P1 修复看守）：gate=false 时，此前兼容期（gate=true）由 convertToAccessToken
+     * 缓存进 Redis 的「合成访问令牌」（特征 accessToken==refreshToken）不得再被 checkAccessToken 放行，
+     * 且应被自愈清除。复刻 codex P1：合成令牌走 getAccessToken 的 Redis 命中提前 return，绕过下方门控。
+     */
+    @Test
+    public void testCheckAccessToken_cachedSyntheticToken_compatDisabled_shouldThrowUnauthorizedAndEvict() {
+        // 构造「此前 gate=true 时代 convertToAccessToken 缓存进 Redis 的合成令牌」：accessToken==refreshToken、不落库、继承长效 TTL
+        String syntheticToken = randomString();
+        OAuth2AccessTokenDO cachedSynthetic = randomPojo(OAuth2AccessTokenDO.class)
+                .setAccessToken(syntheticToken)
+                .setRefreshToken(syntheticToken)
+                .setUserType(UserTypeEnum.ADMIN.getValue())
+                .setExpiresTime(LocalDateTime.now().plusDays(30));
+        oauth2AccessTokenRedisDAO.set(cachedSynthetic);
+        // 前置：Redis 命中、MySQL 无此访问令牌（合成令牌本就不落库）
+        assertNotNull(oauth2AccessTokenRedisDAO.get(syntheticToken));
+        assertNull(oauth2AccessTokenMapper.selectByAccessToken(syntheticToken));
+
+        // 调用，并断言：gate=false 下缓存的合成令牌不得放行 → 抛 UNAUTHORIZED
+        assertServiceException(() -> oauth2TokenService.checkAccessToken(syntheticToken),
+                new ErrorCode(401, "访问令牌不存在"));
+        // 断言：污染条目被自愈清除
+        assertNull(oauth2AccessTokenRedisDAO.get(syntheticToken),
+                "gate 关闭时应自愈清除缓存的合成令牌污染条目");
+    }
+
+    /**
+     * ZS-LOGIN-001（P1 修复正向对照）：gate=false 时，Redis 缓存的「真实访问令牌」
+     * （accessToken≠refreshToken）不受合成令牌自愈逻辑影响，仍应正常命中返回。
+     */
+    @Test
+    public void testGetAccessToken_cachedRealToken_compatDisabled_shouldStillReturn() {
+        // 构造一个已缓存的真实访问令牌（accessToken 与 refreshToken 为两个独立串）
+        OAuth2AccessTokenDO realToken = randomPojo(OAuth2AccessTokenDO.class)
+                .setExpiresTime(LocalDateTime.now().plusDays(1));
+        oauth2AccessTokenRedisDAO.set(realToken);
+        assertNotEquals(realToken.getAccessToken(), realToken.getRefreshToken());
+
+        // 调用，并断言：真实访问令牌仍从 Redis 命中返回，未被误伤
+        OAuth2AccessTokenDO result = oauth2TokenService.getAccessToken(realToken.getAccessToken());
+        assertNotNull(result, "gate 关闭时真实访问令牌（accessToken≠refreshToken）仍应正常放行");
+        assertEquals(realToken.getAccessToken(), result.getAccessToken());
+    }
+
 }

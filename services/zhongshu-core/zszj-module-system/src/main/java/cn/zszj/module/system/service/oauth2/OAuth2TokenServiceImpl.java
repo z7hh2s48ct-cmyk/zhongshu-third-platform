@@ -132,6 +132,13 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         // 优先从 Redis 中获取
         OAuth2AccessTokenDO accessTokenDO = oauth2AccessTokenRedisDAO.get(accessToken);
         if (accessTokenDO != null) {
+            // ZS-LOGIN-001（codex P1 修复）：门控关闭时，拒绝此前兼容期（gate=true）由 convertToAccessToken
+            // 缓存进 Redis 的「合成访问令牌」（accessToken==refreshToken），并自愈清除该污染条目——否则它会在此
+            // Redis 命中处提前 return、绕过下方门控，在 gate 关闭后仍被 checkAccessToken 放行至刷新令牌 TTL（default client 达 30 天）。
+            if (!refreshTokenAsAccessTokenEnabled && isSyntheticAccessToken(accessTokenDO)) {
+                oauth2AccessTokenRedisDAO.delete(accessToken);
+                return null;
+            }
             return accessTokenDO;
         }
 
@@ -239,6 +246,16 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         TenantUtils.execute(refreshTokenDO.getTenantId(),
                         () -> accessTokenDO.setUserInfo(buildUserInfo(refreshTokenDO.getUserId(), refreshTokenDO.getUserType())));
         return accessTokenDO;
+    }
+
+    /**
+     * ZS-LOGIN-001：判断是否为「由刷新令牌转换而来的合成访问令牌」。
+     * <p>{@link #convertToAccessToken} 以 refreshToken 串同时充当 accessToken 与 refreshToken，故二者相等即合成令牌；
+     * 正常访问令牌的 accessToken 与 refreshToken 是两个独立生成的 UUID，不会相等。用于门控关闭时识别并拒绝缓存污染条目。
+     */
+    private static boolean isSyntheticAccessToken(OAuth2AccessTokenDO accessTokenDO) {
+        return StrUtil.isNotEmpty(accessTokenDO.getAccessToken())
+                && StrUtil.equals(accessTokenDO.getAccessToken(), accessTokenDO.getRefreshToken());
     }
 
     /**
