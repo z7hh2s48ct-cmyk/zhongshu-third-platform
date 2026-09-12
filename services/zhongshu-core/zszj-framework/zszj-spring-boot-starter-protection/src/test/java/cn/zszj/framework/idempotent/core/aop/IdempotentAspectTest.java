@@ -15,6 +15,7 @@ import cn.zszj.framework.idempotent.core.keyresolver.impl.DefaultIdempotentKeyRe
 import cn.zszj.framework.idempotent.core.redis.IdempotentRedisDAO;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.Signature;
@@ -44,6 +45,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -306,6 +308,36 @@ public class IdempotentAspectTest {
             // 钉死：真实解析器算出的 Key 与脱敏摘要确被用于 setIfAbsent
             verify(idempotentRedisDAO).setIfAbsent(eq(expectedKey), eq(argsDigest), eq(5L), eq(TimeUnit.SECONDS));
         }
+    }
+
+    @Test
+    public void testAroundPointCut_firstRequest_servletArgsExcludedFromDigest() throws Throwable {
+        // codex r0 P1 回归：@Idempotent 方法若含 servlet 基础设施入参（如 HttpServletResponse），
+        // 计算参数摘要时不得用 Jackson 序列化它——序列化会调用 getWriter()/getOutputStream() 等 getter，
+        // 提前「选定」响应输出模式，破坏后续二进制输出（如 ServletUtils.writeAttachment 附件下载抛 IllegalStateException），
+        // 且首次放行请求即触发（SEC-011.A 把 sanitizeArgs 从「仅拒绝分支」提升为「每请求必算摘要」）。
+        // 修复：摘要与拒绝日志的入参先排除 servlet/spring-web 对象（与 StrUtils.joinMethodArgs 既有排除口径一致）。
+        Idempotent idempotent = mock(Idempotent.class);
+        doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
+        when(idempotent.timeout()).thenReturn(5);
+        when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.proceed()).thenReturn("OK");
+        HttpServletResponse response = mock(HttpServletResponse.class);
+        Object businessArg = "orderPayload";
+        // 入参含 servlet 响应对象 + 业务参数
+        when(joinPoint.getArgs()).thenReturn(new Object[]{businessArg, response});
+        when(idempotentRedisDAO.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(true);
+
+        Object result = idempotentAspect.aroundPointCut(joinPoint, idempotent);
+        assertEquals("OK", result);
+
+        // 摘要应仅由「排除 servlet 对象后」的业务入参计算——含 servlet 的口径与此不同（RED），排除后一致（GREEN）
+        String expectedDigestExcludingServlet = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(new Object[]{businessArg}));
+        verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(expectedDigestExcludingServlet), eq(5L), eq(TimeUnit.SECONDS));
+        // 钉死：绝不因序列化触碰 servlet 响应的 writer / 输出流（避免响应被提前选定 writer，破坏后续附件等二进制输出）
+        verify(response, never()).getWriter();
+        verify(response, never()).getOutputStream();
     }
 
     // ========== Helper methods ==========

@@ -15,6 +15,7 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.util.Assert;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -73,7 +74,10 @@ public class IdempotentAspect {
         // ZS-SEC-011.A：计算参数摘要，用于同键异参冲突检测
         // IMP-6：摘要输入改为「脱敏后」入参，避免未脱敏原文（含密码/令牌）MD5 后落 Redis value 被离线爆破（SEC-007 在 Redis 侧的对称缺口）；
         //        敏感字段差异被视为同参，对幂等语义无害
-        String argsDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
+        // codex r0 P1：摘要「每请求必算」（含首次放行），须先经 serializableArgs 排除 servlet/spring-web 基础设施入参——
+        //        LogSanitizeUtils 内部用 Jackson valueToTree 序列化会调用全部 getter，对 HttpServletResponse 触发 getWriter()，
+        //        提前选定响应字符输出模式，破坏后续 ServletUtils.writeAttachment 等二进制输出（抛 IllegalStateException）
+        String argsDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(serializableArgs(joinPoint.getArgs())));
 
         // 1. 锁定 Key（携带参数摘要）
         // MIN-2：DAO 返回 Boolean，pipeline/transaction 场景可能返回 null，用 Boolean.TRUE.equals 防拆箱 NPE（null 视为未拿到锁 → 拒绝，fail-closed）
@@ -94,10 +98,10 @@ public class IdempotentAspect {
             // MIN-4：冲突通常是客户端 bug/探测（尤其 Expression 解析器下可能跨租户撞键），用 warn 提升安全信号；重复是常态（如双击），用 info
             if (conflict) {
                 log.warn("[aroundPointCut][方法({}) 参数({}) 同键异参冲突]",
-                        joinPoint.getSignature(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
+                        joinPoint.getSignature(), LogSanitizeUtils.sanitizeArgs(serializableArgs(joinPoint.getArgs())));
             } else {
                 log.info("[aroundPointCut][方法({}) 参数({}) 同键同参重复]",
-                        joinPoint.getSignature(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
+                        joinPoint.getSignature(), LogSanitizeUtils.sanitizeArgs(serializableArgs(joinPoint.getArgs())));
             }
             String msg = conflict ? CONFLICT_MESSAGE : idempotent.message();
             throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), msg);
@@ -114,6 +118,39 @@ public class IdempotentAspect {
             }
             throw throwable;
         }
+    }
+
+    /**
+     * 排除无法安全序列化的入参（servlet / spring-web 基础设施对象），再交给 {@link LogSanitizeUtils#sanitizeArgs} 计算摘要 / 脱敏日志。
+     *
+     * 背景（codex r0 P1）：SEC-011.A 把参数摘要从「仅拒绝分支」提升为「每请求必算」（含首次放行）。
+     * {@link LogSanitizeUtils} 内部用 Jackson {@code valueToTree} 序列化入参，会调用对象全部 getter；
+     * 对 {@code HttpServletResponse}（Tomcat ResponseFacade）会触发 {@code getWriter()}，提前选定响应字符输出模式，
+     * 导致后续 {@code ServletUtils.writeAttachment} 等二进制输出抛 {@link IllegalStateException}。
+     *
+     * 排除口径与 {@link cn.zszj.framework.common.util.string.StrUtils#joinMethodArgs} 保持一致
+     * （默认 Key 解析器早已按此排除 servlet 对象，此处对齐摘要 / 日志路径，避免同一批入参两条口径不一致）。
+     *
+     * @param args 原始方法入参
+     * @return 剔除 servlet / spring-web 对象后的入参（保持原有相对顺序，null 元素保留）
+     */
+    private static Object[] serializableArgs(Object[] args) {
+        if (args == null || args.length == 0) {
+            return args;
+        }
+        List<Object> kept = new ArrayList<>(args.length);
+        for (Object arg : args) {
+            if (arg == null) {
+                kept.add(null);
+                continue;
+            }
+            String clazzName = arg.getClass().getName();
+            if (StrUtil.startWithAny(clazzName, "javax.servlet", "jakarta.servlet", "org.springframework.web")) {
+                continue;
+            }
+            kept.add(arg);
+        }
+        return kept.toArray();
     }
 
 }
