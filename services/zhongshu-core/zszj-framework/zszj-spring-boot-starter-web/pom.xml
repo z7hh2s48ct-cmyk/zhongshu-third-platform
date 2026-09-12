@@ -76,6 +76,11 @@
             <artifactId>mockito-inline</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-monitor</artifactId>
+            <scope>test</scope> <!-- ZS-SEC-006：TraceFilterTest 需要 TraceFilter 类 -->
+        </dependency>
     </dependencies>
 
 </project>
