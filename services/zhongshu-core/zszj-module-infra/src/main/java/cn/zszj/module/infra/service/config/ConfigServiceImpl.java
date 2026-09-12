@@ -61,6 +61,13 @@ public class ConfigServiceImpl implements ConfigService {
             throw exception(CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE);
         }
 
+        // ZS-CFG-001.B P1 修复：脱敏往返保护——敏感项详情/分页/导出输出被掩码为 ******，前端 ConfigForm.vue
+        // 仅编辑名称/备注后会把掩码原样回传；若直接持久化会用掩码覆盖库中真实秘密值（如 system.user.init-password），
+        // 造成数据损坏。故提交值为掩码哨兵且库中项为敏感级时保留原值（管理员改真值时提交新值、非哨兵，不受影响）。
+        if (sensitiveClassifier.isMaskedEcho(exists, updateObj.getValue())) {
+            updateObj.setValue(exists.getValue());
+        }
+
         configMapper.updateById(updateObj);
     }
 
