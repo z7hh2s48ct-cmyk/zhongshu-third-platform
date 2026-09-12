@@ -35,6 +35,9 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
     @Spy
     private ConfigSensitiveClassifier sensitiveClassifier = new ConfigSensitiveClassifier();
 
+    @Mock
+    private ConfigValueValidator configValueValidator;
+
     @InjectMocks
     private ConfigServiceImpl configService;
 
@@ -105,11 +108,12 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setVisible(false);
         when(configMapper.selectById(1L))
                 .thenReturn(config("system.user.init-password", "RealInitPwd123", false));
+        when(configMapper.update(any(), any())).thenReturn(1);
 
         configService.updateConfig(req);
 
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
-        verify(configMapper).updateById(captor.capture());
+        verify(configMapper).update(captor.capture(), any());
         assertEquals("RealInitPwd123", captor.getValue().getValue(),
                 "敏感项回传掩码 ****** 时必须保留库中真实值，不得用掩码覆盖（数据损坏回归）");
     }
@@ -124,11 +128,12 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setValue("NewP@ssw0rd");
         req.setVisible(false);
         when(configMapper.selectById(2L)).thenReturn(config("sys.db.password", "OldPwd", false));
+        when(configMapper.update(any(), any())).thenReturn(1);
 
         configService.updateConfig(req);
 
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
-        verify(configMapper).updateById(captor.capture());
+        verify(configMapper).update(captor.capture(), any());
         assertEquals("NewP@ssw0rd", captor.getValue().getValue(), "敏感项提交非掩码新值时应正常更新");
     }
 
@@ -142,11 +147,12 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setValue("******");
         req.setVisible(true);
         when(configMapper.selectById(3L)).thenReturn(config("biz.banner.text", "old", true));
+        when(configMapper.update(any(), any())).thenReturn(1);
 
         configService.updateConfig(req);
 
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
-        verify(configMapper).updateById(captor.capture());
+        verify(configMapper).update(captor.capture(), any());
         assertEquals("******", captor.getValue().getValue(), "普通项字面 ****** 应原样持久化，不做往返保护");
     }
 
@@ -168,7 +174,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(req));
         assertEquals(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO.getCode(), ex.getCode(),
                 "改名脱密（SECRET→SENSITIVE）且回传掩码保留真值时必须被拒绝，否则秘密可被两步洗白暴露");
-        verify(configMapper, never()).updateById(any(ConfigDO.class));
+        verify(configMapper, never()).update(any(ConfigDO.class), any());
     }
 
     @Test
@@ -187,7 +193,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(req));
         assertEquals(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO.getCode(), ex.getCode(),
                 "SENSITIVE→NORMAL 且回传掩码保留真值时必须被拒绝，否则敏感值被暴露");
-        verify(configMapper, never()).updateById(any(ConfigDO.class));
+        verify(configMapper, never()).update(any(ConfigDO.class), any());
     }
 
 }

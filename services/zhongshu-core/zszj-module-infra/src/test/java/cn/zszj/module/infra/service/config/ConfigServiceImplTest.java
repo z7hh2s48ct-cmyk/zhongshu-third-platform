@@ -25,7 +25,7 @@ import static cn.zszj.framework.test.core.util.RandomUtils.*;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class})
+@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class, ConfigValueValidator.class})
 public class ConfigServiceImplTest extends BaseDbUnitTest {
 
     @Resource

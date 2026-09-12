@@ -8,12 +8,14 @@ import cn.zszj.module.infra.convert.config.ConfigConvert;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
 import cn.zszj.module.infra.dal.mysql.config.ConfigMapper;
 import cn.zszj.module.infra.enums.config.ConfigTypeEnum;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.google.common.annotations.VisibleForTesting;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -33,10 +35,16 @@ public class ConfigServiceImpl implements ConfigService {
     @Resource
     private ConfigSensitiveClassifier sensitiveClassifier;
 
+    @Resource
+    private ConfigValueValidator configValueValidator;
+
     @Override
     public Long createConfig(ConfigSaveReqVO createReqVO) {
         // 校验参数配置 key 的唯一性
         validateConfigKeyUnique(null, createReqVO.getKey());
+
+        // ZS-CFG-004 B03：值校验——按参数目录合同校验类型/范围/枚举
+        configValueValidator.validate(createReqVO.getKey(), createReqVO.getValue());
 
         // 插入参数配置
         ConfigDO config = ConfigConvert.INSTANCE.convert(createReqVO);
@@ -74,7 +82,21 @@ public class ConfigServiceImpl implements ConfigService {
             updateObj.setValue(exists.getValue());
         }
 
-        configMapper.updateById(updateObj);
+        // ZS-CFG-004 B03：值校验——按参数目录合同校验类型/范围/枚举（掩码回显保留原值后不重复校验）
+        if (!sensitiveClassifier.isMaskedEcho(exists, updateReqVO.getValue())) {
+            configValueValidator.validate(updateReqVO.getKey(), updateObj.getValue());
+        }
+
+        // ZS-CFG-004 B03：乐观锁——条件更新防并发冲突（复用 update_time 作为版本标识）
+        LocalDateTime snapshotTime = exists.getUpdateTime();
+        updateObj.setUpdateTime(LocalDateTime.now());
+        int affected = configMapper.update(updateObj,
+                new LambdaQueryWrapper<ConfigDO>()
+                        .eq(ConfigDO::getId, updateObj.getId())
+                        .eq(ConfigDO::getUpdateTime, snapshotTime));
+        if (affected == 0) {
+            throw exception(CONFIG_UPDATE_CONFLICT);
+        }
     }
 
     @Override
