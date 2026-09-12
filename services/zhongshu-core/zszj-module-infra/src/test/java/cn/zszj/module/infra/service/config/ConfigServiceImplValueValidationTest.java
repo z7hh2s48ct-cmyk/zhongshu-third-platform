@@ -8,6 +8,7 @@ import cn.zszj.module.infra.dal.mysql.config.ConfigMapper;
 import cn.zszj.module.infra.enums.config.ConfigTypeEnum;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
@@ -16,6 +17,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * ZS-CFG-004 B03：配置值校验测试。
@@ -72,6 +76,40 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         assertEquals(CONFIG_VALUE_TYPE_MISMATCH.getCode(), ex.getCode());
 
         assertNull(configMapper.selectByKey("system.user.register-enabled"));
+    }
+
+    // ---------- ZS-CFG-004 codex r0 P2-2：Boolean 只接受规范化小写值，对齐消费方 ----------
+
+    @Test
+    void createConfig_booleanUpperCase_shouldRejectToAlignWithConsumer() {
+        // 消费方 AdminUserServiceImpl.registerUser() 仅当存储串严格等于小写 "true" 才启用注册。
+        // 若放行 "TRUE" 并原样持久化，被接受的布尔真值反而会静默关闭注册，故须拒绝非规范化拼写。
+        ConfigSaveReqVO reqVO = buildCreateReqVO("system.user.register-enabled", "TRUE");
+
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.createConfig(reqVO));
+        assertEquals(CONFIG_VALUE_TYPE_MISMATCH.getCode(), ex.getCode());
+
+        assertNull(configMapper.selectByKey("system.user.register-enabled"), "非规范布尔拼写不得落库");
+    }
+
+    @Test
+    void createConfig_booleanMixedCase_shouldRejectToAlignWithConsumer() {
+        // 混合大小写 "True" 同样非规范，须拒绝
+        ConfigSaveReqVO reqVO = buildCreateReqVO("system.user.register-enabled", "True");
+
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.createConfig(reqVO));
+        assertEquals(CONFIG_VALUE_TYPE_MISMATCH.getCode(), ex.getCode());
+
+        assertNull(configMapper.selectByKey("system.user.register-enabled"), "非规范布尔拼写不得落库");
+    }
+
+    @Test
+    void createConfig_booleanCanonicalLowerCaseFalse_shouldSucceed() {
+        // 规范化小写 false 仍应放行
+        ConfigSaveReqVO reqVO = buildCreateReqVO("system.user.register-enabled", "false");
+        Long id = configService.createConfig(reqVO);
+        assertNotNull(id);
+        assertEquals("false", configMapper.selectById(id).getValue());
     }
 
     @Test
@@ -229,7 +267,26 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         Long configId = dbConfig.getId();
 
         int threadCount = 2;
-        CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        // ZS-CFG-004 codex r0 P2-3 修复：原 barrier 只同步 worker 启动，未同步其数据库快照读——
+        // 一个 worker 可能在另一个读取行之前就完成更新，使两次更新各自基于最新 update_time 合法成功，
+        // 从而令"恰好一个成功"断言 flaky（内存 H2 下 200 次约 30 次失败）。改为在【两个快照读之后、
+        // 任一写之前】同步：拦截 selectById，读取真实快照后抵达 barrier，确保两 worker 读到同一
+        // update_time 版本后才进入条件 UPDATE，令乐观锁冲突（affected==0 → CONFIG_UPDATE_CONFLICT）确定性发生。
+        CyclicBarrier snapshotBarrier = new CyclicBarrier(threadCount);
+        ConfigMapper synchronizedMapper = mock(ConfigMapper.class, delegatesTo(configMapper));
+        when(synchronizedMapper.selectById(configId)).thenAnswer(inv -> {
+            ConfigDO snapshot = configMapper.selectById(configId); // 真实 H2 快照读
+            snapshotBarrier.await(5, TimeUnit.SECONDS);            // 两个快照读齐后再放行任一写
+            return snapshot;
+        });
+
+        // 绕开 Spring CGLIB 代理（@Validated），用裸实例注入"委托真实 H2 mapper 的桩 + 真实分类器/校验器"，
+        // 使乐观锁条件 UPDATE 仍打在真实 H2 上（保留乐观锁语义验证），仅在快照读处插入 barrier。
+        ConfigServiceImpl bareService = new ConfigServiceImpl();
+        ReflectionTestUtils.setField(bareService, "configMapper", synchronizedMapper);
+        ReflectionTestUtils.setField(bareService, "sensitiveClassifier", new ConfigSensitiveClassifier());
+        ReflectionTestUtils.setField(bareService, "configValueValidator", configValueValidator);
+
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger conflictCount = new AtomicInteger(0);
         CountDownLatch done = new CountDownLatch(threadCount);
@@ -238,7 +295,6 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
             final int newVal = i + 6; // 6, 7 都是合法值 [1,10]
             new Thread(() -> {
                 try {
-                    barrier.await(5, TimeUnit.SECONDS);
                     ConfigSaveReqVO reqVO = new ConfigSaveReqVO();
                     reqVO.setId(configId);
                     reqVO.setKey("sys.login.captcha-max-retry");
@@ -246,7 +302,7 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
                     reqVO.setCategory("test");
                     reqVO.setName("captcha retry");
                     reqVO.setVisible(true);
-                    configService.updateConfig(reqVO);
+                    bareService.updateConfig(reqVO);
                     successCount.incrementAndGet();
                 } catch (ServiceException e) {
                     if (CONFIG_UPDATE_CONFLICT.getCode().equals(e.getCode())) {
@@ -298,6 +354,58 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
 
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqVO));
         assertEquals(CONFIG_VALUE_NOT_IN_ALLOWED_SET.getCode(), ex.getCode());
+    }
+
+    // ========== 7. codex r0 P2-1：改 key 时按【目标 key】契约校验被掩码保留的值 ==========
+
+    @Test
+    void updateConfig_renameToRegisteredKeyWithMask_retainedValueViolatesTargetContract_shouldReject() {
+        // 攻击路径复现：库中有一条【未登记、不可见】行，值为越界的 "99"（visible=false → SENSITIVE，输出被掩码）。
+        // 攻击者把它改名为受控 key sys.login.captcha-max-retry（合同 INTEGER [1,10]），提交掩码 ****** 并保留 visible=false。
+        // 脱敏往返保护会保留旧值 "99"，但改名后该值须按【目标 key】契约校验——否则越界值 99 会随改名进入运行。
+        ConfigDO dbConfig = buildConfigDO("custom.hidden-unregistered", "99", false);
+        configMapper.insert(dbConfig);
+        Long id = dbConfig.getId();
+
+        ConfigSaveReqVO reqVO = new ConfigSaveReqVO();
+        reqVO.setId(id);
+        reqVO.setKey("sys.login.captcha-max-retry"); // 改名为受控 key
+        reqVO.setValue("******");                    // 回显掩码 → 触发保留旧值 "99"
+        reqVO.setCategory("test");
+        reqVO.setName("captcha retry");
+        reqVO.setVisible(false);                     // 保留不可见，避免触发降级/翻可见守卫
+
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqVO),
+                "改名后保留的越界旧值必须按目标 key 契约校验并拒绝");
+        assertEquals(CONFIG_VALUE_OUT_OF_RANGE.getCode(), ex.getCode());
+
+        // 断言未落库：库中仍是原 key、原值
+        ConfigDO after = configMapper.selectById(id);
+        assertEquals("custom.hidden-unregistered", after.getConfigKey());
+        assertEquals("99", after.getValue());
+        assertNull(configMapper.selectByKey("sys.login.captcha-max-retry"), "越界值不得以目标 key 落库");
+    }
+
+    @Test
+    void updateConfig_renameToRegisteredKeyWithMask_retainedValueSatisfiesTargetContract_shouldSucceed() {
+        // 护栏：改名后保留的旧值若符合目标 key 契约，应正常放行（不因新增校验误伤合法改名）
+        ConfigDO dbConfig = buildConfigDO("custom.hidden-unregistered", "5", false);
+        configMapper.insert(dbConfig);
+        Long id = dbConfig.getId();
+
+        ConfigSaveReqVO reqVO = new ConfigSaveReqVO();
+        reqVO.setId(id);
+        reqVO.setKey("sys.login.captcha-max-retry"); // 目标 key 合同 [1,10]
+        reqVO.setValue("******");                    // 保留旧值 "5"，落在 [1,10] 内
+        reqVO.setCategory("test");
+        reqVO.setName("captcha retry");
+        reqVO.setVisible(false);
+
+        configService.updateConfig(reqVO);
+
+        ConfigDO after = configMapper.selectById(id);
+        assertEquals("sys.login.captcha-max-retry", after.getConfigKey());
+        assertEquals("5", after.getValue());
     }
 
     // ========== 辅助方法 ==========

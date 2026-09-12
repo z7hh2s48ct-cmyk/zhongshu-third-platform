@@ -17,6 +17,7 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
@@ -72,7 +73,8 @@ public class ConfigServiceImpl implements ConfigService {
         // ZS-CFG-001.B r0 P1 修复：脱敏往返保护——敏感项详情/分页/导出输出被掩码为 ******，前端 ConfigForm.vue
         // 仅编辑名称/备注后会把掩码原样回传；若直接持久化会用掩码覆盖库中真实秘密值（如 system.user.init-password），
         // 造成数据损坏。故提交值为掩码哨兵且库中项为敏感级时保留原值（管理员改真值时提交新值、非哨兵，不受影响）。
-        if (sensitiveClassifier.isMaskedEcho(exists, updateObj.getValue())) {
+        boolean maskedEcho = sensitiveClassifier.isMaskedEcho(exists, updateObj.getValue());
+        if (maskedEcho) {
             // ZS-CFG-001.B r1 P1 修复：回传掩码=调用方不掌握真值，禁止在同一更新里下调该值保护级，否则可两步洗密
             // （SECRET 改名脱密降 SENSITIVE → 翻 visible 降 NORMAL）后经 /get-value-by-key 与详情读出明文；现有
             // TOCTOU 守卫只拦 SECRET→visible，拦不住改名降级链，故此处补齐。
@@ -82,8 +84,13 @@ public class ConfigServiceImpl implements ConfigService {
             updateObj.setValue(exists.getValue());
         }
 
-        // ZS-CFG-004 B03：值校验——按参数目录合同校验类型/范围/枚举（掩码回显保留原值后不重复校验）
-        if (!sensitiveClassifier.isMaskedEcho(exists, updateReqVO.getValue())) {
+        // ZS-CFG-004 B03：值校验——按参数目录合同校验类型/范围/枚举。
+        // 掩码回显且 key 未变时保留原值、不重复校验（原值此前已按其自身 key 校验过）。
+        // ZS-CFG-004 codex r0 P2-1 修复：一旦 key 发生变化，被恢复/保留的值须按【目标 key】的合同重新校验，
+        // 堵住"把未登记、不可见行（如 value=99）改名为受控 key（如 sys.login.captcha-max-retry，[1,10]）+
+        // 提交掩码 ****** 保留越界旧值"从而绕过校验、令非法值进入运行的旁路（违背 CFG-004"非法值不进入运行"验收）。
+        boolean keyChanged = !Objects.equals(exists.getConfigKey(), updateReqVO.getKey());
+        if (!maskedEcho || keyChanged) {
             configValueValidator.validate(updateReqVO.getKey(), updateObj.getValue());
         }
 

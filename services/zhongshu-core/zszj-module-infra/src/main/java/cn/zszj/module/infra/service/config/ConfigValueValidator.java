@@ -14,7 +14,7 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
  * <p>只对已登记参数做强校验，未登记参数维持既有行为（渐进式）。校验规则：</p>
  * <ul>
  *   <li>INTEGER：值必须可解析为整数且在 [minInt, maxInt] 范围内</li>
- *   <li>BOOLEAN：值必须为 "true" 或 "false"（忽略大小写）</li>
+ *   <li>BOOLEAN：值必须为规范化小写的 "true" 或 "false"（严格小写，见 {@link #validateBoolean}）</li>
  *   <li>ENUM：值必须在 allowedValues 集合中</li>
  *   <li>STRING：无格式约束（仅登记存在性/敏感性/热生效标注）</li>
  * </ul>
@@ -68,8 +68,17 @@ public class ConfigValueValidator {
         }
     }
 
+    /**
+     * ZS-CFG-004 codex r0 P2-2 修复：Boolean 校验只接受【规范化小写】值，与消费方对齐。
+     *
+     * <p>消费方 {@code AdminUserServiceImpl.registerUser()} 判定注册开关时使用
+     * {@code ObjUtil.notEqual(configValue, "true")}——仅当存储串严格等于小写 {@code "true"} 才启用注册。
+     * 若此处按 {@code equalsIgnoreCase} 放行 {@code "TRUE"}/{@code "True"} 并原样持久化，则被校验接受的
+     * 布尔真值反而会因拼写不匹配而【静默关闭】注册（校验通过 ≠ 消费方按预期解析）。故收紧为严格小写，
+     * 保证"校验通过 ⇒ 存储串即为消费方识别的规范值"的契约对齐；非规范拼写返回类型不匹配错误，提示调用方归一化。</p>
+     */
     private void validateBoolean(ConfigParamCatalog catalog, String value) {
-        if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+        if (!"true".equals(value) && !"false".equals(value)) {
             throw exception(CONFIG_VALUE_TYPE_MISMATCH, "BOOLEAN");
         }
     }
