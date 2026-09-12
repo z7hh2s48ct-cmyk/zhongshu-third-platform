@@ -77,6 +77,22 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     @Setter // 为了单测：开启或者关闭验证码
     private Boolean captchaEnable;
 
+    // ========== ZS-LOGIN-004：登录方式门控 ==========
+    // 一期只获准「账号密码」这一种技术登录方式；其余入口默认关闭，须经配置显式开启。
+    // 门控落在 Service 层而非 Controller，故绕过 HTTP 直调 Service 同样被拒。
+
+    @Value("${zszj.security.login-mode.sms-enabled:false}")
+    private Boolean smsLoginEnabled;
+
+    @Value("${zszj.security.login-mode.social-enabled:false}")
+    private Boolean socialLoginEnabled;
+
+    @Value("${zszj.security.login-mode.register-enabled:false}")
+    private Boolean registerEnabled;
+
+    @Value("${zszj.security.login-mode.reset-password-enabled:false}")
+    private Boolean resetPasswordEnabled;
+
     @Override
     public AdminUserDO authenticate(String username, String password) {
         final LoginLogTypeEnum logTypeEnum = LoginLogTypeEnum.LOGIN_USERNAME;
@@ -115,6 +131,10 @@ public class AdminAuthServiceImpl implements AdminAuthService {
 
     @Override
     public void sendSmsCode(AuthSmsSendReqVO reqVO) {
+        // ZS-LOGIN-004：登录方式门控——必须排在图形验证码校验之前，
+        // 否则未获准入口仍会消耗图形验证码资源，并把「入口已关闭」误报成「验证码错误」
+        assertSendSmsCodeModeEnabled(reqVO.getScene());
+
         // 如果是重置密码场景，需要校验图形验证码是否正确
         if (Objects.equals(SmsSceneEnum.ADMIN_MEMBER_RESET_PASSWORD.getScene(), reqVO.getScene())) {
             ResponseModel response = doValidateCaptcha(reqVO);
@@ -133,6 +153,8 @@ public class AdminAuthServiceImpl implements AdminAuthService {
 
     @Override
     public AuthLoginRespVO smsLogin(AuthSmsLoginReqVO reqVO) {
+        // ZS-LOGIN-004：登录方式门控
+        assertLoginModeEnabled(smsLoginEnabled, "短信登录");
         // 校验验证码
         smsCodeApi.useSmsCode(AuthConvert.INSTANCE.convert(reqVO, SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene(), getClientIP()));
 
@@ -167,6 +189,8 @@ public class AdminAuthServiceImpl implements AdminAuthService {
 
     @Override
     public AuthLoginRespVO socialLogin(AuthSocialLoginReqVO reqVO) {
+        // ZS-LOGIN-004：登录方式门控
+        assertLoginModeEnabled(socialLoginEnabled, "社交登录");
         // 使用 code 授权码，进行登录。然后，获得到绑定的用户编号
         SocialUserRespDTO socialUser = socialUserService.getSocialUserByCode(UserTypeEnum.ADMIN.getValue(), reqVO.getType(),
                 reqVO.getCode(), reqVO.getState());
@@ -272,8 +296,35 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         return UserTypeEnum.ADMIN;
     }
 
+    // ========== ZS-LOGIN-004：登录方式门控 ==========
+
+    /**
+     * 断言指定登录方式已获准开启；未开启则拒绝，且不产生任何副作用。
+     */
+    private void assertLoginModeEnabled(Boolean enabled, String modeName) {
+        if (!Boolean.TRUE.equals(enabled)) {
+            throw exception(AUTH_LOGIN_MODE_DISABLED, modeName);
+        }
+    }
+
+    /**
+     * 按短信场景映射到对应的登录方式门控。
+     * <p>未映射到的场景（非登录/注册/重置密码类）不做门控，避免误伤既有业务短信。
+     */
+    private void assertSendSmsCodeModeEnabled(Integer scene) {
+        if (Objects.equals(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene(), scene)) {
+            assertLoginModeEnabled(smsLoginEnabled, "短信登录");
+        } else if (Objects.equals(SmsSceneEnum.ADMIN_MEMBER_RESET_PASSWORD.getScene(), scene)) {
+            assertLoginModeEnabled(resetPasswordEnabled, "重置密码");
+        } else if (Objects.equals(SmsSceneEnum.ADMIN_MEMBER_REGISTER.getScene(), scene)) {
+            assertLoginModeEnabled(registerEnabled, "自助注册");
+        }
+    }
+
     @Override
     public AuthLoginRespVO register(AuthRegisterReqVO registerReqVO) {
+        // ZS-LOGIN-004：登录方式门控
+        assertLoginModeEnabled(registerEnabled, "自助注册");
         // 1. 校验验证码
         validateCaptcha(registerReqVO);
 
@@ -296,6 +347,8 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void resetPassword(AuthResetPasswordReqVO reqVO) {
+        // ZS-LOGIN-004：登录方式门控
+        assertLoginModeEnabled(resetPasswordEnabled, "重置密码");
         AdminUserDO userByMobile = userService.getUserByMobile(reqVO.getMobile());
         if (userByMobile == null) {
             throw exception(USER_MOBILE_NOT_EXISTS);

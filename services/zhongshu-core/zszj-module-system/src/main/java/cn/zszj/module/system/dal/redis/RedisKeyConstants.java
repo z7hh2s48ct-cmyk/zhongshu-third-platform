@@ -90,6 +90,29 @@ public interface RedisKeyConstants {
     String OAUTH2_ACCESS_SESSION_GENERATION = "oauth2_access_session_generation:%s";
 
     /**
+     * ZS-LOGIN-004：短信验证码校验失败次数（暴力破解防护）
+     * <p>
+     * KEY 格式：sms_code_validate_attempts:{mobile}:{scene}
+     * VALUE 数据类型：String 计数（Long）
+     * <p>
+     * 用途：按「手机号 + 场景」累计「验证码不匹配」的尝试次数，超过阈值后在锁定期内<b>直接拒绝、连 DB 都不再查询</b>，
+     * 杜绝枚举探测。TTL 即锁定时长且只在首次计数时设定（自第一次错误尝试起算，攻击者无法靠持续试错无限延长锁定），
+     * 到期由 Redis 自动解锁；客户端无任何途径主动重置该计数。
+     */
+    String SMS_CODE_VALIDATE_ATTEMPTS = "sms_code_validate_attempts:%s:%s";
+
+    /**
+     * ZS-LOGIN-004：每 IP 短信发送计数（频控）
+     * <p>
+     * KEY 格式：sms_code_send_ip_count:{ip}:{h|d}:{时间桶}
+     * VALUE 数据类型：String 计数（Long）
+     * <p>
+     * 用途：封堵「同一 IP 轮换手机号」绕过按手机号维度频控的短信喷洒攻击。时间桶按小时（yyyyMMddHH）/ 按天（yyyyMMdd）
+     * 滚动，TTL 略大于桶宽以自然归零。刻意存 Redis 而非新增 DB 列，避免 Flyway 迁移。
+     */
+    String SMS_CODE_SEND_IP_COUNT = "sms_code_send_ip_count:%s:%s:%s";
+
+    /**
      * 站内信模版的缓存
      * <p>
      * KEY 格式：notify_template:{code}

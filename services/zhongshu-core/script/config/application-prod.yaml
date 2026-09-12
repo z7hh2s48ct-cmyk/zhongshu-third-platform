@@ -48,6 +48,20 @@ spring.boot.admin.client.enabled: false
 zszj:
   security:
     mock-enable: false # 部署环境显式禁用模拟认证旁路（框架默认即为 false，此处显式声明防误配）
+    # ZS-LOGIN-004：登录方式门控——一期只获准「账号密码」，其余入口默认关闭，须经环境变量显式开启
+    login-mode:
+      sms-enabled: ${ZSZJ_LOGIN_MODE_SMS_ENABLED:false}
+      social-enabled: ${ZSZJ_LOGIN_MODE_SOCIAL_ENABLED:false}
+      register-enabled: ${ZSZJ_LOGIN_MODE_REGISTER_ENABLED:false}
+      reset-password-enabled: ${ZSZJ_LOGIN_MODE_RESET_PASSWORD_ENABLED:false}
+  # ZS-LOGIN-004：验证码取值域与安全参数——生产必须为足够大的随机区间，严禁固定演示码 9999
+  sms-code:
+    begin-code: ${ZSZJ_SMS_CODE_BEGIN:1000}
+    end-code: ${ZSZJ_SMS_CODE_END:9999}
+    max-validate-attempts: ${ZSZJ_SMS_MAX_VALIDATE_ATTEMPTS:5}
+    attempt-lock-duration: ${ZSZJ_SMS_ATTEMPT_LOCK_DURATION:10m}
+    send-maximum-quantity-per-ip-per-hour: ${ZSZJ_SMS_SEND_MAX_PER_IP_HOUR:20}
+    send-maximum-quantity-per-ip-per-day: ${ZSZJ_SMS_SEND_MAX_PER_IP_DAY:50}
 
 --- #################### 定时任务（ZS-ENG-006 边界） ####################
 

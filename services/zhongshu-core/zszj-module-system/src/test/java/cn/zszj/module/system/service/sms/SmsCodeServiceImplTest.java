@@ -7,6 +7,7 @@ import cn.zszj.module.system.api.sms.dto.code.SmsCodeUseReqDTO;
 import cn.zszj.module.system.api.sms.dto.code.SmsCodeValidateReqDTO;
 import cn.zszj.module.system.dal.dataobject.sms.SmsCodeDO;
 import cn.zszj.module.system.dal.mysql.sms.SmsCodeMapper;
+import cn.zszj.module.system.dal.redis.sms.SmsCodeSecurityRedisDAO;
 import cn.zszj.module.system.enums.sms.SmsSceneEnum;
 import cn.zszj.module.system.framework.sms.config.SmsCodeProperties;
 import jakarta.annotation.Resource;
@@ -24,6 +25,7 @@ import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceExceptio
 import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
@@ -42,6 +44,10 @@ public class SmsCodeServiceImplTest extends BaseDbUnitTest {
     private SmsCodeProperties smsCodeProperties;
     @MockitoBean
     private SmsSendService smsSendService;
+    // ZS-LOGIN-004：验证码安全计数器（尝试次数 / 每 IP 频控）。本类只关注验证码自身的生成与校验语义，
+    // 故以 Mock 提供；Mock 默认返回 0 计数，等价于「未触达任何上限」，不影响本类既有断言。
+    @MockitoBean
+    private SmsCodeSecurityRedisDAO smsCodeSecurityRedisDAO;
 
     @BeforeEach
     public void setUp() {
@@ -50,6 +56,15 @@ public class SmsCodeServiceImplTest extends BaseDbUnitTest {
         when(smsCodeProperties.getSendMaximumQuantityPerDay()).thenReturn(10);
         when(smsCodeProperties.getBeginCode()).thenReturn(9999);
         when(smsCodeProperties.getEndCode()).thenReturn(9999);
+        // ZS-LOGIN-004：新增配置项打桩。Mock 默认返回 null，须显式给出，否则限制失效 / NPE
+        when(smsCodeProperties.getMaxValidateAttempts()).thenReturn(SmsCodeProperties.DEFAULT_MAX_VALIDATE_ATTEMPTS);
+        when(smsCodeProperties.getAttemptLockDuration()).thenReturn(SmsCodeProperties.DEFAULT_ATTEMPT_LOCK_DURATION);
+        when(smsCodeProperties.getSendMaximumQuantityPerIpPerHour())
+                .thenReturn(SmsCodeProperties.DEFAULT_SEND_MAXIMUM_QUANTITY_PER_IP_PER_HOUR);
+        when(smsCodeProperties.getSendMaximumQuantityPerIpPerDay())
+                .thenReturn(SmsCodeProperties.DEFAULT_SEND_MAXIMUM_QUANTITY_PER_IP_PER_DAY);
+        // ZS-LOGIN-004：声明验证码通道就绪。本类不触达真实短信通道（smsSendService 本身即 Mock）
+        when(smsSendService.isTemplateSendable(anyString())).thenReturn(true);
     }
 
     @Test
