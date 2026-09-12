@@ -12,6 +12,8 @@ import cn.zszj.module.system.api.sms.dto.code.SmsCodeValidateReqDTO;
 import cn.zszj.module.system.dal.dataobject.sms.SmsCodeDO;
 import cn.zszj.module.system.dal.mysql.sms.SmsCodeMapper;
 import cn.zszj.module.system.dal.redis.sms.SmsCodeSecurityRedisDAO;
+import cn.zszj.module.system.dal.redis.sms.SmsCodeSecurityRedisDAO.IpQuotaReservation;
+import cn.zszj.module.system.dal.redis.sms.SmsCodeSecurityRedisDAO.ValidateAttemptReservation;
 import cn.zszj.module.system.enums.sms.SmsSceneEnum;
 import cn.zszj.module.system.framework.sms.config.SmsCodeProperties;
 import jakarta.servlet.http.HttpServletRequest;
@@ -68,15 +70,15 @@ public class SmsCodeServiceImpl implements SmsCodeService {
         String quotaIp = resolveQuotaIp(reqDTO);
         // ZS-LOGIN-004 P2-D：在持久化与派发「之前」原子地检查并预留小时桶 + 天桶两个配额，
         // 取代原「先读两桶判上限、建码发短信后再各自 INCR 且不检查结果」的非原子流程（并发下同 IP 对不同 mobile 会超发）。
-        boolean reserved = false;
+        // r1(桶边界)：预留返回 IpQuotaReservation，携带本次预留的确切桶键；失败回滚时释放的是这些确切键而非「当前桶」。
+        IpQuotaReservation quotaReservation = null;
         if (StrUtil.isNotBlank(quotaIp)) {
-            long quota = smsCodeSecurityRedisDAO.reserveIpSendQuota(quotaIp,
+            quotaReservation = smsCodeSecurityRedisDAO.reserveIpSendQuota(quotaIp,
                     nullToZero(smsCodeProperties.getSendMaximumQuantityPerIpPerHour()),
                     nullToZero(smsCodeProperties.getSendMaximumQuantityPerIpPerDay()));
-            if (quota < 0) {
+            if (quotaReservation != null && quotaReservation.isRejected()) {
                 throw exception(SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_IP);
             }
-            reserved = true;
         }
         try {
             // 创建验证码
@@ -85,10 +87,9 @@ public class SmsCodeServiceImpl implements SmsCodeService {
             smsSendService.sendSingleSms(reqDTO.getMobile(), null, null,
                     sceneEnum.getTemplateCode(), MapUtil.of("code", code));
         } catch (RuntimeException ex) {
-            // ZS-LOGIN-004 P2-D：建码或派发失败 → 释放已预留的配额，被拒/失败的请求不占用配额
-            if (reserved) {
-                smsCodeSecurityRedisDAO.releaseIpSendQuota(quotaIp);
-            }
+            // ZS-LOGIN-004 P2-D：建码或派发失败 → 释放已预留的配额，被拒/失败的请求不占用配额。
+            // r1：释放凭预留句柄携带的确切桶键，避免跨桶边界误减新桶 / 造出无 TTL 负计数。
+            smsCodeSecurityRedisDAO.releaseIpSendQuota(quotaReservation);
             throw ex;
         }
     }
@@ -173,7 +174,8 @@ public class SmsCodeServiceImpl implements SmsCodeService {
         if (consumed == 0) {
             throw exception(SMS_CODE_USED);
         }
-        // ZS-LOGIN-004：成功消费后清零失败尝试计数，合法用户不会因历史误输被越锁越死
+        // ZS-LOGIN-004：成功消费后清零失败尝试计数，合法用户不会因历史误输被越锁越死。
+        // r1：reset 删除整个计数 Hash（含全部预留 token），在途请求的 stale 释放因 token 消失而被跳过。
         smsCodeSecurityRedisDAO.resetValidateAttempts(reqDTO.getMobile(), reqDTO.getScene());
     }
 
@@ -187,17 +189,24 @@ public class SmsCodeServiceImpl implements SmsCodeService {
         // check-then-act——并发下多个猜测都会在任何失败自增前读到低于上限的计数而全部抵达 DB。
         Integer maxAttempts = smsCodeProperties.getMaxValidateAttempts();
         Duration lockDuration = smsCodeProperties.getAttemptLockDuration();
-        long reserved = smsCodeSecurityRedisDAO.reserveValidateAttempt(mobile, scene,
+        ValidateAttemptReservation reservation = smsCodeSecurityRedisDAO.reserveValidateAttempt(mobile, scene,
                 maxAttempts == null ? 0 : maxAttempts, lockDuration);
-        if (reserved < 0) {
+        if (reservation != null && reservation.isRejected()) {
             // 已达上限：锁定期内直接拒绝（连正确的验证码也一并拒绝，否则锁定形同虚设），且不改动计数
             long lockSeconds = lockDuration == null ? 0L : lockDuration.getSeconds();
             throw exception(SMS_CODE_EXCEED_ATTEMPT_LIMIT, lockSeconds);
         }
-        // reserved == 0 表示未启用限制（放行且不计数）；reserved >= 1 表示已原子预留一个校验名额
-        boolean reservedSlot = reserved >= 1;
+        // reservation == null（Mock/未预留）或 isReservedSlot()==false（未启用限制）时，后续释放将被 DAO 静默跳过。
         // 校验验证码
-        SmsCodeDO lastSmsCode = smsCodeMapper.selectLastByMobile(mobile, code, scene);
+        SmsCodeDO lastSmsCode;
+        try {
+            lastSmsCode = smsCodeMapper.selectLastByMobile(mobile, code, scene);
+        } catch (RuntimeException ex) {
+            // ZS-LOGIN-004 r1(P2/DB 异常)：查询抛异常（DB 连接/超时）并非「确认的码不匹配」——此刻无法判定用户是否输错，
+            // 必须释放刚预留的名额，否则用户用正确码重试若干次即耗尽上限、DB 恢复后仍被锁死。释放后原样抛出异常。
+            smsCodeSecurityRedisDAO.releaseValidateAttempt(reservation);
+            throw ex;
+        }
         // 若验证码不存在，抛出异常
         if (lastSmsCode == null) {
             // ZS-LOGIN-004：「码不匹配 / 错场景」属于暴力尝试信号——已预留的名额即为本次失败计数，保留不释放
@@ -207,24 +216,18 @@ public class SmsCodeServiceImpl implements SmsCodeService {
         if (LocalDateTimeUtil.between(lastSmsCode.getCreateTime(), LocalDateTime.now()).toMillis()
                 >= smsCodeProperties.getExpireTimes().toMillis()) { // 验证码已过期
             // ZS-LOGIN-004：过期不是攻击信号（合法用户手慢而已），释放预留名额、不计入失败尝试
-            releaseSlotIfReserved(reservedSlot, mobile, scene);
+            smsCodeSecurityRedisDAO.releaseValidateAttempt(reservation);
             throw exception(SMS_CODE_EXPIRED);
         }
         // 判断验证码是否已被使用
         if (Boolean.TRUE.equals(lastSmsCode.getUsed())) {
             // ZS-LOGIN-004：已使用不是攻击信号（并发消费 / 重复提交），释放预留名额、不计入失败尝试
-            releaseSlotIfReserved(reservedSlot, mobile, scene);
+            smsCodeSecurityRedisDAO.releaseValidateAttempt(reservation);
             throw exception(SMS_CODE_USED);
         }
         // 校验通过：成功不是失败信号，释放预留名额（合法用户不会因正常校验被计数）
-        releaseSlotIfReserved(reservedSlot, mobile, scene);
+        smsCodeSecurityRedisDAO.releaseValidateAttempt(reservation);
         return lastSmsCode;
-    }
-
-    private void releaseSlotIfReserved(boolean reservedSlot, String mobile, Integer scene) {
-        if (reservedSlot) {
-            smsCodeSecurityRedisDAO.releaseValidateAttempt(mobile, scene);
-        }
     }
 
 }
