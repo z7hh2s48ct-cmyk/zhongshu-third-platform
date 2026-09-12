@@ -35,7 +35,6 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,6 +46,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -326,8 +327,9 @@ public class IdempotentAspectTest {
         when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
         when(joinPoint.proceed()).thenReturn("OK");
-        // 具体容器响应（非接口 mock）：模拟 Tomcat ResponseFacade 的「非 servlet 包名 + servlet 类型」运行时特征
-        HttpServletResponse response = new ContainerLikeResponse();
+        // 具体容器响应的 spy（非纯接口 mock）：ContainerLikeResponse 运行时类名落业务包 cn.zszj 下（不以 servlet 包名开头），
+        // 精确复现 Tomcat ResponseFacade 的「非 servlet 包名 + servlet 类型」特征；用 spy 以便 verify 摘要计算是否触碰 writer/输出流
+        HttpServletResponse response = spy(new ContainerLikeResponse());
         Object businessArg = "orderPayload";
         // 入参含 servlet 响应对象 + 业务参数
         when(joinPoint.getArgs()).thenReturn(new Object[]{businessArg, response});
@@ -339,11 +341,12 @@ public class IdempotentAspectTest {
         // C1：摘要应仅由「排除 servlet 对象后」的业务入参计算——含 servlet 的口径与此不同（RED），排除后一致（GREEN）
         String expectedDigestExcludingServlet = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(new Object[]{businessArg}));
         verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(expectedDigestExcludingServlet), eq(5L), eq(TimeUnit.SECONDS));
-        // C2：端到端复现生产症状——摘要计算后业务仍能安全走二进制输出。若摘要序列化提前调用了 getWriter()
-        //（前缀漏排 Tomcat 式实现时会发生），MockHttpServletResponse 置 usingWriter，此处 getOutputStream() 将抛
-        // IllegalStateException（正是 ServletUtils.writeAttachment 的生产故障）；类型排除生效后 response 未被触碰，故不抛。
-        assertDoesNotThrow(response::getOutputStream,
-                "摘要计算不得提前选定 response 的 writer，否则后续二进制输出（writeAttachment）会抛 IllegalStateException");
+        // C2（codex r2 P2 修正）：直接钉死摘要计算绝不触碰响应的 writer/输出流。
+        // Spring 6.2 的 MockHttpServletResponse 中 getWriter()/getOutputStream() 访问标志相互独立（不互斥抛异常），
+        // 故不能靠「getOutputStream 是否抛异常」间接判定；改用 spy + verify(never) 直接检测 getter 是否被调用。
+        // 类型排除生效后 response 未进入 sanitizeArgs → Jackson 从不序列化它 → getWriter/getOutputStream 从未被调用。
+        verify(response, never()).getWriter();
+        verify(response, never()).getOutputStream();
     }
 
     // ========== Helper methods ==========
