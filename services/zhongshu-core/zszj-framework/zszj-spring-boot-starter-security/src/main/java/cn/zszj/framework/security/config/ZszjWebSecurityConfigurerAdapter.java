@@ -108,15 +108,24 @@ public class ZszjWebSecurityConfigurerAdapter {
      */
     @Bean
     protected SecurityFilterChain filterChain(HttpSecurity httpSecurity) throws Exception {
+        // ZS-SEC-004：frameOptions 改为按配置（默认 SAMEORIGIN 防点击劫持），不再机械全关
+        String frameOptions = webProperties.getCors().getFrameOptions();
         // 登出
         httpSecurity
                 // 开启跨域
                 .cors(Customizer.withDefaults())
-                // CSRF 禁用，因为不使用 Session
+                // CSRF 禁用：采用 STATELESS + Token（Authorization 头）模型，非 Cookie Session，无 CSRF 攻击面
                 .csrf(AbstractHttpConfigurer::disable)
                 // 基于 token 机制，所以不需要 Session
                 .sessionManagement(c -> c.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .headers(c -> c.frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
+                // frameOptions 可配置：默认 SAMEORIGIN 防点击劫持，仅当显式配置 DISABLE 时才关闭
+                .headers(c -> {
+                    if ("DISABLE".equalsIgnoreCase(frameOptions)) {
+                        c.frameOptions(HeadersConfigurer.FrameOptionsConfig::disable);
+                    } else {
+                        c.frameOptions(f -> f.sameOrigin());
+                    }
+                })
                 // 一堆自定义的 Spring Security 处理器
                 .exceptionHandling(c -> c.authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler));

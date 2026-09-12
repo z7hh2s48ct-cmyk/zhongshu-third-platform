@@ -11,6 +11,9 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @ConfigurationProperties(prefix = "zszj.web")
 @Validated
 @Data
@@ -30,6 +33,10 @@ public class WebProperties {
     @NotNull(message = "请求体限制不能为空")
     @Valid
     private RequestBody requestBody = new RequestBody();
+
+    @NotNull(message = "CORS 配置不能为空")
+    @Valid
+    private Cors cors = new Cors();
 
     @Data
     @AllArgsConstructor
@@ -79,6 +86,55 @@ public class WebProperties {
          * 上传 / 流式接口非 JSON，已被 CacheRequestBodyFilter#shouldNotFilter 排除，不受此限影响。
          */
         private long maxCacheSize = 1024 * 1024L;
+
+    }
+
+    /**
+     * 浏览器跨域（CORS）与点击劫持防护配置。
+     *
+     * ZS-SEC-004：由原先的全通配（{@code allowedOriginPattern=*} + {@code allowCredentials=true}）收紧为精确白名单，
+     * 消除“任意源携带凭据”的安全缺陷；同时将 frameOptions 由机械全关改为可配置（默认 SAMEORIGIN 防点击劫持）。
+     */
+    @Data
+    public static class Cors {
+
+        /**
+         * 允许的源模式白名单（精确，禁止裸 * 与 credentials 并存）。默认仅本地开发源。
+         */
+        private List<String> allowedOriginPatterns = new ArrayList<>(List.of(
+                "http://localhost:*", "http://127.0.0.1:*"));
+
+        /**
+         * 允许的方法。
+         */
+        private List<String> allowedMethods = new ArrayList<>(List.of(
+                "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
+
+        /**
+         * 允许的请求头（含租户头 tenant-id）。
+         */
+        private List<String> allowedHeaders = new ArrayList<>(List.of(
+                "Authorization", "Content-Type", "X-Requested-With", "tenant-id"));
+
+        /**
+         * 暴露给浏览器的响应头（ZS-SEC-006 trace-id 关联）。
+         */
+        private List<String> exposedHeaders = new ArrayList<>(List.of("trace-id"));
+
+        /**
+         * 是否携带凭据。精确源白名单下可为 true。
+         */
+        private boolean allowCredentials = true;
+
+        /**
+         * 预检缓存秒数。
+         */
+        private long maxAge = 3600L;
+
+        /**
+         * frame-options：默认 SAMEORIGIN 防点击劫持；需嵌入时显式改 DISABLE。
+         */
+        private String frameOptions = "SAMEORIGIN";
 
     }
 

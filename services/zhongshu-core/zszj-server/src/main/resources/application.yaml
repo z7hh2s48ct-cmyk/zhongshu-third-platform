@@ -279,6 +279,12 @@ zszj:
   web:
     admin-ui:
       url: http://dashboard.zszj.local # Admin 管理后台 UI 的地址
+    cors: # ZS-SEC-004：跨域收紧为精确白名单，禁止裸 * 与凭据并存；生产/预发的真实前端域名在环境验收时按 env 覆盖
+      allowed-origin-patterns:
+        - "http://localhost:*"
+        - "http://127.0.0.1:*"
+      allow-credentials: true
+      frame-options: SAMEORIGIN # 默认防点击劫持；确需被 iframe 嵌入时显式改为 DISABLE
   xss:
     enable: false
     exclude-urls: # 如下两个 url，仅仅是为了演示，去掉配置也没关系
