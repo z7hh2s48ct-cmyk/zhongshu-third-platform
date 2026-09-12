@@ -450,7 +450,10 @@ public class AdminUserServiceImpl implements AdminUserService {
      */
     @VisibleForTesting
     void validateUserNotDeptLeader(Long id) {
-        if (deptMapper.selectCountByLeaderUserId(id) > 0) {
+        // 关闭数据权限，避免调用者数据范围外的部门（该用户担任负责人）被过滤掉，
+        // 导致负责人引用保护漏判、删除用户后 DeptDO.leaderUserId 悬空；租户过滤仍保留
+        Long leaderDeptCount = DataPermissionUtils.executeIgnore(() -> deptMapper.selectCountByLeaderUserId(id));
+        if (leaderDeptCount > 0) {
             throw exception(USER_IS_DEPT_LEADER);
         }
     }

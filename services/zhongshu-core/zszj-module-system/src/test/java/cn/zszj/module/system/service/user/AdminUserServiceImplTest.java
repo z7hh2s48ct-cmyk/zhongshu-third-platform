@@ -7,6 +7,8 @@ import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.collection.ArrayUtils;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
+import cn.zszj.framework.datapermission.core.annotation.DataPermission;
+import cn.zszj.framework.datapermission.core.aop.DataPermissionContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.infra.api.config.ConfigApi;
 import cn.zszj.module.infra.api.file.FileApi;
@@ -38,10 +40,12 @@ import org.mockito.stubbing.Answer;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static cn.hutool.core.util.RandomUtil.randomEle;
@@ -366,6 +370,33 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         assertNotNull(userMapper.selectById(dbUser2.getId()));
         // 校验未触发用户关联数据的清理
         verify(permissionService, never()).processUserDeleted(any());
+    }
+
+    @Test
+    public void testValidateUserNotDeptLeader_ignoresDataPermission() {
+        // 回归 codex ZS-IAM-003 P2：负责人引用计数必须在“忽略数据权限”作用域内执行。
+        // DataPermissionConfiguration 将 DeptDO.id 注册为数据权限列，若计数受调用者数据范围过滤，
+        // 则“用户在可见部门 A、却担任范围外部门 B 的负责人”时，B 被过滤 -> 计数漏判 -> 删除放行 -> B.leaderUserId 悬空。
+        // 说明：BaseDbUnitTest 未装配数据权限拦截器，无法在 H2 里真复现范围过滤，
+        // 故此处直接断言计数查询发生在 DataPermissionUtils.executeIgnore 作用域内（等价于对范围过滤免疫）。
+        AdminUserServiceImpl targetService = new AdminUserServiceImpl();
+        DeptMapper mockDeptMapper = mock(DeptMapper.class);
+        AtomicBoolean dataPermissionDisabled = new AtomicBoolean(false);
+        when(mockDeptMapper.selectCountByLeaderUserId(anyLong())).thenAnswer(invocation -> {
+            DataPermission dataPermission = DataPermissionContextHolder.get();
+            dataPermissionDisabled.set(dataPermission != null && !dataPermission.enable());
+            return 0L;
+        });
+        ReflectionTestUtils.setField(targetService, "deptMapper", mockDeptMapper);
+
+        // 调用
+        targetService.validateUserNotDeptLeader(1L);
+
+        // 断言：负责人引用计数在忽略数据权限的作用域内执行
+        assertTrue(dataPermissionDisabled.get(),
+                "负责人引用计数应在 DataPermissionUtils.executeIgnore 作用域内执行，避免被调用者数据权限过滤");
+        // 清理数据权限上下文，避免污染其它用例
+        DataPermissionContextHolder.clear();
     }
 
     @Test
