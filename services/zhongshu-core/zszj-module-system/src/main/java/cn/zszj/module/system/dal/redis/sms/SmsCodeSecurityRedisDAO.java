@@ -57,6 +57,20 @@ import static cn.zszj.module.system.dal.redis.RedisKeyConstants.SMS_CODE_VALIDAT
  *         预留时写入唯一 token、释放时 {@code HDEL} 命中该 token 才 DECR；{@code reset}/TTL 过期会连同 token 一起清除，
  *         故 stale 释放（token 已不存在）无法再从重建后的新计数器扣减。单键 Hash → 天然 Cluster 安全。</li>
  * </ul>
+ * <p>
+ * ZS-LOGIN-004 codex r3 修复（r2 格式变更的<b>数据迁移/滚动部署兼容</b>，惰性读穿迁移保留计数与剩余 TTL）：
+ * <ul>
+ *     <li>P1(校验尝试 string→Hash)：升级到含既有计数器的环境时，未改名的
+ *         {@code sms_code_validate_attempts:<mobile>:<scene>} 键仍是旧实现写入的 <b>string</b>，
+ *         r1 的 Hash 命令对其抛 {@code WRONGTYPE} → 连正确码校验都失败直到旧计数器过期。
+ *         现在所有触及该键的 Lua 脚本前置 {@link #LUA_MIGRATE_LEGACY_ATTEMPT_STRING} 惰性迁移：
+ *         旧 string 值搬进 Hash 字段 {@code c} 并以 {@code PTTL/PEXPIRE} 保留剩余 TTL；无旧格式数据时是 no-op；</li>
+ *     <li>P2(IP 配额 未标记→hash-tag 桶)：r1 给桶键加 {@code {...}} hash tag 后，活跃窗口内部署会抛弃
+ *         旧未标记键下的计数——已耗尽配额的 IP 立即获得满额。现在 {@link #reserveIpSendQuota} 执行两键脚本前
+ *         经 {@link #migrateLegacyIpBucket} 把旧未标记桶惰性播种进新 hash-tag 桶（seed-if-absent 保幂等，
+ *         {@code PTTL/PEXPIRE} 保留剩余过期；旧新键在 Cluster 下可能异槽，故 Java 侧分步、不进两键脚本）；
+ *         常态仅一次快速 {@code GET(null)}，no-op。</li>
+ * </ul>
  *
  * @author ZS-LOGIN-004
  */
@@ -101,6 +115,55 @@ public class SmsCodeSecurityRedisDAO {
 
     // ========== ZS-LOGIN-004：原子 Lua 脚本 ==========
 
+    // ---- ZS-LOGIN-004 r3：旧格式数据惰性迁移片段/脚本 ----
+
+    /**
+     * ZS-LOGIN-004 r3(P1)：校验尝试计数「旧 string → Hash」惰性迁移片段（拼在触及该键的 Lua 脚本最前）。
+     * <p>KEYS[1]=计数键。旧实现（r1 之前）写入的是 string 计数器，新实现的 {@code HGET/HINCRBY/HDEL}
+     * 对其抛 {@code WRONGTYPE}。本片段仅在「键存在且 TYPE 为 string」时把旧值搬进 Hash 字段 {@code c}
+     * 并以 {@code PTTL/PEXPIRE} 保留剩余 TTL（锁定期仍自第一次错误尝试起算，不因迁移顺延）；
+     * 无旧格式数据（常态）时仅一次 {@code EXISTS} 判断，no-op。单键操作 → Cluster 安全。
+     * <p>兼容性说明：真实 Redis 的 {@code TYPE} 是状态回复，在 Lua 内为 {@code {ok='string'}} 表；
+     * 测试基座（jedis-mock）则直接返回 Lua 字符串，故先归一化再比较，两种形态都命中。
+     * <p>本片段将旧键剩余 TTL 捕获到脚本局部 {@code zsLegacyPttl}，供后续 {@code HINCRBY} 脚本（预留/自增）
+     * 在自增<b>之后</b>用 {@link #LUA_REAPPLY_MIGRATED_TTL} 重新回写：真实 Redis 的 {@code HINCRBY} 保留 TTL，
+     * 而测试基座会在 {@code HINCRBY} 时丢失 TTL，回写保证两种实现下迁移都保留剩余锁定时长（未迁移时为 0 → 跳过）。
+     */
+    private static final String LUA_MIGRATE_LEGACY_ATTEMPT_STRING =
+            "local zsLegacyPttl = 0 "
+          + "if redis.call('EXISTS', KEYS[1]) == 1 then "
+          + "  local t = redis.call('TYPE', KEYS[1]) "
+          + "  local tn = '' "
+          + "  if type(t) == 'table' then tn = t.ok "
+          + "  elseif type(t) == 'string' then tn = t end "
+          + "  if tn == 'string' then "
+          + "    local legacy = redis.call('GET', KEYS[1]) "
+          + "    local pttl = redis.call('PTTL', KEYS[1]) "
+          + "    redis.call('DEL', KEYS[1]) "
+          + "    if legacy and legacy ~= '' then "
+          + "      redis.call('HSET', KEYS[1], '" + ATTEMPT_COUNT_FIELD + "', legacy) "
+          + "      if pttl and pttl > 0 then zsLegacyPttl = pttl redis.call('PEXPIRE', KEYS[1], pttl) end "
+          + "    end "
+          + "  end "
+          + "end ";
+
+    /**
+     * ZS-LOGIN-004 r3(P1)：在 {@code HINCRBY} 之后重新回写迁移捕获的剩余 TTL（仅当发生过旧 string 迁移时）。
+     * <p>拼在预留/自增脚本 {@code return} 之前；未迁移时 {@code zsLegacyPttl==0} → no-op，常态无任何影响。
+     */
+    private static final String LUA_REAPPLY_MIGRATED_TTL =
+            "if zsLegacyPttl > 0 then redis.call('PEXPIRE', KEYS[1], zsLegacyPttl) end ";
+
+    /**
+     * ZS-LOGIN-004 r3(P1)：迁移前置 + 读取计数字段（供 {@link #getValidateAttempts} 使用）。
+     * <p>取代裸 {@code opsForHash().get}——后者对升级遗留的旧 string 计数器抛 {@code WRONGTYPE}。
+     * 返回迁移后的计数字段 {@code c}（字符串或 false/nil）；不存在时由调用方按 0 处理。单键 → Cluster 安全。
+     */
+    private static final RedisScript<String> SCRIPT_MIGRATE_AND_GET_ATTEMPTS = new DefaultRedisScript<>(
+            LUA_MIGRATE_LEGACY_ATTEMPT_STRING
+          + "return redis.call('HGET', KEYS[1], '" + ATTEMPT_COUNT_FIELD + "')",
+            String.class);
+
     /**
      * P2-E：自增并在「首次创建」时原子设定过期（String 计数，用于每 IP 发送桶）。
      * <p>KEYS[1]=计数键，ARGV[1]=TTL 毫秒（<=0 表示不设过期）。返回自增后的值。
@@ -121,9 +184,11 @@ public class SmsCodeSecurityRedisDAO {
      * <p>单键操作 → Redis Cluster 安全。
      */
     private static final RedisScript<Long> SCRIPT_HASH_INCREMENT_WITH_EXPIRE = new DefaultRedisScript<>(
-            "local ttl = tonumber(ARGV[1]) "
+            LUA_MIGRATE_LEGACY_ATTEMPT_STRING
+          + "local ttl = tonumber(ARGV[1]) "
           + "local n = redis.call('HINCRBY', KEYS[1], '" + ATTEMPT_COUNT_FIELD + "', 1) "
           + "if n == 1 and ttl > 0 then redis.call('PEXPIRE', KEYS[1], ttl) end "
+          + LUA_REAPPLY_MIGRATED_TTL
           + "return n",
             Long.class);
 
@@ -135,7 +200,8 @@ public class SmsCodeSecurityRedisDAO {
      * <p>r1：预留标记与计数同处<b>单个 Hash 键</b>，故本脚本仍为单键 → Cluster 安全；标记用于把释放与本次预留代际绑定。
      */
     private static final RedisScript<Long> SCRIPT_RESERVE_VALIDATE_ATTEMPT = new DefaultRedisScript<>(
-            "local maxAttempts = tonumber(ARGV[1]) "
+            LUA_MIGRATE_LEGACY_ATTEMPT_STRING
+          + "local maxAttempts = tonumber(ARGV[1]) "
           + "local ttl = tonumber(ARGV[2]) "
           + "local token = ARGV[3] "
           + "local current = redis.call('HGET', KEYS[1], '" + ATTEMPT_COUNT_FIELD + "') "
@@ -144,6 +210,7 @@ public class SmsCodeSecurityRedisDAO {
           + "local n = redis.call('HINCRBY', KEYS[1], '" + ATTEMPT_COUNT_FIELD + "', 1) "
           + "if n == 1 and ttl > 0 then redis.call('PEXPIRE', KEYS[1], ttl) end "
           + "redis.call('HSET', KEYS[1], '" + ATTEMPT_RESERVATION_FIELD_PREFIX + "' .. token, '1') "
+          + LUA_REAPPLY_MIGRATED_TTL
           + "return n",
             Long.class);
 
@@ -156,7 +223,8 @@ public class SmsCodeSecurityRedisDAO {
      * <p>单键操作 → Cluster 安全。
      */
     private static final RedisScript<Long> SCRIPT_RELEASE_VALIDATE_ATTEMPT = new DefaultRedisScript<>(
-            "local token = ARGV[1] "
+            LUA_MIGRATE_LEGACY_ATTEMPT_STRING
+          + "local token = ARGV[1] "
           + "if redis.call('HDEL', KEYS[1], '" + ATTEMPT_RESERVATION_FIELD_PREFIX + "' .. token) == 0 then return 0 end "
           + "local current = redis.call('HGET', KEYS[1], '" + ATTEMPT_COUNT_FIELD + "') "
           + "if not current then return 0 end "
@@ -208,6 +276,19 @@ public class SmsCodeSecurityRedisDAO {
           + "if d and tonumber(d) > 0 then "
           + "  local nd = redis.call('DECR', KEYS[2]) "
           + "  if nd <= 0 then redis.call('DEL', KEYS[2]) end "
+          + "end "
+          + "return 1",
+            Long.class);
+
+    /**
+     * ZS-LOGIN-004 r3(P2)：仅当新键不存在时播种旧值并保留剩余 TTL（seed-if-absent，供每 IP 配额桶惰性迁移使用）。
+     * <p>KEYS[1]=新 hash-tag 桶键，ARGV[1]=旧桶计数值，ARGV[2]=旧桶剩余 PTTL 毫秒（<=0 表示不设过期）。
+     * <p>「不存在才播种」保证滚动部署/并发迁移下幂等：不会覆盖新键上其它实例已累加的计数。单键 → Cluster 安全。
+     */
+    private static final RedisScript<Long> SCRIPT_SEED_IF_ABSENT = new DefaultRedisScript<>(
+            "if redis.call('EXISTS', KEYS[1]) == 0 then "
+          + "  redis.call('SET', KEYS[1], ARGV[1]) "
+          + "  if tonumber(ARGV[2]) > 0 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end "
           + "end "
           + "return 1",
             Long.class);
@@ -291,10 +372,13 @@ public class SmsCodeSecurityRedisDAO {
 
     /**
      * 获得当前失败尝试次数；不存在时返回 0。
+     * <p>ZS-LOGIN-004 r3(P1)：改走「迁移前置 + {@code HGET}」的 Lua 脚本（{@link #SCRIPT_MIGRATE_AND_GET_ATTEMPTS}），
+     * 不再用裸 {@code opsForHash().get}——后者对升级遗留的旧 string 计数器抛 {@code WRONGTYPE}。
      */
     public long getValidateAttempts(String mobile, Integer scene) {
-        Object value = stringRedisTemplate.opsForHash().get(formatValidateAttemptsKey(mobile, scene), ATTEMPT_COUNT_FIELD);
-        return parseCount(value == null ? null : value.toString());
+        String value = stringRedisTemplate.execute(SCRIPT_MIGRATE_AND_GET_ATTEMPTS,
+                Collections.singletonList(formatValidateAttemptsKey(mobile, scene)));
+        return parseCount(value);
     }
 
     /**
@@ -324,6 +408,9 @@ public class SmsCodeSecurityRedisDAO {
      * 的非原子流程——并发下多个请求都会通过校验、全部建码派发、超发配额。
      * <p>r1(桶边界)：返回的 {@link IpQuotaReservation} 携带本次预留的<b>确切桶键</b>（含时间桶后缀），
      * 释放须凭此对象，确保跨小时/午夜边界失败时回滚的是<b>预留时的桶</b>而非当前桶。
+     * <p>r3(P2 迁移)：执行两键脚本前对小时/天桶各做一次「旧未标记键 → 新 hash-tag 键」惰性播种
+     * （{@link #migrateLegacyIpBucket}），保留活跃桶计数与剩余过期——否则在活跃窗口内部署时，
+     * 键格式变更会抛弃旧键下计数，已耗尽配额的 IP 立即获得满额。无旧键时仅一次快速 GET(null)，no-op。
      *
      * @param ip        客户端 IP（配额维度键）
      * @param hourLimit 每小时上限；<=0 表示该维度不限制
@@ -332,9 +419,17 @@ public class SmsCodeSecurityRedisDAO {
      *         否则为放行，{@link IpQuotaReservation#getHourCount()} 为预留后的小时桶计数
      */
     public IpQuotaReservation reserveIpSendQuota(String ip, int hourLimit, int dayLimit) {
+        String hourBucket = currentHourBucket();
+        String dayBucket = currentDayBucket();
+        // r3(P2)：先把旧未标记桶的活跃计数惰性播种进新 hash-tag 桶（常态 no-op）。
+        // 旧/新键在 Cluster 下可能异槽，故必须 Java 侧分步迁移，不能并入下方两键脚本。
+        migrateLegacyIpBucket(formatLegacyIpSendCountKey(ip, BUCKET_TYPE_HOUR, hourBucket),
+                formatIpSendCountKey(ip, BUCKET_TYPE_HOUR, hourBucket));
+        migrateLegacyIpBucket(formatLegacyIpSendCountKey(ip, BUCKET_TYPE_DAY, dayBucket),
+                formatIpSendCountKey(ip, BUCKET_TYPE_DAY, dayBucket));
         List<String> keys = Arrays.asList(
-                formatIpSendCountKey(ip, BUCKET_TYPE_HOUR, currentHourBucket()),
-                formatIpSendCountKey(ip, BUCKET_TYPE_DAY, currentDayBucket()));
+                formatIpSendCountKey(ip, BUCKET_TYPE_HOUR, hourBucket),
+                formatIpSendCountKey(ip, BUCKET_TYPE_DAY, dayBucket));
         Long result = stringRedisTemplate.execute(SCRIPT_RESERVE_IP_QUOTA, keys,
                 String.valueOf(hourLimit), String.valueOf(dayLimit),
                 String.valueOf(HOUR_BUCKET_TTL.toMillis()), String.valueOf(DAY_BUCKET_TTL.toMillis()));
@@ -411,6 +506,37 @@ public class SmsCodeSecurityRedisDAO {
      */
     private static String formatIpSendCountKey(String ip, String bucketType, String bucket) {
         return String.format(SMS_CODE_SEND_IP_COUNT, "{" + ip + "}", bucketType, bucket);
+    }
+
+    /**
+     * ZS-LOGIN-004 r3(P2)：拼装 r1 之前的<b>旧未标记</b>每 IP 发送计数键（IP 不带 {@code {...}} hash tag），
+     * 仅用于惰性迁移时定位升级/滚动部署遗留的旧格式桶键。
+     */
+    private static String formatLegacyIpSendCountKey(String ip, String bucketType, String bucket) {
+        return String.format(SMS_CODE_SEND_IP_COUNT, ip, bucketType, bucket);
+    }
+
+    /**
+     * ZS-LOGIN-004 r3(P2)：把旧未标记 IP 桶键的活跃计数与剩余过期惰性播种进新 hash-tag 桶键。
+     * <p>旧键不存在（常态）时仅一次快速 {@code GET(null)} 即返回，no-op；存在时：
+     * <ol>
+     *     <li>读旧值与剩余 PTTL；</li>
+     *     <li>以 {@link #SCRIPT_SEED_IF_ABSENT} 播种新键（仅当新键不存在——滚动部署/并发下幂等，
+     *         不覆盖新实例已累加的计数；TTL>0 时以 PEXPIRE 保留剩余过期）；</li>
+     *     <li>best-effort 删除旧键（幂等；若旧实例在删除前又对其 INCR，该增量会随桶自然过期，
+     *         方向上只会少计不会放大配额）。</li>
+     * </ol>
+     * 旧/新键在 Cluster 下可能异槽，故必须 Java 侧分步，不能并入两键 Lua 脚本。
+     */
+    private void migrateLegacyIpBucket(String legacyKey, String newKey) {
+        String legacyValue = stringRedisTemplate.opsForValue().get(legacyKey);
+        if (legacyValue == null || legacyValue.isEmpty()) {
+            return;
+        }
+        Long legacyPttl = stringRedisTemplate.getExpire(legacyKey, TimeUnit.MILLISECONDS);
+        stringRedisTemplate.execute(SCRIPT_SEED_IF_ABSENT, Collections.singletonList(newKey),
+                legacyValue, String.valueOf(legacyPttl == null ? 0L : legacyPttl));
+        stringRedisTemplate.delete(legacyKey);
     }
 
     private static String currentHourBucket() {

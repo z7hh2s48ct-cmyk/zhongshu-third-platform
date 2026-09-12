@@ -93,22 +93,30 @@ public interface RedisKeyConstants {
      * ZS-LOGIN-004：短信验证码校验失败次数（暴力破解防护）
      * <p>
      * KEY 格式：sms_code_validate_attempts:{mobile}:{scene}
-     * VALUE 数据类型：String 计数（Long）
+     * VALUE 数据类型：Hash（字段 c=计数（Long），字段 r:&lt;token&gt;=预留标记，ZS-LOGIN-004 r1）
      * <p>
      * 用途：按「手机号 + 场景」累计「验证码不匹配」的尝试次数，超过阈值后在锁定期内<b>直接拒绝、连 DB 都不再查询</b>，
      * 杜绝枚举探测。TTL 即锁定时长且只在首次计数时设定（自第一次错误尝试起算，攻击者无法靠持续试错无限延长锁定），
      * 到期由 Redis 自动解锁；客户端无任何途径主动重置该计数。
+     * <p>
+     * 迁移（ZS-LOGIN-004 r3）：旧版本的 String 计数键在首次被读/写时<b>惰性迁移</b>为本 Hash 结构，
+     * 保留计数与剩余 TTL（锁定期不因迁移顺延），避免滚动部署/升级时新旧格式碰撞抛 WRONGTYPE。
      */
     String SMS_CODE_VALIDATE_ATTEMPTS = "sms_code_validate_attempts:%s:%s";
 
     /**
      * ZS-LOGIN-004：每 IP 短信发送计数（频控）
      * <p>
-     * KEY 格式：sms_code_send_ip_count:{ip}:{h|d}:{时间桶}
+     * KEY 格式：sms_code_send_ip_count:{ip}:{h|d}:{时间桶}（r1 起 ip 段带 {@code {...}} Cluster hash tag，
+     * 实际形如 sms_code_send_ip_count:{1.2.3.4}:h:2026091306，保证同一 IP 的小时/天桶键同槽）
      * VALUE 数据类型：String 计数（Long）
      * <p>
      * 用途：封堵「同一 IP 轮换手机号」绕过按手机号维度频控的短信喷洒攻击。时间桶按小时（yyyyMMddHH）/ 按天（yyyyMMdd）
      * 滚动，TTL 略大于桶宽以自然归零。刻意存 Redis 而非新增 DB 列，避免 Flyway 迁移。
+     * <p>
+     * 迁移（ZS-LOGIN-004 r3）：旧未标记键（IP 不带 {@code {...}}，r1 之前格式）的活跃桶计数在配额预留前
+     * <b>惰性播种</b>进新 hash-tag 键并保留剩余过期（seed-if-absent 保滚动部署幂等），
+     * 避免键格式变更抛弃计数、让已耗尽配额的 IP 重新获得满额。
      */
     String SMS_CODE_SEND_IP_COUNT = "sms_code_send_ip_count:%s:%s:%s";
 

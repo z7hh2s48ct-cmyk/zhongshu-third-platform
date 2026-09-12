@@ -5,6 +5,7 @@ import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -80,8 +82,13 @@ public class SmsCodeSecurityRedisDaoClusterSlotTest extends BaseDbAndRedisUnitTe
     public void reserveIpQuotaScript_passesTwoKeysInSameSlot() {
         // 准备：Mock 模板，捕获 reserveIpSendQuota 传给 Lua 脚本的 KEYS
         StringRedisTemplate template = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+        // r3：配额预留前对旧未标记桶做惰性迁移探测（mock 下 GET 返回 null → 迁移 no-op，不产生播种脚本）
+        when(template.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get(anyString())).thenReturn(null);
         List<List<String>> captured = new ArrayList<>();
         // reserve IP 配额脚本固定传 4 个 ARGV（小时上限/天上限/小时TTL/天TTL），故用 4 个 vararg 匹配器精确拦截
+        // （r3 新增的 seed-if-absent 迁移脚本为 2 个 ARGV，不会被本匹配器捕获）
         when(template.execute(any(RedisScript.class), anyList(), any(), any(), any(), any())).thenAnswer(invocation -> {
             captured.add((List<String>) invocation.getArgument(1));
             return 1L;
