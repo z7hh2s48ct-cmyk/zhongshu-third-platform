@@ -359,7 +359,7 @@ public class GlobalExceptionHandler {
             // 执行插入 errorLog
             apiErrorLogApi.createApiErrorLogAsync(errorLog);
         } catch (Throwable th) {
-            log.error("[createExceptionLog][url({}) traceId({}) 写入错误日志失败]", req.getRequestURI(), TracerUtils.getTraceId(), th);
+            log.error("[createExceptionLog][url({}) traceId({}) 写入错误日志失败]", req.getRequestURI(), TracerUtils.getCorrelationId(req), th);
         }
     }
 
@@ -380,7 +380,7 @@ public class GlobalExceptionHandler {
         errorLog.setExceptionMethodName(stackTraceElement.getMethodName());
         errorLog.setExceptionLineNumber(stackTraceElement.getLineNumber());
         // 设置其它字段
-        errorLog.setTraceId(TracerUtils.getTraceId());
+        errorLog.setTraceId(TracerUtils.getCorrelationId(request));
         errorLog.setApplicationName(applicationName);
         errorLog.setRequestUrl(request.getRequestURI());
         Map<String, Object> requestParams = MapUtil.<String, Object>builder()

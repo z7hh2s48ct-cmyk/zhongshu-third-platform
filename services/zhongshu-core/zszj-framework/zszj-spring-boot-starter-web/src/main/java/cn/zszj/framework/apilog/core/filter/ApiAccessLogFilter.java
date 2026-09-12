@@ -87,7 +87,7 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
             }
             apiAccessLogApi.createApiAccessLogAsync(accessLog);
         } catch (Throwable th) {
-            log.error("[createApiAccessLog][url({}) traceId({}) 写入访问日志失败]", request.getRequestURI(), TracerUtils.getTraceId(), th);
+            log.error("[createApiAccessLog][url({}) traceId({}) 写入访问日志失败]", request.getRequestURI(), TracerUtils.getCorrelationId(request), th);
         }
     }
 
@@ -117,7 +117,7 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
             accessLog.setResultCode(GlobalErrorCodeConstants.SUCCESS.getCode()).setResultMsg("");
         }
         // 设置请求字段
-        accessLog.setTraceId(TracerUtils.getTraceId()).setApplicationName(applicationName)
+        accessLog.setTraceId(TracerUtils.getCorrelationId(request)).setApplicationName(applicationName)
                 .setRequestUrl(request.getRequestURI()).setRequestMethod(request.getMethod())
                 .setUserAgent(ServletUtils.getUserAgent(request)).setUserIp(ServletUtils.getClientIP(request));
         String[] sanitizeKeys = accessLogAnnotation != null ? accessLogAnnotation.sanitizeKeys() : null;
