@@ -1,9 +1,11 @@
 package cn.zszj.module.system.service.sms;
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.LocalDateTimeUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.common.util.servlet.ServletUtils;
 import cn.zszj.module.system.api.sms.dto.code.SmsCodeSendReqDTO;
 import cn.zszj.module.system.api.sms.dto.code.SmsCodeUseReqDTO;
 import cn.zszj.module.system.api.sms.dto.code.SmsCodeValidateReqDTO;
@@ -12,12 +14,14 @@ import cn.zszj.module.system.dal.mysql.sms.SmsCodeMapper;
 import cn.zszj.module.system.dal.redis.sms.SmsCodeSecurityRedisDAO;
 import cn.zszj.module.system.enums.sms.SmsSceneEnum;
 import cn.zszj.module.system.framework.sms.config.SmsCodeProperties;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.annotation.Resource;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static cn.hutool.core.util.RandomUtil.randomInt;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -32,6 +36,11 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
 @Service
 @Validated
 public class SmsCodeServiceImpl implements SmsCodeService {
+
+    /**
+     * ZS-LOGIN-004 P1：X-Forwarded-For 头名（仅在直连 peer 命中可信代理白名单时才被采信）。
+     */
+    private static final String HEADER_X_FORWARDED_FOR = "X-Forwarded-For";
 
     @Resource
     private SmsCodeProperties smsCodeProperties;
@@ -53,37 +62,80 @@ public class SmsCodeServiceImpl implements SmsCodeService {
         if (!smsSendService.isTemplateSendable(sceneEnum.getTemplateCode())) {
             throw exception(SMS_CODE_SEND_CHANNEL_NOT_READY);
         }
-        // ZS-LOGIN-004：每 IP 发送频控（封堵「同一 IP 轮换手机号」的短信喷洒）
+        // ZS-LOGIN-004 P1：配额 IP 采用「可信代理感知」解析——默认不信任 X-Forwarded-For、直连回退 peer address，
+        // 使「每 IP 发送配额」默认不可被伪造 XFF 绕过；createIp 仍原样保留用于落库审计（不改框架级 ServletUtils.getClientIP）。
         String createIp = reqDTO.getCreateIp();
-        if (StrUtil.isNotBlank(createIp)) {
-            validateIpSendLimit(createIp);
+        String quotaIp = resolveQuotaIp(reqDTO);
+        // ZS-LOGIN-004 P2-D：在持久化与派发「之前」原子地检查并预留小时桶 + 天桶两个配额，
+        // 取代原「先读两桶判上限、建码发短信后再各自 INCR 且不检查结果」的非原子流程（并发下同 IP 对不同 mobile 会超发）。
+        boolean reserved = false;
+        if (StrUtil.isNotBlank(quotaIp)) {
+            long quota = smsCodeSecurityRedisDAO.reserveIpSendQuota(quotaIp,
+                    nullToZero(smsCodeProperties.getSendMaximumQuantityPerIpPerHour()),
+                    nullToZero(smsCodeProperties.getSendMaximumQuantityPerIpPerDay()));
+            if (quota < 0) {
+                throw exception(SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_IP);
+            }
+            reserved = true;
         }
-        // 创建验证码
-        String code = createSmsCode(reqDTO.getMobile(), reqDTO.getScene(), createIp);
-        // ZS-LOGIN-004：创建成功后才累加 IP 计数，被拒的请求不占用配额
-        if (StrUtil.isNotBlank(createIp)) {
-            smsCodeSecurityRedisDAO.increaseIpSendCountPerHour(createIp);
-            smsCodeSecurityRedisDAO.increaseIpSendCountPerDay(createIp);
+        try {
+            // 创建验证码
+            String code = createSmsCode(reqDTO.getMobile(), reqDTO.getScene(), createIp);
+            // 发送验证码
+            smsSendService.sendSingleSms(reqDTO.getMobile(), null, null,
+                    sceneEnum.getTemplateCode(), MapUtil.of("code", code));
+        } catch (RuntimeException ex) {
+            // ZS-LOGIN-004 P2-D：建码或派发失败 → 释放已预留的配额，被拒/失败的请求不占用配额
+            if (reserved) {
+                smsCodeSecurityRedisDAO.releaseIpSendQuota(quotaIp);
+            }
+            throw ex;
         }
-        // 发送验证码
-        smsSendService.sendSingleSms(reqDTO.getMobile(), null, null,
-                sceneEnum.getTemplateCode(), MapUtil.of("code", code));
     }
 
     /**
-     * ZS-LOGIN-004：校验每 IP 发送频控（小时桶 + 天桶）。
+     * ZS-LOGIN-004 P1：解析用于「每 IP 发送配额」的客户端地址。
+     * <p>安全默认（secure by default）：<b>不信任 X-Forwarded-For</b>，直接使用不可被调用者伪造的
+     * peer address（{@code request.getRemoteAddr()}）；仅当 peer 命中
+     * {@link SmsCodeProperties#getTrustedProxies() 可信代理白名单} 时，才采信 XFF 派生的客户端地址。
+     * <p>无 HTTP 请求上下文时（内部任务 / 非 Web 入口 / 单测直调）退回调用方提供的 {@code createIp}。
+     * <p>本方法是 SMS 配额范围内的<b>局部</b>加固，<b>不</b>修改框架级共享的 {@code ServletUtils.getClientIP()}；
+     * 框架级 clientIP 的全局可信代理加固归口 ZS-SEC-011.B。
      */
-    private void validateIpSendLimit(String ip) {
-        Integer hourLimit = smsCodeProperties.getSendMaximumQuantityPerIpPerHour();
-        if (hourLimit != null && hourLimit > 0
-                && smsCodeSecurityRedisDAO.getIpSendCountPerHour(ip) >= hourLimit) {
-            throw exception(SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_IP);
+    private String resolveQuotaIp(SmsCodeSendReqDTO reqDTO) {
+        HttpServletRequest request = ServletUtils.getRequest();
+        if (request == null) {
+            return reqDTO.getCreateIp();
         }
-        Integer dayLimit = smsCodeProperties.getSendMaximumQuantityPerIpPerDay();
-        if (dayLimit != null && dayLimit > 0
-                && smsCodeSecurityRedisDAO.getIpSendCountPerDay(ip) >= dayLimit) {
-            throw exception(SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_IP);
+        String peer = request.getRemoteAddr();
+        List<String> trustedProxies = smsCodeProperties.getTrustedProxies();
+        if (StrUtil.isNotBlank(peer) && CollUtil.isNotEmpty(trustedProxies) && trustedProxies.contains(peer)) {
+            // 直连来自可信代理：采信 XFF 最左侧的原始客户端地址
+            String clientFromXff = firstClientIpFromForwardedFor(request.getHeader(HEADER_X_FORWARDED_FOR));
+            return StrUtil.isNotBlank(clientFromXff) ? clientFromXff : peer;
         }
+        // 默认：peer 非可信代理（或白名单为空）→ 用 peer address，完全忽略 XFF
+        return StrUtil.isNotBlank(peer) ? peer : reqDTO.getCreateIp();
+    }
+
+    /**
+     * 从 {@code X-Forwarded-For}（形如 {@code "client, proxy1, proxy2"}）取最左侧的原始客户端地址。
+     */
+    private static String firstClientIpFromForwardedFor(String xff) {
+        if (StrUtil.isBlank(xff)) {
+            return null;
+        }
+        for (String part : xff.split(",")) {
+            String ip = part.trim();
+            if (StrUtil.isNotBlank(ip)) {
+                return ip;
+            }
+        }
+        return null;
+    }
+
+    private static int nullToZero(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private String createSmsCode(String mobile, Integer scene, String ip) {
@@ -98,7 +150,7 @@ public class SmsCodeServiceImpl implements SmsCodeService {
                     lastSmsCode.getTodayIndex() >= smsCodeProperties.getSendMaximumQuantityPerDay()) { // 超过当天发送的上限。
                 throw exception(SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_DAY);
             }
-            // ZS-LOGIN-004：每 IP 频控已上提到 sendSmsCode 入口（需在写库前拦截），此处不再重复
+            // ZS-LOGIN-004：每 IP 频控已上提到 sendSmsCode 入口（在写库前原子预留），此处不再重复
         }
 
         // 创建验证码记录
@@ -131,44 +183,47 @@ public class SmsCodeServiceImpl implements SmsCodeService {
     }
 
     private SmsCodeDO validateSmsCode0(String mobile, String code, Integer scene) {
-        // ZS-LOGIN-004：尝试次数上限门控——超限后在锁定期内直接拒绝，连 DB 都不再查询，杜绝枚举探测
-        validateAttemptLimit(mobile, scene);
+        // ZS-LOGIN-004 P2-C：原子「判上限 + 预留一次校验容量」，取代原「读计数-判上限」与「失败后自增」的非原子
+        // check-then-act——并发下多个猜测都会在任何失败自增前读到低于上限的计数而全部抵达 DB。
+        Integer maxAttempts = smsCodeProperties.getMaxValidateAttempts();
+        Duration lockDuration = smsCodeProperties.getAttemptLockDuration();
+        long reserved = smsCodeSecurityRedisDAO.reserveValidateAttempt(mobile, scene,
+                maxAttempts == null ? 0 : maxAttempts, lockDuration);
+        if (reserved < 0) {
+            // 已达上限：锁定期内直接拒绝（连正确的验证码也一并拒绝，否则锁定形同虚设），且不改动计数
+            long lockSeconds = lockDuration == null ? 0L : lockDuration.getSeconds();
+            throw exception(SMS_CODE_EXCEED_ATTEMPT_LIMIT, lockSeconds);
+        }
+        // reserved == 0 表示未启用限制（放行且不计数）；reserved >= 1 表示已原子预留一个校验名额
+        boolean reservedSlot = reserved >= 1;
         // 校验验证码
         SmsCodeDO lastSmsCode = smsCodeMapper.selectLastByMobile(mobile, code, scene);
         // 若验证码不存在，抛出异常
         if (lastSmsCode == null) {
-            // ZS-LOGIN-004：「码不匹配 / 错场景」属于暴力尝试信号，按 手机号+场景 计数；
-            // 过期、已使用不是攻击信号（合法用户手慢 / 重复提交），不计入，避免把合法用户锁死
-            smsCodeSecurityRedisDAO.increaseValidateAttempts(mobile, scene,
-                    smsCodeProperties.getAttemptLockDuration());
+            // ZS-LOGIN-004：「码不匹配 / 错场景」属于暴力尝试信号——已预留的名额即为本次失败计数，保留不释放
             throw exception(SMS_CODE_NOT_FOUND);
         }
         // 超过时间
         if (LocalDateTimeUtil.between(lastSmsCode.getCreateTime(), LocalDateTime.now()).toMillis()
                 >= smsCodeProperties.getExpireTimes().toMillis()) { // 验证码已过期
+            // ZS-LOGIN-004：过期不是攻击信号（合法用户手慢而已），释放预留名额、不计入失败尝试
+            releaseSlotIfReserved(reservedSlot, mobile, scene);
             throw exception(SMS_CODE_EXPIRED);
         }
         // 判断验证码是否已被使用
         if (Boolean.TRUE.equals(lastSmsCode.getUsed())) {
+            // ZS-LOGIN-004：已使用不是攻击信号（并发消费 / 重复提交），释放预留名额、不计入失败尝试
+            releaseSlotIfReserved(reservedSlot, mobile, scene);
             throw exception(SMS_CODE_USED);
         }
+        // 校验通过：成功不是失败信号，释放预留名额（合法用户不会因正常校验被计数）
+        releaseSlotIfReserved(reservedSlot, mobile, scene);
         return lastSmsCode;
     }
 
-    /**
-     * ZS-LOGIN-004：校验「手机号 + 场景」维度的失败尝试次数是否已达上限。
-     * <p>达到上限即在锁定期内直接拒绝（连正确的验证码也一并拒绝，否则锁定形同虚设）。
-     */
-    private void validateAttemptLimit(String mobile, Integer scene) {
-        Integer maxAttempts = smsCodeProperties.getMaxValidateAttempts();
-        if (maxAttempts == null || maxAttempts <= 0) {
-            return;
-        }
-        long attempts = smsCodeSecurityRedisDAO.getValidateAttempts(mobile, scene);
-        if (attempts >= maxAttempts) {
-            Duration lockDuration = smsCodeProperties.getAttemptLockDuration();
-            long lockSeconds = lockDuration == null ? 0L : lockDuration.getSeconds();
-            throw exception(SMS_CODE_EXCEED_ATTEMPT_LIMIT, lockSeconds);
+    private void releaseSlotIfReserved(boolean reservedSlot, String mobile, Integer scene) {
+        if (reservedSlot) {
+            smsCodeSecurityRedisDAO.releaseValidateAttempt(mobile, scene);
         }
     }
 

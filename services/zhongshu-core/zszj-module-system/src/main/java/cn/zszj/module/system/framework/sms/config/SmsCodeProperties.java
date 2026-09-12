@@ -6,6 +6,8 @@ import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.constraints.NotNull;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.List;
 
 @ConfigurationProperties(prefix = "zszj.sms-code")
 @Validated
@@ -74,5 +76,21 @@ public class SmsCodeProperties {
      * 每个 IP 每天可发送的短信数量上限
      */
     private Integer sendMaximumQuantityPerIpPerDay = DEFAULT_SEND_MAXIMUM_QUANTITY_PER_IP_PER_DAY;
+
+    /**
+     * ZS-LOGIN-004 P1（codex r0）：可信反向代理的 peer address 白名单，<b>默认为空</b>（secure by default：不信任任何 X-Forwarded-For）。
+     * <p>用途：短信「每 IP 发送配额」的计数键必须来自<b>不可被调用者伪造</b>的地址。框架级
+     * {@code ServletUtils.getClientIP()}（Hutool 实现）会<b>先采信 X-Forwarded-For 再看 socket 地址</b>，
+     * 于是攻击者只需改 XFF 头就能让每个伪造地址都拿到全新的小时/天配额桶，绕过频控。
+     * <p>本配置只在 SMS 配额范围内做<b>局部</b>加固（不改框架级共享工具，框架级全局加固归口 ZS-SEC-011.B）：
+     * <ul>
+     *     <li>直连 peer address（{@code request.getRemoteAddr()}）<b>命中</b>本白名单时，才认为请求确实经过可信代理，
+     *         进而采信 XFF 派生的客户端地址用于配额；</li>
+     *     <li>否则（白名单为空 / peer 不在白名单）一律使用 peer address，XFF 被完全忽略，
+     *         伪造 XFF 不再能获得新配额桶。</li>
+     * </ul>
+     * <p>生产部署若确有可信反代（如 nginx/SLB），应把其内网出口地址列入本白名单；未列时默认行为即为最安全行为。
+     */
+    private List<String> trustedProxies = Collections.emptyList();
 
 }
