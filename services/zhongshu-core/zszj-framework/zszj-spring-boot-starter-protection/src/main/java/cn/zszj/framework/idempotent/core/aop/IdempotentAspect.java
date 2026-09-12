@@ -1,5 +1,7 @@
 package cn.zszj.framework.idempotent.core.aop;
 
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.crypto.SecureUtil;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
@@ -19,11 +21,34 @@ import java.util.Map;
 /**
  * 拦截声明了 {@link Idempotent} 注解的方法，实现幂等操作
  *
+ * ZS-SEC-011.A：增加同键异参冲突检测，区分"重复请求"与"幂等键冲突"两种拒绝原因
+ *
+ * ZS-SEC-011.A 边界声明：本幂等能力是「窗口锁短时防重」（基于 Redis TTL 窗口），
+ * 不是持久化幂等——进程重启、窗口超时、Redis 缓存故障后，不保证返回原业务结果，
+ * 仅保证窗口内同键同参不重复执行；「同键异参冲突拒绝」仅在 Key 不含入参的解析器（ExpressionIdempotentKeyResolver）下生效——
+ * DefaultIdempotentKeyResolver/UserIdempotentKeyResolver 已把 argsStr 烘入 Key，同键必然同参，conflict 恒为 false（构造上不可达）。
+ * 让冲突检测对默认路径也有意义的 Key/Value 职责切分（Key 用业务幂等号、Value 存全量入参摘要）归 ZS-SEC-011.B。
+ * 持久化幂等（落库 + HTTP 重试联验）归 ZS-SEC-011.B（B05 批次）范围。
+ * 获准的重试仍会重新走完整鉴权链（幂等不替代鉴权）。
+ *
+ * ZS-SEC-011.A 已知缺口（本批 spec §4 文件清单仅含 DefaultIdempotentKeyResolver，以下登记不留白，挂后续任务）：
+ * - [IMP-4 → REC-1/SEC-011.B] ExpressionIdempotentKeyResolver（Key=裸 SpEL 值，无 method/tenant/user 作用域）与
+ *   UserIdempotentKeyResolver（有 user 无 tenant）仍缺租户隔离，与 SEC-010 已给 ExpressionRateLimiterKeyResolver 加租户作用域的先例不一致；
+ *   且冲突检测唯一生效路径恰是 Expression 解析器 → 存在跨租户撞键 + 存在性侧信道风险。统一 SubjectScope 抽取归 REC-1（SEC-010+011.A 合并后跟进）。
+ * - [IMP-5 → REC-1] 租户因子取自可选请求头 tenant-id（WebFrameworkUtils.getTenantId），非权威 TenantContextHolder（避免 protection 反依赖 biz-tenant，控制器授权偏离）；
+ *   省略头会产生不同 Key → 同一主体自绕过防重窗口（非跨主体：userId/userType 取自权威 request attribute 不可伪造，tenant-id 头受 TenantSecurityWebFilter 校验不可伪造成他人租户）。
+ *   权威租户源的可注入 port 归 REC-1。与 SEC-010 同性质。
+ *
  * @author 芋道源码
  */
 @Aspect
 @Slf4j
 public class IdempotentAspect {
+
+    /**
+     * MIN-3：同键异参冲突拒绝文案，提为常量便于统一维护与测试对齐
+     */
+    private static final String CONFLICT_MESSAGE = "幂等键冲突：相同幂等键携带了不同请求内容";
 
     /**
      * IdempotentKeyResolver 集合
@@ -45,12 +70,37 @@ public class IdempotentAspect {
         // 解析 Key
         String key = keyResolver.resolver(joinPoint, idempotent);
 
-        // 1. 锁定 Key
-        boolean success = idempotentRedisDAO.setIfAbsent(key, idempotent.timeout(), idempotent.timeUnit());
-        // 锁定失败，抛出异常
+        // ZS-SEC-011.A：计算参数摘要，用于同键异参冲突检测
+        // IMP-6：摘要输入改为「脱敏后」入参，避免未脱敏原文（含密码/令牌）MD5 后落 Redis value 被离线爆破（SEC-007 在 Redis 侧的对称缺口）；
+        //        敏感字段差异被视为同参，对幂等语义无害
+        String argsDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
+
+        // 1. 锁定 Key（携带参数摘要）
+        // MIN-2：DAO 返回 Boolean，pipeline/transaction 场景可能返回 null，用 Boolean.TRUE.equals 防拆箱 NPE（null 视为未拿到锁 → 拒绝，fail-closed）
+        boolean success = Boolean.TRUE.equals(idempotentRedisDAO.setIfAbsent(key, argsDigest, idempotent.timeout(), idempotent.timeUnit()));
+        // 锁定失败，区分冲突与重复
         if (!success) {
-            log.info("[aroundPointCut][方法({}) 参数({}) 存在重复请求]", joinPoint.getSignature().toString(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
-            throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), idempotent.message());
+            // IMP-2：getDigest 是「已决策拒绝」后的额外 GET，防 Redis 抖动把干净的 900 升级为 500；异常降级 null（digest 只影响文案，零语义损失）
+            String storedDigest;
+            try {
+                storedDigest = idempotentRedisDAO.getDigest(key);
+            } catch (Exception ex) {
+                log.warn("[aroundPointCut][幂等键({}) 读回摘要失败，降级按重复处理]", key, ex);
+                storedDigest = null;
+            }
+            // IMP-3：StrUtil.isNotEmpty 兼容滚动升级期旧格式空串值（旧实现存 ""），避免误判冲突
+            // IMP-1：默认路径（Default/User 解析器）Key 已烘入 argsStr，同键必然同参，conflict 恒 false（构造上不可达）；冲突分支仅对 Expression 解析器等 Key 不含入参的解析器生效
+            boolean conflict = StrUtil.isNotEmpty(storedDigest) && !storedDigest.equals(argsDigest);
+            // MIN-4：冲突通常是客户端 bug/探测（尤其 Expression 解析器下可能跨租户撞键），用 warn 提升安全信号；重复是常态（如双击），用 info
+            if (conflict) {
+                log.warn("[aroundPointCut][方法({}) 参数({}) 同键异参冲突]",
+                        joinPoint.getSignature(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
+            } else {
+                log.info("[aroundPointCut][方法({}) 参数({}) 同键同参重复]",
+                        joinPoint.getSignature(), LogSanitizeUtils.sanitizeArgs(joinPoint.getArgs()));
+            }
+            String msg = conflict ? CONFLICT_MESSAGE : idempotent.message();
+            throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), msg);
         }
 
         // 2. 执行逻辑
