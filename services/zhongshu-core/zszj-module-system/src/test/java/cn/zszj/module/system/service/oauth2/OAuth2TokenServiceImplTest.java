@@ -20,6 +20,7 @@ import jakarta.annotation.Resource;
 import org.assertj.core.util.Lists;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
@@ -39,6 +40,7 @@ import static org.mockito.Mockito.when;
  * @author 芋道源码
  */
 @Import({OAuth2TokenServiceImpl.class, OAuth2AccessTokenRedisDAO.class})
+@TestPropertySource(properties = "zszj.security.refresh-token-as-access-token-enabled=false")
 public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
 
     @Resource
@@ -233,7 +235,8 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
     }
 
     @Test
-    public void testCheckAccessToken_refreshToken() {
+    public void testGetAccessToken_refreshTokenAsAccess_legacyZeroUserId() {
+        // ZS-LOGIN-001：gate=false 下无论 userId 取值（含 0L），刷新令牌一律不得被转换为访问令牌（在门控处即短路返回 null，不进入 convertToAccessToken）
         // mock 数据（访问令牌）
         OAuth2RefreshTokenDO refreshTokenDO = randomPojo(OAuth2RefreshTokenDO.class)
                 .setUserId(0L)
@@ -245,8 +248,8 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
         // 调研，并断言
         OAuth2AccessTokenDO result = oauth2TokenService.getAccessToken(accessToken);
         // 断言
-        assertPojoEquals(refreshTokenDO, result, "expiresTime", "createTime", "updateTime", "deleted",
-                "creator", "updater");
+        // ZS-LOGIN-001：默认 gate 关闭，刷新令牌不再被静默转换为访问令牌
+        assertNull(result, "刷新令牌不得被当作访问令牌静默转换");
     }
 
     @Test
@@ -325,6 +328,44 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
         assertEquals(1, pageResult.getList().size());
         // TODO @芋艿：expiresTime 被屏蔽，仅 win11 会复现，建议后续修复。
         assertPojoEquals(dbAccessToken, pageResult.getList().get(0), "expiresTime");
+    }
+
+    /**
+     * ZS-LOGIN-001：令牌用途分离 —— 默认禁止刷新令牌静默转访问令牌，getAccessToken 返回 null
+     */
+    @Test
+    public void testGetAccessToken_refreshTokenAsAccess_shouldReturnNullByDefault() {
+        // 构造一个有效的刷新令牌（未来过期）
+        OAuth2RefreshTokenDO refreshTokenDO = randomPojo(OAuth2RefreshTokenDO.class)
+                .setUserId(randomLongId())
+                .setUserType(UserTypeEnum.ADMIN.getValue())
+                .setClientId(randomString())
+                .setExpiresTime(LocalDateTime.now().plusDays(1));
+        oauth2RefreshTokenMapper.insert(refreshTokenDO);
+        // 把刷新令牌字符串当作访问令牌传入
+        String accessToken = refreshTokenDO.getRefreshToken();
+        // 保证 Redis 中没有该 token
+        assertNull(oauth2AccessTokenRedisDAO.get(accessToken));
+
+        // 调用，期望返回 null（gate 默认 false，不得静默回退转换）
+        OAuth2AccessTokenDO result = oauth2TokenService.getAccessToken(accessToken);
+        assertNull(result, "刷新令牌不得被当作访问令牌静默转换");
+    }
+
+    @Test
+    public void testCheckAccessToken_refreshTokenAsAccess_shouldThrowUnauthorized() {
+        // 构造一个有效的刷新令牌（未来过期）
+        OAuth2RefreshTokenDO refreshTokenDO = randomPojo(OAuth2RefreshTokenDO.class)
+                .setUserId(randomLongId())
+                .setUserType(UserTypeEnum.ADMIN.getValue())
+                .setClientId(randomString())
+                .setExpiresTime(LocalDateTime.now().plusDays(1));
+        oauth2RefreshTokenMapper.insert(refreshTokenDO);
+        String accessToken = refreshTokenDO.getRefreshToken();
+
+        // checkAccessToken -> getAccessToken -> null -> 抛 UNAUTHORIZED
+        assertServiceException(() -> oauth2TokenService.checkAccessToken(accessToken),
+                new ErrorCode(401, "访问令牌不存在"));
     }
 
 }

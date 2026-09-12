@@ -23,6 +23,7 @@ import cn.zszj.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
 import cn.zszj.module.system.dal.dataobject.dept.UserPostDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
 import cn.zszj.module.system.dal.mysql.dept.UserPostMapper;
 import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.mq.producer.user.AdminUserProducer;
@@ -85,6 +86,9 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Resource
     private UserPostMapper userPostMapper;
+
+    @Resource
+    private DeptMapper deptMapper; // 负责人计数走 DeptMapper 原语即可，无需为一次计数在 DeptService 接口扩方法（本类已注入 DeptService）
 
     @Resource
     private ConfigApi configApi;
@@ -271,6 +275,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     public void deleteUser(Long id) {
         // 1. 校验用户存在
         AdminUserDO user = validateUserExists(id);
+        // 1.1 校验用户不是部门负责人
+        validateUserNotDeptLeader(id);
 
         // 2.1 删除用户
         userMapper.deleteById(id);
@@ -286,10 +292,13 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteUserList(List<Long> ids) {
-        // 1. 批量删除用户
+        // 1. 校验用户都不是部门负责人；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
+        ids.forEach(this::validateUserNotDeptLeader);
+
+        // 2.1 批量删除用户
         userMapper.deleteByIds(ids);
 
-        // 2. 批量删除用户关联数据
+        // 2.2 批量删除用户关联数据
         ids.forEach(id -> {
             permissionService.processUserDeleted(id);
             userPostMapper.deleteByUserId(id);
@@ -429,6 +438,21 @@ public class AdminUserServiceImpl implements AdminUserService {
             throw exception(USER_NOT_EXISTS);
         }
         return user;
+    }
+
+    /**
+     * 校验用户不是部门负责人，避免删除后 {@link DeptDO#getLeaderUserId()} 悬空
+     *
+     * 说明：此处只做技术层的引用保护，要求先变更负责人再删除用户，不自动级联抹除负责人历史；
+     * 完整的任职生命周期与责任历史归属迁移，待 D-09 任职模型后由 ZS-IAM-002/004 承接
+     *
+     * @param id 用户编号
+     */
+    @VisibleForTesting
+    void validateUserNotDeptLeader(Long id) {
+        if (deptMapper.selectCountByLeaderUserId(id) > 0) {
+            throw exception(USER_IS_DEPT_LEADER);
+        }
     }
 
     @VisibleForTesting

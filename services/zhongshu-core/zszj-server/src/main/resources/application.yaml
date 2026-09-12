@@ -295,6 +295,11 @@ zszj:
   security:
     permit-all_urls:
       - /admin-api/mp/open/** # 微信公众号开放平台，微信回调接口，不需要登录
+    # ZS-LOGIN-001 令牌用途分离门控：代码默认 false（安全默认，getAccessToken 只认访问令牌）。
+    # 现网置 true 的原因：admin-web IM、miniapp IM/客服的 WebSocket 握手以 ?token=<refreshToken> 作凭据
+    # （浏览器 WS 无法自定义 Header，只能拼 URL 参数），依赖刷新令牌回退放行。此为迁移期临时兼容，
+    # 须在 LOGIN-001.B（短时握手票据 + 前端 WS 迁移）完成后改回 false 并删除本键。
+    refresh-token-as-access-token-enabled: true
   api-encrypt:
     enable: false # 是否开启 API 加密。默认关闭，避免低版本 JDK 8（8u120 以下）启动时 bcprov 的 JCE 认证报错
     algorithm: AES # 加密算法，支持 AES、RSA 等
