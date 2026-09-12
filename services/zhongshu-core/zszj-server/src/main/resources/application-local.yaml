@@ -187,6 +187,9 @@ wx:
 
 # 众墅之家配置项，设置当前项目所有自定义的配置
 zszj:
+  web:
+    cors:
+      frame-options: DISABLE # ZS-SEC-004 P2 本地：admin-web(:80) 内嵌后端(:48080) /doc.html 的 swagger iframe；SAMEORIGIN 跨源阻断，本地放开，生产默认仍 SAMEORIGIN
   captcha:
     enable: false # 本地环境，暂时关闭图片验证码，方便登录等接口的测试；
   security:

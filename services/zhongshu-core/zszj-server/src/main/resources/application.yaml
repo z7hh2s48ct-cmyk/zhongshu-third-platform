@@ -283,6 +283,8 @@ zszj:
       allowed-origin-patterns:
         - "http://localhost:*"
         - "http://127.0.0.1:*"
+        - "http://localhost" # ZS-SEC-004 P1-1：":*" 不匹配无端口源；本地 VITE_PORT=80 时 Origin 为无端口 http://localhost
+        - "http://127.0.0.1"
       allow-credentials: true
       frame-options: SAMEORIGIN # 默认防点击劫持；确需被 iframe 嵌入时显式改为 DISABLE
   xss:

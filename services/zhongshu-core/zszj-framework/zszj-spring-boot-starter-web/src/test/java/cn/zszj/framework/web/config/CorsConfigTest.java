@@ -1,6 +1,7 @@
 package cn.zszj.framework.web.config;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.web.cors.CorsConfiguration;
 
 import java.util.List;
 
@@ -36,6 +37,32 @@ class CorsConfigTest {
     @Test
     void frameOptions_defaultShouldBeSameOriginNotDisabled() {
         assertEquals("SAMEORIGIN", new WebProperties.Cors().getFrameOptions());
+    }
+
+    @Test
+    void allowedHeaders_shouldCoverAllFrontendSentHeaders() {
+        WebProperties.Cors cors = new WebProperties.Cors();
+        // ZS-SEC-004 P1-2：admin-web service.ts 对每个 GET 注入 Cache-Control/Pragma（防缓存），跨租户开启注入
+        // visit-tenant-id，API 加密注入 X-Api-Encrypt。收窄 allowedHeaders 后若缺这些头，浏览器预检
+        // Access-Control-Request-Headers 校验不通过 → 拦截所有 admin GET（含租户查询/权限加载）。
+        assertTrue(cors.getAllowedHeaders().containsAll(List.of(
+                        "Authorization", "Content-Type", "X-Requested-With", "tenant-id",
+                        "Cache-Control", "Pragma", "visit-tenant-id", "X-Api-Encrypt")),
+                "allowedHeaders 必须覆盖前端 service.ts 实际发送的全部自定义头，否则预检失败拦截请求");
+    }
+
+    @Test
+    void allowedOriginPatterns_shouldMatchPortlessLocalhost() {
+        WebProperties.Cors cors = new WebProperties().getCors();
+        // ZS-SEC-004 P1-1：admin-web 本地 VITE_PORT=80，浏览器发出的 Origin 为无端口的 http://localhost。
+        // 用 Spring 真实匹配语义（CorsConfiguration.checkOrigin）验证白名单是否放行该无端口源；返回 null 即被拒。
+        CorsConfiguration config = new CorsConfiguration();
+        cors.getAllowedOriginPatterns().forEach(config::addAllowedOriginPattern);
+        config.setAllowCredentials(cors.isAllowCredentials());
+        assertEquals("http://localhost", config.checkOrigin("http://localhost"),
+                "无端口 http://localhost 必须被 CORS 白名单放行（VITE_PORT=80 本地前端场景）");
+        assertEquals("http://127.0.0.1", config.checkOrigin("http://127.0.0.1"),
+                "无端口 http://127.0.0.1 必须被 CORS 白名单放行");
     }
 
 }

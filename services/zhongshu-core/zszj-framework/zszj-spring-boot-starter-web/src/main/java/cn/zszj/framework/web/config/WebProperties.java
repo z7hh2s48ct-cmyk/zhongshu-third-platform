@@ -102,7 +102,10 @@ public class WebProperties {
          * 允许的源模式白名单（精确，禁止裸 * 与 credentials 并存）。默认仅本地开发源。
          */
         private List<String> allowedOriginPatterns = new ArrayList<>(List.of(
-                "http://localhost:*", "http://127.0.0.1:*"));
+                "http://localhost:*", "http://127.0.0.1:*",
+                // ZS-SEC-004 P1-1：Spring 的 ":*" 模式不匹配无端口源；admin-web 本地 VITE_PORT=80 时浏览器发出
+                // Origin: http://localhost（省略默认端口），须显式放行无端口 loopback 源，否则本地前端跨域被拒。
+                "http://localhost", "http://127.0.0.1"));
 
         /**
          * 允许的方法。
@@ -114,7 +117,11 @@ public class WebProperties {
          * 允许的请求头（含租户头 tenant-id）。
          */
         private List<String> allowedHeaders = new ArrayList<>(List.of(
-                "Authorization", "Content-Type", "X-Requested-With", "tenant-id"));
+                "Authorization", "Content-Type", "X-Requested-With", "tenant-id",
+                // ZS-SEC-004 P1-2：admin-web service.ts 对每个 GET 注入 Cache-Control/Pragma（防缓存）、跨租户注入
+                // visit-tenant-id、API 加密注入 X-Api-Encrypt；须列入白名单，否则预检 Access-Control-Request-Headers
+                // 校验失败，拦截所有 admin GET（含租户查询/权限加载）。
+                "Cache-Control", "Pragma", "visit-tenant-id", "X-Api-Encrypt"));
 
         /**
          * 暴露给浏览器的响应头（ZS-SEC-006 trace-id 关联）。
