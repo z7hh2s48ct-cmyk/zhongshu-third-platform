@@ -8,9 +8,9 @@ import cn.zszj.framework.excel.core.util.ExcelUtils;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigPageReqVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
-import cn.zszj.module.infra.convert.config.ConfigConvert;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
 import cn.zszj.module.infra.enums.ErrorCodeConstants;
+import cn.zszj.module.infra.service.config.ConfigSensitiveClassifier;
 import cn.zszj.module.infra.service.config.ConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static cn.zszj.framework.apilog.core.enums.OperateTypeEnum.EXPORT;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -76,7 +77,8 @@ public class ConfigController {
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
     @PreAuthorize("@ss.hasPermission('infra:config:query')")
     public CommonResult<ConfigRespVO> getConfig(@RequestParam("id") Long id) {
-        return success(ConfigConvert.INSTANCE.convert(configService.getConfig(id)));
+        // ZS-CFG-001.B：详情输出统一脱敏（秘密/敏感项 value 掩码）
+        return success(configService.getMaskedConfigRespVO(configService.getConfig(id)));
     }
 
     @GetMapping(value = "/get-value-by-key")
@@ -87,7 +89,9 @@ public class ConfigController {
         if (config == null) {
             return success(null);
         }
-        if (!config.getVisible()) {
+        // ZS-CFG-001.B：即使被误标为可见，命中秘密键模式的参数仍拒绝返回（防“秘密键误标 visible”旁路）
+        if (!config.getVisible()
+                || configService.classifySensitive(config) == ConfigSensitiveClassifier.SensitiveLevel.SECRET) {
             throw exception(ErrorCodeConstants.CONFIG_GET_VALUE_ERROR_IF_VISIBLE);
         }
         return success(config.getValue());
@@ -98,7 +102,10 @@ public class ConfigController {
     @PreAuthorize("@ss.hasPermission('infra:config:query')")
     public CommonResult<PageResult<ConfigRespVO>> getConfigPage(@Valid ConfigPageReqVO pageReqVO) {
         PageResult<ConfigDO> page = configService.getConfigPage(pageReqVO);
-        return success(ConfigConvert.INSTANCE.convertPage(page));
+        // ZS-CFG-001.B：分页输出逐行脱敏
+        List<ConfigRespVO> list = page.getList().stream()
+                .map(configService::getMaskedConfigRespVO).collect(Collectors.toList());
+        return success(new PageResult<>(list, page.getTotal()));
     }
 
     @GetMapping("/export-excel")
@@ -109,9 +116,11 @@ public class ConfigController {
                              HttpServletResponse response) throws IOException {
         exportReqVO.setPageSize(PageParam.PAGE_SIZE_NONE);
         List<ConfigDO> list = configService.getConfigPage(exportReqVO).getList();
+        // ZS-CFG-001.B：导出输出逐行脱敏
+        List<ConfigRespVO> exportList = list.stream()
+                .map(configService::getMaskedConfigRespVO).collect(Collectors.toList());
         // 输出
-        ExcelUtils.write(response, "参数配置.xls", "数据", ConfigRespVO.class,
-                ConfigConvert.INSTANCE.convertList(list));
+        ExcelUtils.write(response, "参数配置.xls", "数据", ConfigRespVO.class, exportList);
     }
 
 }

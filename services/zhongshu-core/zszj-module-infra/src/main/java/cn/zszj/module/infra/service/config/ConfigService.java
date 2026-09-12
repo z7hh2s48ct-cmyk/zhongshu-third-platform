@@ -2,6 +2,7 @@ package cn.zszj.module.infra.service.config;
 
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigPageReqVO;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
 import jakarta.validation.Valid;
@@ -67,5 +68,23 @@ public interface ConfigService {
      * @return 分页列表
      */
     PageResult<ConfigDO> getConfigPage(ConfigPageReqVO reqVO);
+
+    /**
+     * ZS-CFG-001.B：获得脱敏后的参数配置 RespVO（详情/分页/导出统一入口）。
+     *
+     * 秘密/敏感项的 value 掩码为 {@code ******}，其余字段保持可读；普通项原样返回。
+     *
+     * @param config 参数配置
+     * @return 脱敏后的 RespVO
+     */
+    ConfigRespVO getMaskedConfigRespVO(ConfigDO config);
+
+    /**
+     * ZS-CFG-001.B：判定参数配置的敏感级（供 /get-value-by-key 秘密键防护使用）。
+     *
+     * @param config 参数配置
+     * @return 敏感级
+     */
+    ConfigSensitiveClassifier.SensitiveLevel classifySensitive(ConfigDO config);
 
 }
