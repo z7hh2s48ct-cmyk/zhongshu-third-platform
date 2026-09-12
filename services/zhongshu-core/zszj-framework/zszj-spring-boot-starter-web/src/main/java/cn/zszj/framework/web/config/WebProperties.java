@@ -93,7 +93,7 @@ public class WebProperties {
      * 浏览器跨域（CORS）与点击劫持防护配置。
      *
      * ZS-SEC-004：由原先的全通配（{@code allowedOriginPattern=*} + {@code allowCredentials=true}）收紧为精确白名单，
-     * 消除“任意源携带凭据”的安全缺陷；同时将 frameOptions 由机械全关改为可配置（默认 SAMEORIGIN 防点击劫持）。
+     * 消除"任意源携带凭据"的安全缺陷；同时将 frameOptions 由机械全关改为可配置（默认 SAMEORIGIN 防点击劫持）。
      */
     @Data
     public static class Cors {
@@ -121,7 +121,10 @@ public class WebProperties {
                 // ZS-SEC-004 P1-2：admin-web service.ts 对每个 GET 注入 Cache-Control/Pragma（防缓存）、跨租户注入
                 // visit-tenant-id、API 加密注入 X-Api-Encrypt；须列入白名单，否则预检 Access-Control-Request-Headers
                 // 校验失败，拦截所有 admin GET（含租户查询/权限加载）。
-                "Cache-Control", "Pragma", "visit-tenant-id", "X-Api-Encrypt"));
+                "Cache-Control", "Pragma", "visit-tenant-id", "X-Api-Encrypt",
+                // ZS-SEC-006 P2-1：前端拦截器注入 trace-id 请求头用于端到端关联，须在预检 allowedHeaders 中放行，
+                // 否则跨域浏览器 OPTIONS Access-Control-Request-Headers: trace-id 被拒 403。
+                "trace-id"));
 
         /**
          * 暴露给浏览器的响应头（ZS-SEC-006 trace-id 关联）。

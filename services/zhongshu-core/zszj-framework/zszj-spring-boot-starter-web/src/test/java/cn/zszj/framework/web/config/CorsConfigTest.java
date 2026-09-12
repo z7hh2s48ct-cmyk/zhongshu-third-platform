@@ -7,6 +7,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -65,4 +66,34 @@ class CorsConfigTest {
                 "无端口 http://127.0.0.1 必须被 CORS 白名单放行");
     }
 
+    // ========== ZS-SEC-006 codex r0 P2-1: trace-id must be allowed as REQUEST header ==========
+
+    @Test
+    void allowedHeaders_shouldContainTraceId_forPreflight() {
+        WebProperties.Cors cors = new WebProperties.Cors();
+        // ZS-SEC-006 P2-1：跨域浏览器客户端发送 trace-id 请求头（由前端拦截器注入），
+        // 预检 Access-Control-Request-Headers: trace-id 必须通过 allowedHeaders 校验，否则 403。
+        // exposedHeaders 仅控制响应头可读性，不影响预检。
+        assertTrue(cors.getAllowedHeaders().contains("trace-id"),
+                "ZS-SEC-006 P2-1：allowedHeaders 必须包含 trace-id，否则跨域预检拒绝该请求头");
+    }
+
+    @Test
+    void preflight_withTraceIdHeader_shouldPass() {
+        WebProperties.Cors cors = new WebProperties().getCors();
+        // 构建真实 CorsConfiguration 并验证 preflight 语义
+        CorsConfiguration config = new CorsConfiguration();
+        cors.getAllowedOriginPatterns().forEach(config::addAllowedOriginPattern);
+        config.setAllowedMethods(cors.getAllowedMethods());
+        config.setAllowedHeaders(cors.getAllowedHeaders());
+        config.setExposedHeaders(cors.getExposedHeaders());
+        config.setAllowCredentials(cors.isAllowCredentials());
+        config.setMaxAge(cors.getMaxAge());
+
+        // checkHeaders 返回 null 表示预检不通过
+        List<String> result = config.checkHeaders(List.of("trace-id"));
+        assertNotNull(result, "ZS-SEC-006 P2-1：预检 Access-Control-Request-Headers: trace-id 应通过");
+        assertTrue(result.contains("trace-id"),
+                "预检结果应包含 trace-id，实际=" + result);
+    }
 }

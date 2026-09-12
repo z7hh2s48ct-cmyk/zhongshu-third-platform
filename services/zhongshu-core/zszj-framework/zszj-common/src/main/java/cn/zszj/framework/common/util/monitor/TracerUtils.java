@@ -1,5 +1,6 @@
 package cn.zszj.framework.common.util.monitor;
 
+import cn.zszj.framework.common.util.servlet.ServletUtils;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 
@@ -56,8 +57,12 @@ public class TracerUtils {
     /**
      * 获得请求关联 ID（统一入口，保证非空）。
      *
-     * <p>优先级：OTel traceId → 当前请求属性中已绑定的 fallback → 新生成 fallback。</p>
+     * <p>优先级：OTel traceId → 当前请求上下文中已绑定的 fallback → 新生成 fallback。</p>
      * <p>此方法绝不返回 null 或空串。返回值为有界（32 字符）、合法十六进制格式、不可承载权限的关联标识。</p>
+     *
+     * <p>ZS-SEC-006 P2-2 修复：通过 {@link ServletUtils#getRequest()} 解析当前线程绑定的请求，
+     * 委托给 {@link #getCorrelationId(HttpServletRequest)} 复用 TraceFilter 已绑定的 ID，
+     * 保证与响应头、访问日志、错误日志一致。仅在请求上下文之外（后台任务线程等）才生成一次性 ID。</p>
      *
      * @return 关联 ID（非空）
      */
@@ -67,8 +72,12 @@ public class TracerUtils {
         if (context.isValid()) {
             return context.getTraceId();
         }
-        // 2. 尝试从当前请求上下文获取（需要 ServletUtils，但 common 模块中 ServletUtils 可能无法在此静态调用）
-        //    此路径由带 request 参数的重载覆盖；无参版本直接生成新 ID
+        // 2. 尝试从当前线程的请求上下文获取（TraceFilter 已绑定 ID 到 request attribute）
+        HttpServletRequest request = ServletUtils.getRequest();
+        if (request != null) {
+            return getCorrelationId(request);
+        }
+        // 3. 请求上下文之外（后台任务、消息消费者等）：生成一次性 ID
         return generateCorrelationId();
     }
 
