@@ -97,7 +97,8 @@
     "init-json": "pnpm init-baseFiles",
     "prepare": "pnpm init-husky & pnpm init-baseFiles",
     "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/.eslintcache",
-    "lint:fix": "eslint --fix --cache --cache-strategy content --cache-location node_modules/.cache/eslint/.eslintcache"
+    "lint:fix": "eslint --fix --cache --cache-strategy content --cache-location node_modules/.cache/eslint/.eslintcache",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-4070620250821001",
@@ -185,6 +186,7 @@
     "unplugin-auto-import": "^20.0.0",
     "vite": "5.2.8",
     "vite-plugin-restart": "^1.0.0",
+    "vitest": "2.1.9",
     "vue-tsc": "^3.0.6"
   },
   "pnpm": {
