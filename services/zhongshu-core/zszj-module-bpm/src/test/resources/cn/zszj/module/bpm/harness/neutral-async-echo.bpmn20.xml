@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="urn:zszj:bpm-pg-harness">
+  <!-- ZS-BPM-001 中性技术夹具：异步服务任务（委托写探针表）验证异步执行器 -->
+  <process id="tech_neutral_async_echo" name="技术异步回声夹具" isExecutable="true">
+    <startEvent id="start"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="echoTask"/>
+    <serviceTask id="echoTask" name="技术异步回声任务"
+                 flowable:delegateExpression="${neutralEchoDelegate}"
+                 flowable:async="true"/>
+    <sequenceFlow id="f2" sourceRef="echoTask" targetRef="end"/>
+    <endEvent id="end"/>
+  </process>
+</definitions>

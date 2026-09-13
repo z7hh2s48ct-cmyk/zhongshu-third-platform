@@ -75,5 +75,12 @@
             <groupId>org.flowable</groupId>
             <artifactId>flowable-spring-boot-starter-actuator</artifactId>
         </dependency>
+
+        <!-- ZS-BPM-001：PG 集成夹具驱动（仅测试作用域；模块运行时不携带 JDBC 驱动，驱动由 server 侧统一引入） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

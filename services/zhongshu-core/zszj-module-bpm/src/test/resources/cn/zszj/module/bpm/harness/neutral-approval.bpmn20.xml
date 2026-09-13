@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="urn:zszj:bpm-pg-harness">
+  <!-- ZS-BPM-001 中性技术夹具：不含任何众墅业务字段/状态语义（D-07 确认前禁令） -->
+  <process id="tech_neutral_approval" name="技术中性审批夹具" isExecutable="true">
+    <startEvent id="start"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="auditTask"/>
+    <userTask id="auditTask" name="技术审核任务"/>
+    <sequenceFlow id="f2" sourceRef="auditTask" targetRef="outcomeGateway"/>
+    <exclusiveGateway id="outcomeGateway" name="结果分支"/>
+    <sequenceFlow id="f3" sourceRef="outcomeGateway" targetRef="approvedEnd">
+      <conditionExpression xsi:type="tFormalExpression">${harness_outcome == 'approve'}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f4" sourceRef="outcomeGateway" targetRef="rejectedEnd">
+      <conditionExpression xsi:type="tFormalExpression">${harness_outcome == 'reject'}</conditionExpression>
+    </sequenceFlow>
+    <endEvent id="approvedEnd"/>
+    <endEvent id="rejectedEnd"/>
+  </process>
+</definitions>
