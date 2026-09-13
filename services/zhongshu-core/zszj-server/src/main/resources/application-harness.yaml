@@ -1,0 +1,29 @@
+# ZS-SYS-001.A：七类基础管理真实 PG/API 回归夹具 profile。
+# 仅与 local profile 叠加使用（--spring.profiles.active=local,harness），不改变任何既有
+# application*.yaml 的生产语义；本文件只做「回归夹具取值登记」性质的覆盖：
+#   - 数据源/Redis 指向一次性 Docker 容器（由环境变量注入，见 scripts/sys001/run-sys001-regression.mjs）；
+#   - mock-enable 显式 false（ZS-ENG-004，真实过滤器链，不引入模拟认证旁路）；
+#   - 图形验证码关闭（取 application-local.yaml 同款取值，供账密登录夹具使用，逐用例登记）；
+#   - LOGIN-004 登录方式门控不在此开启（代码默认 sms/social/register/reset 全关，账密登录不受限）；
+#   - 短信验证码不使用固定演示码 9999/1000（sms-login 门控关闭，本取值仅防御性登记非演示值）。
+spring:
+  data:
+    redis:
+      host: ${ZSZJ_HARNESS_REDIS_HOST:127.0.0.1}
+      port: ${ZSZJ_HARNESS_REDIS_PORT:6379}
+
+# 一次性夹具：关闭 mapper 级 DEBUG SQL 日志（local 默认 debug），保持夹具日志精简、不逐条打印 SQL。
+logging:
+  level:
+    cn.zszj.module.system.dal.mysql: info
+    cn.zszj.module.infra.dal.mysql: info
+
+zszj:
+  captcha:
+    enable: false # 夹具登记：关闭图形验证码（与 application-local.yaml 同值；账密登录用例按此取值）
+  sms-code:
+    begin-code: ${ZSZJ_HARNESS_SMS_CODE_BEGIN:572916} # 夹具登记：非固定演示码（begin<end、取值域≥1000，过启动期安全校验；sms-login 门控关闭下不参与登录）
+    end-code: ${ZSZJ_HARNESS_SMS_CODE_END:613842}
+  security:
+    mock-enable: false # 夹具登记：显式禁用模拟认证（ZS-ENG-004），全部用例走真实 Token/过滤器链
+  demo: false # 夹具登记：非演示模式（写操作不被 DEMO_FILTER 拦截，反向用例断言真实业务码）
