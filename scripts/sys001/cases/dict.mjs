@@ -56,7 +56,8 @@ export async function run(ctx) {
     token: t1.token, tenantId: t1.tenantId,
     body: { dictType: typeCode, label: '重复值', value: '1', sort: 3, status: 0 },
   });
-  const dupDataControlled = rDupData.body?.code !== 0 && rDupData.body?.code !== 500; // 受控业务拒绝，500 基础设施异常不计
+  const dupCode = rDupData.body?.code; // 受控拒绝=模块级业务码（≥1e9），排除 null/HTTP 基础设施出口
+  const dupDataControlled = Number.isInteger(dupCode) && dupCode >= 1000000000;
   record('SYS-DICT-N1 重复编码冲突受控',
     rDupType.body?.code === 1002006004 && dupDataControlled
     && pgQuery(`SELECT count(*) FROM system_dict_type WHERE type='${typeCode}' AND deleted=0`) === '1'
