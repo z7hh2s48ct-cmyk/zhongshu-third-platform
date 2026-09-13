@@ -25,8 +25,16 @@ const keep = process.argv.includes('--keep');
 const PG_IMAGE = 'postgres:17-alpine';
 const REDIS_IMAGE = 'redis:7.4.11-alpine';
 const SERVER_JAR = join(root, 'services/zhongshu-core/zszj-server/target/zszj-server.jar');
-const MVN = join(root, 'tools/apache-maven-3.9.9/bin', process.platform === 'win32' ? 'mvn.cmd' : 'mvn'); // Windows 须用 mvn.cmd 启动器
-const JDK = join(root, 'tools/jdk-17.0.20.1+1');
+// 工具链解析（codex r0 P1：不得硬编码 tools/——CI runner 无该目录）：
+// 本地用 tools/ 自引导（JDK17/Maven 不在系统 PATH）；CI（setup-java）经 JAVA_HOME/PATH 提供。
+const launcher = process.platform === 'win32' ? 'mvn.cmd' : 'mvn';
+const TOOLS_MVN = join(root, 'tools/apache-maven-3.9.9/bin', launcher);
+const TOOLS_JDK_BIN = join(root, 'tools/jdk-17.0.20.1+1', 'bin');
+const MVN = existsSync(TOOLS_MVN) ? TOOLS_MVN : launcher; // tools 缺失（CI）回退 PATH mvn
+const JAVA_BIN = process.env.JAVA_HOME
+  ? join(process.env.JAVA_HOME, 'bin')
+  : (existsSync(TOOLS_JDK_BIN) ? TOOLS_JDK_BIN : ''); // JAVA_HOME 优先，其次 tools，最后 PATH java
+const JAVA = JAVA_BIN ? join(JAVA_BIN, process.platform === 'win32' ? 'java.exe' : 'java') : 'java';
 const OUT_DIR = join(root, 'outputs/sys001');
 const serverLogPath = join(OUT_DIR, `server-${Date.now()}.log`);
 
@@ -201,8 +209,8 @@ console.log('[sys001] 夹具种子就绪：T1 管理员（pgcrypto BCrypt）+ T2
 // ---------- 6. 启动 zszj-server 真实进程（夹具 profile） ----------
 // 每次运行强制以当前提交 clean 重建（codex r0 P1：已存在的 jar 可能是陈旧构件，冒充当前提交证据即测试失真）
 {
-  console.log('[sys001] 以当前提交重建 zszj-server（mvn.cmd -pl zszj-server -am -DskipTests clean package，Windows 须 shell 执行 .cmd）…');
-  const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME || JDK };
+  console.log('[sys001] 以当前提交重建 zszj-server（mvn -pl zszj-server -am -DskipTests clean package）…');
+  const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME || (existsSync(TOOLS_JDK_BIN) ? dirname(TOOLS_JDK_BIN) : '') };
   const buildStartedAt = Date.now();
   const r = spawnSync(`"${MVN}" -q -pl zszj-server -am -DskipTests clean package`,
     { cwd: join(root, 'services/zhongshu-core'), env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: true }); // Windows 上 .cmd 须经 shell 执行（否则 EINVAL）；MVN 路径加引号防空格
@@ -219,7 +227,7 @@ ${(r.stdout + r.stderr).slice(0, 2000)}`);
 mkdirSync(OUT_DIR, { recursive: true });
 const serverLog = [];
 console.log(`[sys001] 启动 zszj-server（profile=local,harness；server 端口 ${serverPort}；log: ${serverLogPath}）…`);
-serverProc = spawn(join(JDK, 'bin/java.exe'), [
+serverProc = spawn(JAVA, [
   '-jar', SERVER_JAR,
   '--spring.profiles.active=local,harness',
   `--server.port=${serverPort}`,

@@ -14,6 +14,7 @@ test('GATES 定义稳定：15 项，G3/G5/G9 为安全守卫，G10/G13/G14 慢�
   assert.deepEqual(GATES.filter((g) => g.safety).map((g) => g.id.split(' ')[0]), ['G3', 'G5', 'G9']);
   assert.deepEqual(GATES.filter((g) => g.slow).map((g) => g.id.split(' ')[0]), ['G10', 'G13', 'G14']);
   assert.deepEqual(GATES.filter((g) => g.mvn).map((g) => g.id.split(' ')[0]), ['G11', 'G12']);
+  assert.deepEqual(GATES.filter((g) => g.exclusive).map((g) => g.id.split(' ')[0]), ['G14']);
 });
 
 test('candidateGates 默认（无 fast/mvn）：含 G10/G13/G14、排除 mvn 门禁', () => {

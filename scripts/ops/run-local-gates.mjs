@@ -48,8 +48,8 @@ export const GATES = [
     mvnArgs: '-pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest -Dsurefire.failIfNoSpecifiedTests=false test' },
   { id: 'G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）', areas: ['apps/', 'scripts/ops/'], slow: true,
     cmd: ['node', 'scripts/ops/run-client-contract-tests.mjs'] },
-  { id: 'G14 基础管理 API 层回归（ZS-SYS-001.A：七类矩阵 50 用例，Docker PG/Redis + 真实 server）', areas: ['scripts/sys001/', 'services/'], slow: true,
-    cmd: ['node', 'scripts/sys001/run-sys001-regression.mjs'] },
+  { id: 'G14 基础管理 API 层回归（ZS-SYS-001.A：七类矩阵 50 用例，Docker PG/Redis + 真实 server）', areas: ['scripts/sys001/', 'services/'], slow: true, exclusive: true,
+    cmd: ['node', 'scripts/sys001/run-sys001-regression.mjs'] }, // exclusive：clean 重建共享 target，须与 mvn 门禁串行（codex r0 P2）
 ];
 
 // 增量模式下视为「良性、不触发全量回退」的未归类路径前缀（生成物/评审原始稿/计划稿）
@@ -130,16 +130,26 @@ function runGate(gate) {
 /** 以 jobs 上限并发跑门禁；结果按 gates 定义顺序返回（与完成顺序无关），完成即时打印进度。 */
 async function runGates(gates, jobs) {
   const results = new Array(gates.length);
+  const indexOf = new Map(gates.map((g, i) => [g, i]));
+  const exclusive = gates.filter((g) => g.exclusive); // 独占门禁（G14 会 clean 重建共享 target）与 mvn 门禁串行，防并发互踩（codex r0 P2）
+  const normal = gates.filter((g) => !g.exclusive);
   let next = 0;
   const worker = async () => {
-    while (next < gates.length) {
-      const i = next++;
+    while (next < normal.length) {
+      const i = indexOf.get(normal[next++]);
       const r = await runGate(gates[i]);
       results[i] = r;
       console.log(`[${r.status}] ${r.id} (${r.ms}ms)`);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(jobs, gates.length) }, worker));
+  const serial = async () => {
+    for (const gate of exclusive) {
+      const r = await runGate(gate);
+      results[indexOf.get(gate)] = r;
+      console.log(`[${r.status}] ${r.id} (${r.ms}ms)`);
+    }
+  };
+  await Promise.all([serial(), ...Array.from({ length: Math.min(jobs, normal.length) }, worker)]);
   return results;
 }
 
