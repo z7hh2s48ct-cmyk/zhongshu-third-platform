@@ -27,6 +27,7 @@ import com.google.common.annotations.VisibleForTesting;
 import jakarta.annotation.Resource;
 import lombok.SneakyThrows;
 import org.springframework.security.access.AccessDeniedException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -42,6 +43,7 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_SCOPE_INVALID;
  *
  * @author 芋道源码
  */
+@Slf4j
 @Service
 public class FileServiceImpl implements FileService {
 
@@ -68,6 +70,8 @@ public class FileServiceImpl implements FileService {
 
     @Resource
     private FileConfigService fileConfigService;
+    @Resource
+    private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
 
     @Resource
     private FileMapper fileMapper;
@@ -305,22 +309,39 @@ public class FileServiceImpl implements FileService {
         if (FileScopeEnum.PUBLIC.getScope().equals(file.getScope())) {
             return; // 公开素材：批准用途内匿名可读
         }
-        // 私有附件（codex r0 P1）：必须登录，且满足其一——
-        // ① 上传所有者本人；② 同技术租户且持有文件查询权限（管理面，scopes 含通配或显式权限）
+        // 私有附件（codex r0 P1 + r1 P1/P2）：必须登录，且满足其一——
+        // ① 上传所有者本人（ownerUserId>0 且与登录主体匹配且同租户；0=无个人所有者，禁止凭 userId=0 凭证冒领）；
+        // ② 同技术租户且实际持有 infra:file:query 权限（经 PermissionCommonApi 查询，与 @ss.hasPermission
+        //    同一数据源——OAuth scopes 与后台菜单权限是两套体系，不能作为判定依据）
         if (loginUser == null) {
             throw new AccessDeniedException("私有文件禁止匿名读取");
         }
-        if (Objects.equals(file.getOwnerUserId(), loginUser.getId())) {
+        boolean ownerMatched = file.getOwnerUserId() != null && file.getOwnerUserId() > 0
+                && Objects.equals(file.getOwnerUserId(), loginUser.getId())
+                && Objects.equals(loginUser.getTenantId(), file.getTenantId());
+        if (ownerMatched) {
             return;
         }
         boolean tenantMatched = Objects.equals(loginUser.getTenantId(), file.getTenantId());
-        boolean manager = loginUser.getScopes() != null
-                && (loginUser.getScopes().contains("*")
-                    || loginUser.getScopes().contains("infra:file:query"));
-        if (!tenantMatched || !manager) {
+        boolean manager = tenantMatched && filePermissionFallback.apply(loginUser.getId(), "infra:file:query");
+        if (!manager) {
             throw new AccessDeniedException("私有文件仅所有者或租户管理员可读取");
         }
     }
+
+    /**
+     * ZS-FILE-001.A codex r1 P2：管理面权限判定，与 {@code @ss.hasPermission} 一致走 PermissionCommonApi。
+     * 以函数字段注入便于单测；系统异常时保守返回 false（宁可拒绝也不放行）。
+     */
+    private final java.util.function.BiFunction<Long, String, Boolean> filePermissionFallback =
+            (userId, permission) -> {
+                try {
+                    return permissionCommonApi.hasAnyPermissions(userId, permission);
+                } catch (Exception ex) {
+                    log.warn("[filePermissionFallback][用户({}) 权限查询失败，保守拒绝 permission({})]", userId, permission, ex);
+                    return false;
+                }
+            };
 
     /**
      * ZS-FILE-001.A：管理员显式调整文件可见范围（历史存量迁移默认 PRIVATE，公开须显式标注）

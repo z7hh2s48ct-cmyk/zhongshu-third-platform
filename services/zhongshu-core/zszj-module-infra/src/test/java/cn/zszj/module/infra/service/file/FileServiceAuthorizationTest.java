@@ -47,6 +47,9 @@ public class FileServiceAuthorizationTest extends BaseDbUnitTest {
     @org.springframework.test.context.bean.override.mockito.MockitoBean
     private cn.zszj.module.infra.service.file.FileConfigService fileConfigService;
 
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
+
 
     @BeforeEach
     public void beforeEach() {
@@ -133,9 +136,51 @@ public class FileServiceAuthorizationTest extends BaseDbUnitTest {
     @Test
     public void validateReadable_private_sameTenantAllowed() {
         FileDO file = seedFile(1L, "PRIVATE");
-        LoginUser sameTenantUser = new LoginUser().setId(101L).setTenantId(1L);
+        file.setOwnerUserId(101L);
+        fileMapper.updateById(file);
+        LoginUser owner = new LoginUser().setId(101L).setTenantId(1L);
 
-        assertDoesNotThrow(() -> fileService.validateFileReadable(file, sameTenantUser));
+        assertDoesNotThrow(() -> fileService.validateFileReadable(file, owner), "所有者本人可读");
+    }
+
+    @Test
+    public void validateReadable_private_ownerZero_clientCredentialToken_rejected() {
+        // codex r1 P1：owner=0（无个人所有者，如存量迁移）+ userId=0 的 client-credentials 令牌
+        // ——owner 分支必须要求 ownerUserId>0，禁止凭 userId=0 凭证跨租户冒领
+        FileDO file = seedFile(1L, "PRIVATE");
+        file.setOwnerUserId(0L);
+        fileMapper.updateById(file);
+        LoginUser zeroUser = new LoginUser().setId(0L).setTenantId(1L);
+
+        assertThrows(AccessDeniedException.class,
+                () -> fileService.validateFileReadable(file, zeroUser),
+                "userId=0 令牌不得凭 owner=0 冒领私有文件");
+    }
+
+    @Test
+    public void validateReadable_private_tenantAdminWithQueryPermission_allowed() {
+        // codex r1 P2：管理分支走 PermissionCommonApi（与 @ss.hasPermission 同源），scopes 无关
+        FileDO file = seedFile(1L, "PRIVATE");
+        file.setOwnerUserId(0L);
+        fileMapper.updateById(file);
+        LoginUser admin = new LoginUser().setId(103L).setTenantId(1L); // 非 owner
+        when(permissionCommonApi.hasAnyPermissions(103L, "infra:file:query")).thenReturn(true);
+
+        assertDoesNotThrow(() -> fileService.validateFileReadable(file, admin),
+                "同租户持有 infra:file:query 的管理员可读");
+    }
+
+    @Test
+    public void validateReadable_private_tenantUserWithoutPermission_rejected() {
+        FileDO file = seedFile(1L, "PRIVATE");
+        file.setOwnerUserId(0L);
+        fileMapper.updateById(file);
+        LoginUser plainUser = new LoginUser().setId(105L).setTenantId(1L); // 同租户非 owner
+        when(permissionCommonApi.hasAnyPermissions(105L, "infra:file:query")).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class,
+                () -> fileService.validateFileReadable(file, plainUser),
+                "同租户无查询权限的非所有者必须拒绝");
     }
 
     // ========== ④ 批量删除混入越权 ==========
@@ -145,14 +190,22 @@ public class FileServiceAuthorizationTest extends BaseDbUnitTest {
         FileDO mine = seedFile(1L, "PRIVATE");
         FileDO foreign = seedFile(2L, "PRIVATE"); // 他租户真实文件
 
-        // 混入他租户真实 id + 不存在 id（codex r0 P2：必须证明跨租户隔离而非仅不存在拒绝）
-        List<Long> ids = List.of(mine.getId(), foreign.getId(), 999_999L);
+        // codex r1 P3：仅混真实他租户 id——证明跨租户隔离（非「不存在 id」数量校验短路）
         ServiceException ex = assertThrows(ServiceException.class,
-                () -> fileService.deleteFileList(ids));
-        assertEquals(FILE_NOT_EXISTS.getCode(), ex.getCode(), "批量混入越权/不存在 id 必须整批拒绝");
+                () -> fileService.deleteFileList(List.of(mine.getId(), foreign.getId())));
+        assertEquals(FILE_NOT_EXISTS.getCode(), ex.getCode());
+        assertNotNull(fileMapper.selectById(mine.getId()), "本租户文件必须保留");
+        assertNotNull(fileMapper.selectById(foreign.getId()), "他租户文件必须保留（零删除）");
+    }
 
-        assertEquals(mine.getId(), fileMapper.selectById(mine.getId()).getId(),
-                "整批拒绝后合法文件也不得被删除");
+    @Test
+    public void deleteFileList_mixedNonexistentId_rejectsAll() throws Exception {
+        FileDO mine = seedFile(1L, "PRIVATE");
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> fileService.deleteFileList(List.of(mine.getId(), 999_999L)));
+        assertEquals(FILE_NOT_EXISTS.getCode(), ex.getCode(), "混入不存在 id 必须整批拒绝");
+        assertNotNull(fileMapper.selectById(mine.getId()), "整批拒绝后合法文件不得被删除");
     }
 
     // ========== ⑤ update-scope ==========
