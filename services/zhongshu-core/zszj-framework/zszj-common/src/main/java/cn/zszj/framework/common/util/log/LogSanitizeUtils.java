@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.POJONode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.util.RawValue;
-import com.fasterxml.jackson.databind.node.TextNode;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -189,14 +188,11 @@ public class LogSanitizeUtils {
                 try {
                     return materializeRaw(mapper().readTree((String) effective));
                 } catch (Throwable t) {
-                    return TextNode.valueOf((String) effective);
+                    // fail-closed：原文不可解析时不得降级为携带原文的 TextNode（r1 P1），交外层安全摘要
+                    throw new IllegalStateException("Raw value is not valid JSON", t);
                 }
             }
-            try {
-                return materializeRaw(mapper().valueToTree(effective));
-            } catch (Throwable t) {
-                return TextNode.valueOf(String.valueOf(effective));
-            }
+            return materializeRaw(mapper().valueToTree(effective));
         }
         if (node.isObject()) {
             ObjectNode copy = mapper().createObjectNode();
