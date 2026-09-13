@@ -70,7 +70,7 @@ export async function run(ctx) {
   });
   const n1Count = pgQuery(`SELECT count(*) FROM system_role_menu WHERE role_id=${roleId} AND deleted=0 AND menu_id=102`);
   const pkgMenuIds = pgQuery(`SELECT menu_ids FROM system_tenant_package WHERE id=${state.packageId}`);
-  record('SYS-ROLE-N1 越界赋权拒绝（1002016005，CFG-003.B 跨 PG 复验）',
+  record('SYS-ROLE-N1 越界赋权拒绝（1002016005）',
     rExceed.body?.code === 1002016005 && n1Count === '0',
     `assign-role-menu（混入 102）code=${rExceed.body?.code}（期望 1002016005），PG 越界行=${n1Count}，套餐 menu_ids=${pkgMenuIds}，resp=${JSON.stringify(rExceed.body).slice(0,120)}（role ${roleId} 租户=${t2.tenantId}）`);
 

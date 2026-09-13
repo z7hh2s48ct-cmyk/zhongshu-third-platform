@@ -319,9 +319,8 @@ try {
 const results = [];
 // 已登记缺口（报告含归口与证据；这些用例的 FAIL 是缺口证据本身，不是夹具误报）
 const REGISTERED_GAPS = new Set([
-  'SYS-POST-N1', // 归口 ZS-IAM-003（已修复，断言新拒绝码）
-  'SYS-ROLE-N1', // 归口 ZS-CFG-003.B / ZS-DB-001：真实 PG 上越界既不拒绝也不落库（GAP-3）
   'STATEMENT-DEFECT', // 归口 ZS-DB-001/依赖基线：真实 PG「statement 已关闭」（GAP-1，已夹具规避）
+  // SYS-POST-N1（GAP-2 岗位引用，3097b22f 修复）、SYS-ROLE-N1（GAP-3 套餐静默过滤，控制器修复）均已修复转正式断言
 ]);
 function record(id, ok, note) {
   const knownGap = !ok && ([...REGISTERED_GAPS].some((g) => id.startsWith(g)) || /系统异常|code=500/.test(note));
