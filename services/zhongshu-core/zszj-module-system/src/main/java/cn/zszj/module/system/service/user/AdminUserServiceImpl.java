@@ -351,7 +351,10 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteUserList(List<Long> ids) {
-        // 1. 校验用户都不是部门负责人；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
+        // 1. 校验用户都存在、且在调用方租户可见范围内；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
+        // ZS-LOGIN-003 codex r0 P1：此前只校验「不是部门负责人」，不校验归属 —— 跨租户强制下线漏洞，详见 validateUsersExists
+        validateUsersExists(ids);
+        // 1.1 校验用户都不是部门负责人
         ids.forEach(this::validateUserNotDeptLeader);
 
         // 2.1 批量删除用户
@@ -499,6 +502,36 @@ public class AdminUserServiceImpl implements AdminUserService {
             throw exception(USER_NOT_EXISTS);
         }
         return user;
+    }
+
+    /**
+     * ZS-LOGIN-003（codex r0 P1 修复）：批量校验用户都存在，且在<b>调用方租户可见范围内</b>。
+     *
+     * <p><b>为何必须补</b>：{@link #deleteUserList(List)} 此前只校验「不是部门负责人」。
+     * {@code userMapper.deleteByIds} 受租户拦截器过滤（他租户账号根本删不掉），
+     * 但会话撤销走 {@link #invalidateUserSessions} → {@code OAuth2TokenService#removeAccessToken(Long, Integer)}，
+     * 后者为了「不被调用方租户上下文静默收窄」而在 {@code TenantUtils.executeIgnore} 作用域内执行、是<b>全局</b>的。
+     * 两者叠加就形成漏洞：持有 {@code system:user:delete} 的管理员只要向他租户用户编号，
+     * 就能在账号<b>未被删除</b>的情况下把对方<b>跨租户强制下线</b>（DoS）。
+     *
+     * <p>因此本校验与单条删除的 {@link #validateUserExists(Long)} 对齐：任一编号不可见即<b>整批失败</b>，
+     * 对外统一抛 {@code USER_NOT_EXISTS}（他租户编号与真不存在不可区分，不泄露跨租户存在性）。
+     *
+     * <p><b>关键：本校验必须留在调用方租户作用域内执行（绝不得包进 {@code executeIgnore}）</b>，
+     * 否则租户过滤失效、他租户编号也能通过校验，修复即形同虚设。
+     * 只有校验通过后的撤销才允许进入忽略租户作用域。
+     *
+     * @param ids 用户编号集合
+     */
+    private void validateUsersExists(Collection<Long> ids) {
+        if (CollUtil.isEmpty(ids)) {
+            return;
+        }
+        // 去重后比较数量：selectByIds 同样受「租户过滤 + 逻辑删除过滤」，不可见的编号不会返回
+        Set<Long> distinctIds = new HashSet<>(ids);
+        if (CollUtil.size(userMapper.selectByIds(distinctIds)) != distinctIds.size()) {
+            throw exception(USER_NOT_EXISTS);
+        }
     }
 
     /**

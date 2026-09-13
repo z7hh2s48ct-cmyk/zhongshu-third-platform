@@ -7,6 +7,7 @@ import ch.qos.logback.core.read.ListAppender;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.util.collection.ArrayUtils;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.infra.api.config.ConfigApi;
 import cn.zszj.module.infra.api.file.FileApi;
@@ -33,26 +34,31 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static cn.hutool.core.util.RandomUtil.randomEle;
 import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_IS_DEPT_LEADER;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_NOT_EXISTS;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_PASSWORD_FAILED;
 import static cn.zszj.module.system.service.user.AdminUserServiceImpl.USER_INIT_PASSWORD_KEY;
 import static org.assertj.core.util.Lists.newArrayList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -130,6 +136,7 @@ public class AdminUserServiceImplSessionInvalidateTest extends BaseDbUnitTest {
             serviceLogger.detachAppender(logAppender);
             logAppender.stop();
         }
+        TenantContextHolder.clear();
     }
 
     // ========== ① 删除用户：全部会话必须失效 ==========
@@ -194,6 +201,80 @@ public class AdminUserServiceImplSessionInvalidateTest extends BaseDbUnitTest {
         // 断言：未撤销任何会话
         verify(oauth2TokenService, never()).removeAccessToken(anyLong(), any());
         verify(oauth2TokenService, never()).removeAccessToken(anyString());
+    }
+
+    /**
+     * 场景 ①-4（codex r0 P1）：批量删除时，若传入的用户编号在<b>调用方租户可见范围内不存在</b>
+     * （含「他租户用户编号」——生产环境该编号会被租户拦截器过滤掉，等价于查不到），
+     * 必须<b>整批失败</b>且<b>不撤销任何会话</b>。
+     *
+     * <p><b>RED</b>：修复前 {@code deleteUserList} 只校验「不是部门负责人」，<b>不校验归属</b>。
+     * 由于 {@code userMapper.deleteByIds} 受租户过滤（他租户账号根本删不掉），而会话撤销走
+     * {@code invalidateUserSessions} → {@code removeAccessToken}，后者在 {@code TenantUtils.executeIgnore}
+     * 作用域内是<b>全局</b>的 —— 于是持有 {@code system:user:delete} 的管理员只要提交他租户用户编号，
+     * 就能在账号未被删除的情况下把对方<b>跨租户强制下线</b>（DoS）。
+     *
+     * <p>说明：{@code BaseDbUnitTest} 未装配租户拦截器，无法在 H2 里真复现跨租户过滤，
+     * 故此处以「查不到的编号」等价构造（与 {@code AdminUserServiceImplTest
+     * #testValidateUserNotDeptLeader_ignoresDataPermission} 对数据权限的处理方式一致）；
+     * 「归属校验必须运行在调用方租户作用域内」由下一例直接断言。
+     */
+    @Test
+    public void testDeleteUserList_containsInvisibleUser_shouldFailWholeBatchAndRevokeNothing() {
+        // mock 数据：一个可见的用户 + 一个不可见的编号（模拟他租户用户）
+        AdminUserDO visibleUser = randomAdminUserDO();
+        userMapper.insert(visibleUser);
+        Long invisibleUserId = 999_999_999L;
+
+        // 调用，并断言异常：整批失败
+        assertServiceException(() -> userService.deleteUserList(newArrayList(visibleUser.getId(), invisibleUserId)),
+                USER_NOT_EXISTS);
+
+        // 断言：可见用户未被删除（不得部分删除）
+        assertNotNull(userMapper.selectById(visibleUser.getId()));
+        // 断言：未触发任何会话撤销，也未触发关联数据清理
+        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), any());
+        verify(oauth2TokenService, never()).removeAccessToken(anyString());
+        verify(permissionService, never()).processUserDeleted(any());
+    }
+
+    /**
+     * 场景 ①-5（codex r0 P1）：批量删除的<b>归属校验</b>必须运行在「调用方租户作用域」内，
+     * 不得被包进 {@code TenantUtils.executeIgnore}；否则他租户用户编号也会通过校验，
+     * 随后的全局撤销就构成跨租户强制下线。
+     *
+     * <p>同时断言：校验失败时不得触发任何撤销，且调用方租户上下文不被污染。
+     */
+    @Test
+    public void testDeleteUserList_ownershipCheckMustRunUnderCallerTenantScope() {
+        AdminUserServiceImpl targetService = new AdminUserServiceImpl();
+        AdminUserMapper mockUserMapper = mock(AdminUserMapper.class);
+        OAuth2TokenService mockTokenService = mock(OAuth2TokenService.class);
+        ReflectionTestUtils.setField(targetService, "userMapper", mockUserMapper);
+        ReflectionTestUtils.setField(targetService, "oauth2TokenService", mockTokenService);
+
+        // 调用方带着自己的租户上下文
+        TenantContextHolder.setTenantId(1L);
+        TenantContextHolder.setIgnore(false);
+        // 归属校验期间「是否忽略租户」的观测值：初值 true，若校验未被包进 executeIgnore 则会被改写为 false
+        AtomicBoolean ignoreDuringOwnershipCheck = new AtomicBoolean(true);
+        AdminUserDO visibleUser = randomAdminUserDO(o -> o.setId(10L));
+        when(mockUserMapper.selectByIds(any())).thenAnswer(invocation -> {
+            ignoreDuringOwnershipCheck.set(TenantContextHolder.isIgnore());
+            return newArrayList(visibleUser); // 只「看得见」1 个，另一个属他租户
+        });
+
+        // 调用，并断言异常
+        assertServiceException(() -> targetService.deleteUserList(newArrayList(10L, 20L)), USER_NOT_EXISTS);
+
+        // 断言：归属校验发生在调用方租户作用域内
+        assertFalse(ignoreDuringOwnershipCheck.get(),
+                "批量删除的归属校验必须在调用方租户作用域内执行，不得忽略租户（否则构成跨租户强制下线）");
+        // 断言：未触发任何撤销
+        verify(mockTokenService, never()).removeAccessToken(anyLong(), any());
+        // 断言：调用方租户上下文未被污染
+        assertFalse(TenantContextHolder.isIgnore(), "校验失败后必须恢复调用方的租户忽略标记");
+        assertEquals(Long.valueOf(1L), TenantContextHolder.getTenantId(), "校验失败后必须保留调用方的租户编号");
     }
 
     // ========== ② 禁用用户：既有能力回归看守 ==========
