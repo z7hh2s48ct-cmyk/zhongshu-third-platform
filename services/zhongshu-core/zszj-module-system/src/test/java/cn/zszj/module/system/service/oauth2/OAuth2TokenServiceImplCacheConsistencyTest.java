@@ -298,8 +298,9 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
         Thread t2 = new Thread(() -> {
             try {
                 assertTrue(t1Checked.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T1 首次核验超时");
-                transactionTemplate.executeWithoutResult(status ->
-                        oauth2TokenService.removeAccessToken(access.getAccessToken()));
+                // codex r2 P2：T2 只撤 DB 行（mapper 直改自动提交），不得经 service 撤销——否则缓存也被删，
+                // T1 重核验在缓存未命中处早退 401，权威 count 根本不会执行，flushCache 无法被验证
+                oauth2AccessTokenMapper.deleteById(access.getId());
             } catch (Throwable ex) {
                 t2Error.set(ex);
             } finally {
@@ -322,9 +323,15 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
                 Thread.currentThread().interrupt();
                 throw new RuntimeException(ex);
             }
+            // 前置：T2 只撤了 DB 行，缓存条目仍在——重核验必然走「缓存命中 → 权威 count」路径
+            assertNotNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                    "前置：T2 仅撤销 DB 行，缓存条目必须仍在");
             // T1 同事务内再次核验：T2 已在另一连接撤销并提交——flushCache=TRUE 必须回源拒绝
             assertServiceException(() -> oauth2TokenService.checkAccessToken(access.getAccessToken()),
                     new ErrorCode(401, "访问令牌不存在"));
+            // 自愈：权威核验拒绝后缓存条目被 evict
+            assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                    "权威核验拒绝后必须自愈 evict 缓存条目");
         });
 
         assertNull(t2Error.get(), "T2 撤销不得失败: " + t2Error.get());
