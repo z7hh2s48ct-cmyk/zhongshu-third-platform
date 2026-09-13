@@ -35,11 +35,18 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
     @Spy
     private ConfigSensitiveClassifier sensitiveClassifier = new ConfigSensitiveClassifier();
 
+    @Mock
+    private ConfigValueValidator configValueValidator;
+
     @InjectMocks
     private ConfigServiceImpl configService;
 
+    /** 乐观锁版本：mock DO 的固定 version，成功路径 reqVO 须携带同值（codex r1 P1 客户端版本合同） */
+    private static final Integer EDIT_VERSION = 0;
+
     private static ConfigDO config(String key, String value, boolean visible) {
         ConfigDO cfg = new ConfigDO();
+        cfg.setVersion(EDIT_VERSION);
         cfg.setConfigKey(key);
         cfg.setValue(value);
         cfg.setVisible(visible);
@@ -103,13 +110,15 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setName("用户初始密码");
         req.setValue("******"); // 回显的掩码，非管理员输入的新值
         req.setVisible(false);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(1L))
                 .thenReturn(config("system.user.init-password", "RealInitPwd123", false));
+        when(configMapper.update(any(), any())).thenReturn(1);
 
         configService.updateConfig(req);
 
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
-        verify(configMapper).updateById(captor.capture());
+        verify(configMapper).update(captor.capture(), any());
         assertEquals("RealInitPwd123", captor.getValue().getValue(),
                 "敏感项回传掩码 ****** 时必须保留库中真实值，不得用掩码覆盖（数据损坏回归）");
     }
@@ -123,12 +132,14 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setName("数据库密码");
         req.setValue("NewP@ssw0rd");
         req.setVisible(false);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(2L)).thenReturn(config("sys.db.password", "OldPwd", false));
+        when(configMapper.update(any(), any())).thenReturn(1);
 
         configService.updateConfig(req);
 
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
-        verify(configMapper).updateById(captor.capture());
+        verify(configMapper).update(captor.capture(), any());
         assertEquals("NewP@ssw0rd", captor.getValue().getValue(), "敏感项提交非掩码新值时应正常更新");
     }
 
@@ -141,12 +152,14 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setName("横幅文案");
         req.setValue("******");
         req.setVisible(true);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(3L)).thenReturn(config("biz.banner.text", "old", true));
+        when(configMapper.update(any(), any())).thenReturn(1);
 
         configService.updateConfig(req);
 
         ArgumentCaptor<ConfigDO> captor = ArgumentCaptor.forClass(ConfigDO.class);
-        verify(configMapper).updateById(captor.capture());
+        verify(configMapper).update(captor.capture(), any());
         assertEquals("******", captor.getValue().getValue(), "普通项字面 ****** 应原样持久化，不做往返保护");
     }
 
@@ -168,7 +181,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(req));
         assertEquals(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO.getCode(), ex.getCode(),
                 "改名脱密（SECRET→SENSITIVE）且回传掩码保留真值时必须被拒绝，否则秘密可被两步洗白暴露");
-        verify(configMapper, never()).updateById(any(ConfigDO.class));
+        verify(configMapper, never()).update(any(ConfigDO.class), any());
     }
 
     @Test
@@ -187,7 +200,50 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(req));
         assertEquals(CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO.getCode(), ex.getCode(),
                 "SENSITIVE→NORMAL 且回传掩码保留真值时必须被拒绝，否则敏感值被暴露");
-        verify(configMapper, never()).updateById(any(ConfigDO.class));
+        verify(configMapper, never()).update(any(ConfigDO.class), any());
+    }
+
+    @Test
+    public void updateConfig_maskedEchoWithKeyChange_shouldValidateRetainedValueAgainstTargetKey() {
+        // ZS-CFG-004 codex r0 P2-1 回归：SENSITIVE 不可见行改名为另一 key 并回传掩码 ****** 时，
+        // 脱敏往返保护保留旧值；一旦 key 变化，被保留的旧值必须按【目标 key】的契约重新校验，
+        // 否则可借改名把越界/非法旧值迁移到受控 key 下绕过校验。此处校验器为 mock，
+        // 断言 validate 被以【目标 key + 保留的旧值】调用（校验器自身拒绝行为由 H2 用例覆盖）。
+        ConfigSaveReqVO req = new ConfigSaveReqVO();
+        req.setId(9L);
+        req.setCategory("biz");
+        req.setName("renamed");
+        req.setKey("biz.target");  // 目标 key（与库中 biz.source 不同 → key 变化）
+        req.setValue("******");    // 回显掩码 → 保留旧值 "99"
+        req.setVisible(false);     // 保持 SENSITIVE，不触发降级/翻可见守卫
+        req.setVersion(EDIT_VERSION);
+        when(configMapper.selectById(9L)).thenReturn(config("biz.source", "99", false));
+        when(configMapper.update(any(), any())).thenReturn(1);
+
+        configService.updateConfig(req);
+
+        // key 变化后，被掩码保留的旧值须按目标 key 重新校验
+        verify(configValueValidator).validate("biz.target", "99");
+    }
+
+    @Test
+    public void updateConfig_maskedEchoWithoutKeyChange_shouldNotRevalidate() {
+        // 护栏：key 未变的纯掩码回显（仅改名称/备注）不重复校验保留的原值——原值此前已按其自身 key 校验过，
+        // 且敏感真值不应再送入校验器（避免不必要的处理）。
+        ConfigSaveReqVO req = new ConfigSaveReqVO();
+        req.setId(10L);
+        req.setCategory("biz");
+        req.setName("renamed-only");
+        req.setKey("biz.same");    // 与库中一致 → key 未变
+        req.setValue("******");    // 回显掩码 → 保留旧值
+        req.setVisible(false);
+        req.setVersion(EDIT_VERSION);
+        when(configMapper.selectById(10L)).thenReturn(config("biz.same", "kept", false));
+        when(configMapper.update(any(), any())).thenReturn(1);
+
+        configService.updateConfig(req);
+
+        verify(configValueValidator, never()).validate(any(), any());
     }
 
 }

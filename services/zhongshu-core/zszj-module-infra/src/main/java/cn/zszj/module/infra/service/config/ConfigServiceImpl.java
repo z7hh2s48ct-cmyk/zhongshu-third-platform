@@ -8,6 +8,7 @@ import cn.zszj.module.infra.convert.config.ConfigConvert;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
 import cn.zszj.module.infra.dal.mysql.config.ConfigMapper;
 import cn.zszj.module.infra.enums.config.ConfigTypeEnum;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.google.common.annotations.VisibleForTesting;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Objects;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
@@ -33,14 +35,22 @@ public class ConfigServiceImpl implements ConfigService {
     @Resource
     private ConfigSensitiveClassifier sensitiveClassifier;
 
+    @Resource
+    private ConfigValueValidator configValueValidator;
+
     @Override
     public Long createConfig(ConfigSaveReqVO createReqVO) {
         // 校验参数配置 key 的唯一性
         validateConfigKeyUnique(null, createReqVO.getKey());
 
+        // ZS-CFG-004 B03：值校验——按参数目录合同校验类型/范围/枚举
+        configValueValidator.validate(createReqVO.getKey(), createReqVO.getValue());
+
         // 插入参数配置
         ConfigDO config = ConfigConvert.INSTANCE.convert(createReqVO);
         config.setType(ConfigTypeEnum.CUSTOM.getType());
+        // ZS-CFG-004 codex r2 P2 修复：版本由服务端初始化，忽略请求携带值（MapStruct 会自动映射同名 version 字段）
+        config.setVersion(0);
         configMapper.insert(config);
         return config.getId();
     }
@@ -64,7 +74,8 @@ public class ConfigServiceImpl implements ConfigService {
         // ZS-CFG-001.B r0 P1 修复：脱敏往返保护——敏感项详情/分页/导出输出被掩码为 ******，前端 ConfigForm.vue
         // 仅编辑名称/备注后会把掩码原样回传；若直接持久化会用掩码覆盖库中真实秘密值（如 system.user.init-password），
         // 造成数据损坏。故提交值为掩码哨兵且库中项为敏感级时保留原值（管理员改真值时提交新值、非哨兵，不受影响）。
-        if (sensitiveClassifier.isMaskedEcho(exists, updateObj.getValue())) {
+        boolean maskedEcho = sensitiveClassifier.isMaskedEcho(exists, updateObj.getValue());
+        if (maskedEcho) {
             // ZS-CFG-001.B r1 P1 修复：回传掩码=调用方不掌握真值，禁止在同一更新里下调该值保护级，否则可两步洗密
             // （SECRET 改名脱密降 SENSITIVE → 翻 visible 降 NORMAL）后经 /get-value-by-key 与详情读出明文；现有
             // TOCTOU 守卫只拦 SECRET→visible，拦不住改名降级链，故此处补齐。
@@ -74,7 +85,36 @@ public class ConfigServiceImpl implements ConfigService {
             updateObj.setValue(exists.getValue());
         }
 
-        configMapper.updateById(updateObj);
+        // ZS-CFG-004 B03：值校验——按参数目录合同校验类型/范围/枚举。
+        // 掩码回显且 key 未变时保留原值、不重复校验（原值此前已按其自身 key 校验过）。
+        // ZS-CFG-004 codex r0 P2-1 修复：一旦 key 发生变化，被恢复/保留的值须按【目标 key】的合同重新校验，
+        // 堵住"把未登记、不可见行（如 value=99）改名为受控 key（如 sys.login.captcha-max-retry，[1,10]）+
+        // 提交掩码 ****** 保留越界旧值"从而绕过校验、令非法值进入运行的旁路（违背 CFG-004"非法值不进入运行"验收）。
+        boolean keyChanged = !Objects.equals(exists.getConfigKey(), updateReqVO.getKey());
+        if (!maskedEcho || keyChanged) {
+            configValueValidator.validate(updateReqVO.getKey(), updateObj.getValue());
+        }
+
+        // ZS-CFG-004 codex r1 P1 修复 + codex r2 P1 改型：乐观锁版本改为【独立整数 version 列】——
+        // r1 曾以客户端回传 updateTime 作版本，r2 评审证明其根本缺陷：JSON 时间序列化丢毫秒以下精度
+        // （微秒版本回传即冲突拒绝）、datetime 秒级精度下同秒内两次更新版本不推进（旧表单仍可覆盖）、
+        // 创建路径 MapStruct 自动映射可伪造初始版本。整数 version 由服务端维护、成功更新原子 +1，
+        // 详情返回、更新必须原样回传，彻底保证每次更新版本唯一推进。
+        Integer expectedVersion = updateReqVO.getVersion();
+        // ZS-CFG-004 codex r3 P2 修复：快照版本与请求版本必须一致才递增——否则请求预填高版本（如 8）、
+        // 快照 7、期间他人推进至 8 时，本请求仍以 7→8 成功，版本不推进且可回填旧快照值。
+        // 不一致立即按冲突拒绝；条件 UPDATE 保留作兜底（覆盖读后写之间的极短窗口）。
+        if (expectedVersion == null || !expectedVersion.equals(exists.getVersion())) {
+            throw exception(CONFIG_UPDATE_CONFLICT);
+        }
+        updateObj.setVersion(expectedVersion + 1);
+        int affected = configMapper.update(updateObj,
+                new LambdaQueryWrapper<ConfigDO>()
+                        .eq(ConfigDO::getId, updateObj.getId())
+                        .eq(ConfigDO::getVersion, expectedVersion));
+        if (affected == 0) {
+            throw exception(CONFIG_UPDATE_CONFLICT);
+        }
     }
 
     @Override

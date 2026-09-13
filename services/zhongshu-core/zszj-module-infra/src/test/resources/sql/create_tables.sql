@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS "infra_config" (
     "value" varchar(500) NOT NULL DEFAULT '',
     "visible" bit NOT NULL,
     "remark" varchar(500) DEFAULT NULL,
+    "version" int NOT NULL DEFAULT 0,
     "creator" varchar(64) DEFAULT '',
     "create_time" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updater" varchar(64) DEFAULT '',

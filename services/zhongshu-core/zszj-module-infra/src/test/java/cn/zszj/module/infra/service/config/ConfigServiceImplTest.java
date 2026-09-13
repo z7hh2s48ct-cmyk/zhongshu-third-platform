@@ -25,7 +25,7 @@ import static cn.zszj.framework.test.core.util.RandomUtils.*;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class})
+@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class, ConfigValueValidator.class})
 public class ConfigServiceImplTest extends BaseDbUnitTest {
 
     @Resource
@@ -46,8 +46,9 @@ public class ConfigServiceImplTest extends BaseDbUnitTest {
         assertNotNull(configId);
         // 校验记录的属性是否正确
         ConfigDO config = configMapper.selectById(configId);
-        assertPojoEquals(reqVO, config, "id");
+        assertPojoEquals(reqVO, config, "id", "version");
         assertEquals(ConfigTypeEnum.CUSTOM.getType(), config.getType());
+        assertEquals(0, config.getVersion(), "创建时版本由服务端初始化为 0，忽略请求携带值");
     }
 
     @Test
@@ -58,13 +59,14 @@ public class ConfigServiceImplTest extends BaseDbUnitTest {
         // 准备参数
         ConfigSaveReqVO reqVO = randomPojo(ConfigSaveReqVO.class, o -> {
             o.setId(dbConfig.getId()); // 设置更新的 ID
+            o.setVersion(dbConfig.getVersion()); // ZS-CFG-004：更新须携带编辑时版本（乐观锁）
         });
 
         // 调用
         configService.updateConfig(reqVO);
-        // 校验是否更新正确
+        // 校验是否更新正确（update_time 由服务端在更新时刷新，不属于回传断言范围）
         ConfigDO config = configMapper.selectById(reqVO.getId()); // 获取最新的
-        assertPojoEquals(reqVO, config);
+        assertPojoEquals(reqVO, config, "version");
     }
 
     @Test

@@ -41,4 +41,11 @@ public class ConfigSaveReqVO {
     @Schema(description = "备注", example = "备注一下很帅气！")
     private String remark;
 
+    /**
+     * 编辑时版本（乐观锁）。详情接口返回 version，更新时必须原样回传；
+     * 服务端以其为条件执行 UPDATE 并原子 +1，未携带视为盲写按冲突拒绝。
+     */
+    @Schema(description = "乐观锁版本，从详情回传", example = "0")
+    private Integer version;
+
 }

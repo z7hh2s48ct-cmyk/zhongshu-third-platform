@@ -16,6 +16,11 @@ public interface ErrorCodeConstants {
     ErrorCode CONFIG_GET_VALUE_ERROR_IF_VISIBLE = new ErrorCode(1_001_000_004, "获取参数配置失败，原因：不允许获取不可见配置");
     ErrorCode CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE = new ErrorCode(1_001_000_005, "敏感/秘密参数不允许设置为可见");
     ErrorCode CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO = new ErrorCode(1_001_000_006, "敏感/秘密参数在值未变更（回显掩码 ******）时，不允许降低其保护级别（改名为非秘密键或设置为可见）；如需调整请重新填写真实值");
+    // ZS-CFG-004 B03：配置值校验错误码
+    ErrorCode CONFIG_VALUE_TYPE_MISMATCH = new ErrorCode(1_001_000_007, "参数值类型不匹配，期望类型：{}");
+    ErrorCode CONFIG_VALUE_OUT_OF_RANGE = new ErrorCode(1_001_000_008, "参数值超出允许范围 [{}, {}]");
+    ErrorCode CONFIG_VALUE_NOT_IN_ALLOWED_SET = new ErrorCode(1_001_000_009, "参数值不在允许的值集 {} 中");
+    ErrorCode CONFIG_UPDATE_CONFLICT = new ErrorCode(1_001_000_010, "参数配置更新冲突，请刷新后重试");
 
     // ========== 定时任务 1-001-001-000 ==========
     ErrorCode JOB_NOT_EXISTS = new ErrorCode(1_001_001_000, "定时任务不存在");
@@ -53,7 +58,7 @@ public interface ErrorCodeConstants {
     ErrorCode CODEGEN_MASTER_TABLE_NAME_DUPLICATE = new ErrorCode(1_001_004_013,
             "主子表规范化类名({})重复，请调整主表或子表类名");
     ErrorCode CODEGEN_MASTER_TABLE_FIELD_DUPLICATE = new ErrorCode(1_001_004_014,
-            "主子表属性名({})重复，请调整主表字段、子表类名或关联关系");
+            "主子表属性名({})重复，请调整主子表字段、子表类名或关联关系");
 
     // ========== 文件配置 1-001-006-000 ==========
     ErrorCode FILE_CONFIG_NOT_EXISTS = new ErrorCode(1_001_006_000, "文件配置不存在");
