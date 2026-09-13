@@ -21,6 +21,7 @@ import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
 import cn.zszj.module.system.dal.mysql.tenant.TenantMapper;
+import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
 import cn.zszj.module.system.enums.permission.RoleCodeEnum;
 import cn.zszj.module.system.enums.permission.RoleTypeEnum;
 import cn.zszj.module.system.service.permission.MenuService;
@@ -62,6 +63,8 @@ public class TenantServiceImpl implements TenantService {
 
     @Resource
     private TenantMapper tenantMapper;
+    @Resource
+    private TenantPackageMapper tenantPackageMapper;
 
     @Resource
     private TenantPackageService tenantPackageService;
@@ -110,6 +113,16 @@ public class TenantServiceImpl implements TenantService {
         validTenantWebsiteDuplicate(createReqVO.getWebsites(), null);
         // 校验套餐被禁用
         TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(createReqVO.getPackageId());
+        // ZS-CFG-003.B codex r1 P1：创建租户同样先取套餐行锁——租户尚未绑定、不会出现在收缩枚举中，
+        // 若并发套餐收缩，管理员角色必须按收缩后的套餐菜单授予
+        // codex r3 P2：使用锁定查询返回的套餐（收缩/扩大后的最新菜单）完成管理员授权；锁定读为空即拒绝
+        TenantPackageDO lockedPackage = tenantPackageMapper.selectByIdForUpdate(createReqVO.getPackageId());
+        if (lockedPackage == null) {
+            throw exception(TENANT_PACKAGE_NOT_EXISTS);
+        }
+        tenantPackage = lockedPackage;
+        // lambda 引用需 effectively-final：以新变量承载锁定套餐
+        TenantPackageDO finalLockedPackage = lockedPackage;
 
         // 创建租户
         TenantDO tenant = BeanUtils.toBean(createReqVO, TenantDO.class);
@@ -117,7 +130,7 @@ public class TenantServiceImpl implements TenantService {
         // 创建租户的管理员
         TenantUtils.execute(tenant.getId(), () -> {
             // 创建角色
-            Long roleId = createRole(tenantPackage);
+            Long roleId = createRole(finalLockedPackage);
             // 创建用户，并分配角色
             Long userId = createUser(roleId, createReqVO);
             // 修改租户的管理员
@@ -158,14 +171,28 @@ public class TenantServiceImpl implements TenantService {
         // 校验租户域名是否重复
         validTenantWebsiteDuplicate(updateReqVO.getWebsites(), updateReqVO.getId());
         // 校验套餐被禁用
-        TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
+        tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
+        // ZS-CFG-003.B codex r1 P1：先取【目标套餐行锁】再动租户绑定——与 updateTenantPackage（套餐→租户锁序）
+        // 统一，堵「换套餐换入正在收缩的套餐、逃过该租户的收敛」的交错；换出套餐由其自身收缩流程在
+        // 锁内重查绑定后跳过（见 TenantPackageServiceImpl）
+        // codex r2 P2：使用锁定查询返回的套餐（收缩/扩大后的最新菜单）完成授权
+        TenantPackageDO tenantPackage = tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
+        if (tenantPackage == null) {
+            throw exception(TENANT_PACKAGE_NOT_EXISTS);
+        }
+        // codex r2 P1：锁租户行后读取【当前绑定】——并发换绑提交后，锁前快照已失效，
+        // 收敛判断与绑定写回必须以锁内数据为准
+        TenantDO lockedTenant = tenantMapper.selectByIdForUpdate(updateReqVO.getId());
+        if (lockedTenant == null) {
+            throw exception(TENANT_NOT_EXISTS);
+        }
 
         // 更新租户
         TenantDO updateObj = BeanUtils.toBean(updateReqVO, TenantDO.class);
         tenantMapper.updateById(updateObj);
-        // 如果套餐发生变化，则修改其角色的权限
-        if (ObjectUtil.notEqual(tenant.getPackageId(), updateReqVO.getPackageId())) {
-            updateTenantRoleMenu(tenant.getId(), tenantPackage.getMenuIds());
+        // 如果套餐发生变化（以锁内绑定为准），则修改其角色的权限
+        if (ObjectUtil.notEqual(lockedTenant.getPackageId(), updateReqVO.getPackageId())) {
+            updateTenantRoleMenu(lockedTenant.getId(), tenantPackage.getMenuIds());
         }
     }
 
@@ -202,6 +229,8 @@ public class TenantServiceImpl implements TenantService {
     // ZS-PERM-004.A codex r0 P1：同上——统一 Spring 事务生命周期（本方法由套餐/租户更新链调用，驱逐须与提交同序）
     @Transactional(rollbackFor = Exception.class)
     public void updateTenantRoleMenu(Long tenantId, Set<Long> menuIds) {
+        // ZS-CFG-003.B codex r0 P1：先取租户行锁（与授权入口同一把锁），收敛与套餐校验/授权写入串行化
+        tenantMapper.selectByIdForUpdate(tenantId);
         TenantUtils.execute(tenantId, () -> {
             // 获得所有角色
             List<RoleDO> roles = roleService.getRoleList();

@@ -136,6 +136,8 @@ public interface ErrorCodeConstants {
     ErrorCode TENANT_PACKAGE_DISABLE = new ErrorCode(1_002_016_002, "名字为【{}】的租户套餐已被禁用");
     ErrorCode TENANT_PACKAGE_NAME_DUPLICATE = new ErrorCode(1_002_016_003, "已经存在该名字的租户套餐");
     ErrorCode TENANT_PACKAGE_MENU_MODULE_DISABLED = new ErrorCode(1_002_016_004, "菜单【{}】属于未启用模块（{}），套餐不能启用关闭模块的功能");
+    // ZS-CFG-003.B：套餐/角色权限交集——授权入口的服务端重检
+    ErrorCode TENANT_PACKAGE_MENU_EXCEED = new ErrorCode(1_002_016_005, "菜单【{}】超出租户套餐【{}】的许可范围，不能授予角色");
 
     // ========== 社交用户 1-002-018-000 ==========
     ErrorCode SOCIAL_USER_AUTH_FAILURE = new ErrorCode(1_002_018_000, "社交授权失败，原因是：{}");

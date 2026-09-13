@@ -2,6 +2,7 @@ package cn.zszj.module.system.service.tenant;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Transactional;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.pojo.PageResult;
@@ -12,6 +13,7 @@ import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackageSa
 import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+import cn.zszj.module.system.dal.mysql.tenant.TenantMapper;
 import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
 import cn.zszj.module.system.service.permission.MenuService;
 import com.baomidou.dynamic.datasource.annotation.DSTransactional;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -34,10 +37,13 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
  */
 @Service
 @Validated
+@Slf4j
 public class TenantPackageServiceImpl implements TenantPackageService {
 
     @Resource
     private TenantPackageMapper tenantPackageMapper;
+    @Resource
+    private TenantMapper tenantMapper;
 
     @Resource
     @Lazy // 避免循环依赖的报错
@@ -66,6 +72,9 @@ public class TenantPackageServiceImpl implements TenantPackageService {
     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
         // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
         validateTenantPackageMenus(updateReqVO.getMenuIds());
+        // ZS-CFG-003.B codex r2 P1：先取本套餐行锁再读取——并发套餐更新用锁前旧值判断"菜单未变化"
+        // 跳过收敛的交错必须串行化；比较基准一律取锁定读
+        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getId());
         // 校验存在
         TenantPackageDO tenantPackage = validateTenantPackageExists(updateReqVO.getId());
         // 校验套餐名是否重复
@@ -76,7 +85,18 @@ public class TenantPackageServiceImpl implements TenantPackageService {
         // 如果菜单发生变化，则修改每个租户的菜单
         if (!CollUtil.isEqualList(tenantPackage.getMenuIds(), updateReqVO.getMenuIds())) {
             List<TenantDO> tenants = tenantService.getTenantListByPackageId(tenantPackage.getId());
-            tenants.forEach(tenant -> tenantService.updateTenantRoleMenu(tenant.getId(), updateReqVO.getMenuIds()));
+            // ZS-CFG-003.B codex r0 P1：按租户 id 排序后收敛——多租户行锁获取顺序确定，避免并发套餐更新死锁
+            tenants.sort(java.util.Comparator.comparing(TenantDO::getId));
+            tenants.forEach(tenant -> {
+                // ZS-CFG-003.B codex r1 P1：锁内重查绑定——并发「换套餐」可能在枚举快照后把租户换入/换出本套餐，
+                // 已不再绑定本套餐的租户跳过收敛（其授权由换入套餐的锁序约束），防止收敛到错误套餐的菜单
+                TenantDO locked = tenantMapper.selectByIdForUpdate(tenant.getId());
+                if (locked == null || !Objects.equals(locked.getPackageId(), tenantPackage.getId())) {
+                    log.info("[updateTenantPackage][租户({}) 已换绑套餐，跳过本套餐收敛]", tenant.getId());
+                    return;
+                }
+                tenantService.updateTenantRoleMenu(tenant.getId(), updateReqVO.getMenuIds());
+            });
         }
     }
 

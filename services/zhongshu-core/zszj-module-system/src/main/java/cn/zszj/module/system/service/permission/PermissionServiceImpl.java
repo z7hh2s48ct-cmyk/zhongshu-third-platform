@@ -41,6 +41,10 @@ import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.excep
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertMap;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.zszj.framework.common.util.json.JsonUtils.toJsonString;
+import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
+import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+import java.util.stream.Collectors;
+import java.util.Objects;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
 
 /**
@@ -59,6 +63,10 @@ public class PermissionServiceImpl implements PermissionService {
 
     @Resource
     private RoleService roleService;
+    @Resource
+    private cn.zszj.module.system.dal.mysql.tenant.TenantMapper tenantMapper;
+    @Resource
+    private cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper tenantPackageMapper;
     @Resource
     private MenuService menuService;
     @Resource
@@ -150,6 +158,9 @@ public class PermissionServiceImpl implements PermissionService {
     public void assignRoleMenu(Long roleId, Set<Long> menuIds) {
         // ZS-PERM-001.A：分配前校验角色归属，防止篡改他租户角色 ID 写入关联
         validateRoleForAssign(roleId);
+        // ZS-CFG-003.B：套餐/角色权限交集——租户角色的菜单授权必须是其套餐菜单的子集（服务端重检，
+        // 套餐回收后租户管理员也不能经授权入口把套餐外菜单重新授予任何角色）
+        validateMenusInTenantPackage(roleId, menuIds);
         // 获得角色拥有菜单编号
         Set<Long> dbMenuIds = convertSet(roleMenuMapper.selectListByRoleId(roleId), RoleMenuDO::getMenuId);
         // 计算新增和删除的菜单编号
@@ -408,6 +419,46 @@ public class PermissionServiceImpl implements PermissionService {
             throw exception(ROLE_NOT_EXISTS);
         }
         validateTenantScope(role.getTenantId(), roleId, PERMISSION_ASSIGN_ROLE_OTHER_TENANT);
+    }
+
+    /**
+     * ZS-CFG-003.B：校验菜单授权不超出租户套餐许可（套餐/角色权限交集的【写侧闭环】）。
+     *
+     * <p>套餐回收（缩小）由 {@code TenantServiceImpl#updateTenantRoleMenu} 把各角色菜单收敛为
+     * 与套餐的交集后回调本方法（收敛结果必为子集，自然通过）；本校验堵住的是【授权入口】：
+     * 套餐回收后，租户管理员重新授予套餐外菜单必须被拒绝（"套餐回收后直调也拒绝"的写侧防线）。
+     * 热路径（鉴权）的一致性由角色菜单表收敛 + ZS-PERM-004.A 缓存驱逐保证。
+     *
+     * <p>系统租户（{@link TenantDO#PACKAGE_ID_SYSTEM}，packageId=0，菜单全量）不受套餐约束。
+     * 套餐记录不存在（防御性）放行：租户创建时强制绑定套餐，该状态仅可能出现在删除竞态，
+     * 且 deleteTenantPackage 已校验"租户正在使用即拒绝删除"。
+     */
+    private void validateMenusInTenantPackage(Long roleId, Set<Long> menuIds) {
+        if (CollUtil.isEmpty(menuIds)) {
+            return; // 空集合=撤权，无需套餐约束
+        }
+        RoleDO role = roleService.getRole(roleId);
+        // ZS-CFG-003.B codex r0 P1：先取租户行锁再校验——与套餐变更收敛（updateTenantRoleMenu）、
+        // 租户换套餐（updateTenant）共用同一把租户行锁，堵住「校验通过→并发套餐收缩→仍写入越界菜单」的 TOCTOU；
+        // 本方法处于 @Transactional 中，锁持有至提交
+        TenantDO tenant = tenantMapper.selectByIdForUpdate(role.getTenantId());
+        if (tenant == null) {
+            throw exception(TENANT_NOT_EXISTS); // codex r0 P2：缺记录不豁免（普通角色不得借缺失关联获得任意授权）
+        }
+        if (Objects.equals(tenant.getPackageId(), TenantDO.PACKAGE_ID_SYSTEM)) {
+            return; // 系统租户不使用套餐，菜单全量
+        }
+        TenantPackageDO tenantPackage = tenantPackageMapper.selectById(tenant.getPackageId());
+        if (tenantPackage == null) {
+            throw exception(TENANT_PACKAGE_NOT_EXISTS); // codex r0 P2：套餐缺失拒绝，不等同于系统租户豁免
+        }
+        Set<Long> packageMenuIds = CollUtil.emptyIfNull(tenantPackage.getMenuIds());
+        List<Long> exceedMenuIds = menuIds.stream()
+                .filter(menuId -> !packageMenuIds.contains(menuId))
+                .collect(Collectors.toList());
+        if (CollUtil.isNotEmpty(exceedMenuIds)) {
+            throw exception(TENANT_PACKAGE_MENU_EXCEED, exceedMenuIds, tenantPackage.getName());
+        }
     }
 
     /**
