@@ -115,7 +115,14 @@ public class TenantServiceImpl implements TenantService {
         TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(createReqVO.getPackageId());
         // ZS-CFG-003.B codex r1 P1：创建租户同样先取套餐行锁——租户尚未绑定、不会出现在收缩枚举中，
         // 若并发套餐收缩，管理员角色必须按收缩后的套餐菜单授予
-        tenantPackageMapper.selectByIdForUpdate(createReqVO.getPackageId());
+        // codex r3 P2：使用锁定查询返回的套餐（收缩/扩大后的最新菜单）完成管理员授权；锁定读为空即拒绝
+        TenantPackageDO lockedPackage = tenantPackageMapper.selectByIdForUpdate(createReqVO.getPackageId());
+        if (lockedPackage == null) {
+            throw exception(TENANT_PACKAGE_NOT_EXISTS);
+        }
+        tenantPackage = lockedPackage;
+        // lambda 引用需 effectively-final：以新变量承载锁定套餐
+        TenantPackageDO finalLockedPackage = lockedPackage;
 
         // 创建租户
         TenantDO tenant = BeanUtils.toBean(createReqVO, TenantDO.class);
@@ -123,7 +130,7 @@ public class TenantServiceImpl implements TenantService {
         // 创建租户的管理员
         TenantUtils.execute(tenant.getId(), () -> {
             // 创建角色
-            Long roleId = createRole(tenantPackage);
+            Long roleId = createRole(finalLockedPackage);
             // 创建用户，并分配角色
             Long userId = createUser(roleId, createReqVO);
             // 修改租户的管理员

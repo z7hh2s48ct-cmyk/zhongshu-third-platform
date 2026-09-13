@@ -136,6 +136,10 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
         // mock 套餐 100L
         TenantPackageDO tenantPackage = randomPojo(TenantPackageDO.class, o -> o.setId(100L));
         when(tenantPackageService.validTenantPackage(eq(100L))).thenReturn(tenantPackage);
+        // ZS-CFG-003.B：createTenant 现以【套餐行锁内的锁定读】取最新菜单——需真实套餐行，
+        // 且 menuIds 必须与 mock 返回一致（createRole 以锁定读返回的套餐授权，verify 按该集合断言）
+        tenantPackageMapper.insert(randomPojo(TenantPackageDO.class, o -> o.setId(100L)
+                .setMenuIds(tenantPackage.getMenuIds()).setStatus(CommonStatusEnum.ENABLE.getStatus())));
         // mock 角色 200L
         when(roleService.createRole(argThat(role -> {
             assertEquals(RoleCodeEnum.TENANT_ADMIN.getName(), role.getName());
@@ -173,7 +177,7 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
         assertPojoEquals(reqVO, tenant, "id");
         assertEquals(300L, tenant.getContactUserId());
         // verify 分配权限
-        verify(permissionService).assignRoleMenu(eq(200L), same(tenantPackage.getMenuIds()));
+        verify(permissionService).assignRoleMenu(eq(200L), eq(tenantPackage.getMenuIds()));
         // verify 分配角色
         verify(permissionService).assignUserRole(eq(300L), eq(singleton(200L)));
     }
