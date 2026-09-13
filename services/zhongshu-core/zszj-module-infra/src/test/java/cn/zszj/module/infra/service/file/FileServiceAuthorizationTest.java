@@ -80,6 +80,10 @@ public class FileServiceAuthorizationTest extends BaseDbUnitTest {
         assertEquals(0L, file.getOwnerUserId().longValue(), "匿名/系统上下文 owner 为 0");
     }
 
+    /**
+     * ZS-FILE-001.A（codex r0 P1）：presigned create 端点已禁用；service 方法保留供 FILE-003
+     * 凭证化后重新接线——此处验证即便内部调用，归属/私有语义仍然成立。
+     */
     @Test
     public void createFileByReqVO_defaultsPrivate() {
         FileCreateReqVO reqVO = new FileCreateReqVO();
@@ -94,6 +98,7 @@ public class FileServiceAuthorizationTest extends BaseDbUnitTest {
         FileDO file = fileMapper.selectById(id);
         assertEquals("PRIVATE", file.getScope(), "presigned 直传记录同样默认 PRIVATE");
         assertEquals(1L, file.getTenantId());
+        assertEquals(1L, file.getConfigId().longValue(), "configId 由服务端 master 兜底，不信任客户端");
     }
 
     // ========== ②③ 读取授权 ==========
@@ -138,9 +143,10 @@ public class FileServiceAuthorizationTest extends BaseDbUnitTest {
     @Test
     public void deleteFileList_mixedForeignIds_rejectsAllAndDeletesNothing() throws Exception {
         FileDO mine = seedFile(1L, "PRIVATE");
-        seedFile(2L, "PRIVATE"); // 他租户文件（租户过滤下查不到）
+        FileDO foreign = seedFile(2L, "PRIVATE"); // 他租户真实文件
 
-        List<Long> ids = List.of(mine.getId(), 999_999L); // 混入他租户查不到的 id
+        // 混入他租户真实 id + 不存在 id（codex r0 P2：必须证明跨租户隔离而非仅不存在拒绝）
+        List<Long> ids = List.of(mine.getId(), foreign.getId(), 999_999L);
         ServiceException ex = assertThrows(ServiceException.class,
                 () -> fileService.deleteFileList(ids));
         assertEquals(FILE_NOT_EXISTS.getCode(), ex.getCode(), "批量混入越权/不存在 id 必须整批拒绝");

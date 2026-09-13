@@ -66,12 +66,6 @@ public class FileController {
         return success(fileService.presignPutUrl(name, directory));
     }
 
-    @PostMapping("/create")
-    @Operation(summary = "创建文件", description = "模式二：前端上传文件：配合 presigned-url 接口，记录上传了上传的文件")
-    public CommonResult<Long> createFile(@Valid @RequestBody FileCreateReqVO createReqVO) {
-        return success(fileService.createFile(createReqVO));
-    }
-
     @GetMapping("/get")
     @Operation(summary = "获得文件")
     @Parameter(name = "id", description = "编号", required = true)
@@ -115,9 +109,9 @@ public class FileController {
         // https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1432/
         path = HttpUtils.decodeUrlPath(path);
 
-        // ZS-FILE-001.A：先取记录做统一读取授权（PUBLIC 匿名；PRIVATE 需登录且同租户），
-        // 关闭私有附件经原路径的匿名旁路；记录不存在按 404 处理
-        FileDO file = fileService.getFileByConfigIdAndPath(configId, path);
+        // ZS-FILE-001.A（codex r0 P2）：跨租户定位记录——PUBLIC 对任意来源同址可用；
+        // PRIVATE 的租户归属校验以记录自身 tenant_id 执行（忽略请求携带租户，防租户过滤 404 误伤公开素材）
+        FileDO file = fileService.getFileByConfigIdAndPathIgnoreTenant(configId, path);
         if (file == null) {
             log.warn("[getFileContent][configId({}) path({}) 文件不存在]", configId, path);
             response.setStatus(HttpStatus.NOT_FOUND.value());

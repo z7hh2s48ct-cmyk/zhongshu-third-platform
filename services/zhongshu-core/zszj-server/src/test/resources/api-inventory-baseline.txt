@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：329
+# 端点总数：328
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -238,7 +238,6 @@ POST|/admin-api/infra/demo03-student-erp/demo03-grade/create|ADMIN|PERMISSION|in
 POST|/admin-api/infra/demo03-student-inner/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentInnerController
 POST|/admin-api/infra/demo03-student-normal/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentNormalController
 POST|/admin-api/infra/file-config/create|ADMIN|PERMISSION|infra:file-config:create|infra|FileConfigController
-POST|/admin-api/infra/file/create|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/file/upload|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/job/create|ADMIN|PERMISSION|infra:job:create|infra|JobController
 POST|/admin-api/infra/job/sync|ADMIN|PERMISSION|infra:job:create|infra|JobController

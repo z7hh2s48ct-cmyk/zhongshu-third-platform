@@ -11,6 +11,7 @@ import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.http.HttpUtils;
 import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.tenant.core.util.TenantUtils;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.infra.enums.file.FileScopeEnum;
@@ -185,7 +186,8 @@ public class FileServiceImpl implements FileService {
         // 1.2 处理 URL 的合法性，移除 URL 中的查询参数（例如签名参数），保证 URL 的唯一性
         createReqVO.setUrl(HttpUtils.removeUrlQuery(createReqVO.getUrl())); // 目的：移除私有桶情况下，URL 的签名参数
 
-        // 2. 保存到数据库。ZS-FILE-001.A：presigned 直传同样记录主体并默认私有（FILE-003 将绑定上传申请）；
+        // 2. 保存到数据库。ZS-FILE-001.A（codex r0 P1）：presigned create 端点已禁用（无上传申请绑定
+        // 无法证明对象归属，可冒领他人 configId/path 生成记录），本方法保留待 FILE-003 凭证化后重新接线；
         // configId 不信任客户端指定，空值由服务端取 master 存储配置兜底；显式记录技术租户
         FileDO file = BeanUtils.toBean(createReqVO, FileDO.class);
         if (file.getConfigId() == null) {
@@ -221,10 +223,12 @@ public class FileServiceImpl implements FileService {
     @Override
     @SneakyThrows
     public void deleteFileList(List<Long> ids) {
-        // ZS-FILE-001.A：批量删除前校验「全部存在」——租户过滤下他租户/不存在的 id 查不到，
-        // 混入即整批拒绝（原先静默跳过，越权文件混入无感知）
+        // ZS-FILE-001.A（codex r0 P2）：批量删除前显式校验「全部存在且全部属于当前技术租户」——
+        // 混入他租户/不存在 id 整批拒绝（原先静默跳过，越权文件混入无感知）；不依赖租户拦截器装配
+        Long currentTenantId = TenantContextHolder.getTenantId();
         List<FileDO> files = fileMapper.selectByIds(ids);
-        if (files.size() != CollUtil.distinct(ids).size()) {
+        if (files.size() != CollUtil.distinct(ids).size()
+                || files.stream().anyMatch(f -> !Objects.equals(f.getTenantId(), currentTenantId))) {
             throw exception(FILE_NOT_EXISTS);
         }
         // 删除文件
@@ -261,6 +265,17 @@ public class FileServiceImpl implements FileService {
         return client.getContent(path);
     }
 
+    /**
+     * ZS-FILE-001.A（codex r0 P2）：下载场景跨租户定位文件记录——公开素材必须对任意租户/匿名
+     * 保持同一可用地址（租户过滤会把他租户 PUBLIC 过滤成 404）；PRIVATE 的租户归属校验
+     * 由 {@link #validateFileReadable} 以记录自身 tenant_id 执行。
+     */
+    @Override
+    public FileDO getFileByConfigIdAndPathIgnoreTenant(Long configId, String path) {
+        return TenantUtils.executeIgnore(() ->
+                fileMapper.selectLatestByConfigIdAndPath(configId, path));
+    }
+
     @Override
     public FileDO getFileByConfigIdAndPath(Long configId, String path) {
         return fileMapper.selectLatestByConfigIdAndPath(configId, path);
@@ -290,10 +305,20 @@ public class FileServiceImpl implements FileService {
         if (FileScopeEnum.PUBLIC.getScope().equals(file.getScope())) {
             return; // 公开素材：批准用途内匿名可读
         }
-        // 私有附件：必须登录且同技术租户（LoginUser.tenantId 由认证链填充，不依赖请求头）
-        if (loginUser == null
-                || !Objects.equals(loginUser.getTenantId(), file.getTenantId())) {
-            throw new AccessDeniedException("私有文件禁止匿名或跨租户读取");
+        // 私有附件（codex r0 P1）：必须登录，且满足其一——
+        // ① 上传所有者本人；② 同技术租户且持有文件查询权限（管理面，scopes 含通配或显式权限）
+        if (loginUser == null) {
+            throw new AccessDeniedException("私有文件禁止匿名读取");
+        }
+        if (Objects.equals(file.getOwnerUserId(), loginUser.getId())) {
+            return;
+        }
+        boolean tenantMatched = Objects.equals(loginUser.getTenantId(), file.getTenantId());
+        boolean manager = loginUser.getScopes() != null
+                && (loginUser.getScopes().contains("*")
+                    || loginUser.getScopes().contains("infra:file:query"));
+        if (!tenantMatched || !manager) {
+            throw new AccessDeniedException("私有文件仅所有者或租户管理员可读取");
         }
     }
 
