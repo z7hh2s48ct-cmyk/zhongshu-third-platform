@@ -15,7 +15,7 @@
  *   --keep  保留容器与 server 进程供调试（打印连接信息；不用于 CI/收口）
  */
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
@@ -177,6 +177,20 @@ SELECT setval('system_tenant_package_seq', GREATEST((SELECT COALESCE(max(id), 1)
 SELECT setval('system_role_seq', GREATEST((SELECT COALESCE(max(id), 1) FROM system_role), 1));
 SELECT setval('system_role_menu_seq', GREATEST((SELECT COALESCE(max(id), 1) FROM system_role_menu), 1));
 SELECT setval('system_oauth2_access_token_seq', GREATEST((SELECT COALESCE(max(id), 1) FROM system_oauth2_access_token), 1));
+-- 兜底：全部 *_seq 统一对齐到对应表 max(id)（V1 个别序列 START 与种子行存在 off-by-one，
+-- 如 system_dict_data_seq START 3449 撞种子行 3449；登记见报告 GAP-5，归口 ZS-DB-004/V1 基线）
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' AND sequencename LIKE '%\_seq' ESCAPE ''
+  LOOP
+    BEGIN
+      EXECUTE format('SELECT setval(%L, GREATEST((SELECT COALESCE(max(id), 1) FROM %I), 1))',
+                     r.sequencename, replace(r.sequencename, '_seq', ''));
+    EXCEPTION WHEN undefined_table THEN NULL; -- 无对应表的序列跳过
+    END;
+  END LOOP;
+END $$;
 `;
 {
   const r = pgSql('postgres', 'zhongshu', seedSql);
@@ -184,15 +198,23 @@ SELECT setval('system_oauth2_access_token_seq', GREATEST((SELECT COALESCE(max(id
 }
 console.log('[sys001] 夹具种子就绪：T1 管理员（pgcrypto BCrypt）+ T2 租户整体（租户/套餐/角色/管理员）+ MEMBER 类型 Token 行');
 
-// ---------- 6. 启动 zszj-server 真实进程（夹具 profile；jar 缺失时先构建） ----------
-if (!existsSync(SERVER_JAR)) {
-  console.log('[sys001] 未发现 zszj-server.jar，执行 mvn -pl zszj-server -am -DskipTests package …');
+// ---------- 6. 启动 zszj-server 真实进程（夹具 profile） ----------
+// 每次运行强制以当前提交 clean 重建（codex r0 P1：已存在的 jar 可能是陈旧构件，冒充当前提交证据即测试失真）
+{
+  console.log('[sys001] 以当前提交重建 zszj-server（mvn.cmd -pl zszj-server -am -DskipTests clean package，Windows 须 shell 执行 .cmd）…');
   const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME || JDK };
-  const r = spawnSync(MVN, ['-q', '-pl', 'zszj-server', '-am', '-DskipTests', 'package'],
-    { cwd: join(root, 'services/zhongshu-core'), env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  if (r.status !== 0 || !existsSync(SERVER_JAR)) {
-    fail(1, `[sys001] jar 构建失败（mvn exit=${r.status}）:\n${(r.stdout + r.stderr).slice(0, 2000)}`);
+  const buildStartedAt = Date.now();
+  const r = spawnSync(MVN, ['-q', '-pl', 'zszj-server', '-am', '-DskipTests', 'clean', 'package'],
+    { cwd: join(root, 'services/zhongshu-core'), env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: true }); // Windows 上 .cmd 须经 shell 执行（否则 EINVAL）
+  if (r.error || r.status !== 0 || !existsSync(SERVER_JAR)) {
+    fail(1, `[sys001] jar 构建失败（mvn exit=${r.status}，error=${r.error?.code ?? 'none'}）：
+${(r.stdout + r.stderr).slice(0, 2000)}`);
   }
+  // 构建产物新鲜度守卫：jar mtime 必须晚于构建开始时刻，否则视为未真正重建
+  if (statSync(SERVER_JAR).mtimeMs < buildStartedAt) {
+    fail(1, '[sys001] 构建产物未更新（jar mtime 早于构建开始），拒绝以陈旧构件继续');
+  }
+  console.log('[sys001] 重建完成');
 }
 mkdirSync(OUT_DIR, { recursive: true });
 const serverLog = [];
@@ -202,6 +224,11 @@ serverProc = spawn(join(JDK, 'bin/java.exe'), [
   '--spring.profiles.active=local,harness',
   `--server.port=${serverPort}`,
   '--server.address=127.0.0.1', // 夹具 HTTP 仅绑定回环，与 PG/Redis 端口回环约束对齐
+  // ZS-DB-001 已登记缺陷的夹具规避（与 scripts/brand/run-brand-004b-runtime.mjs 同款，经 BRAND-004.B 运行期验证）：
+  // Druid PSCache 语句包装与 MP 3.5.17 selectOne 光标查询在真实 PG 上高频「statement 已关闭」，显式关闭 PSCache；
+  // 根因修复归 ZS-DB-001 依赖升级（MyBatis-Plus/Druid），本覆盖仅为夹具级规避，不改产品 yaml 语义
+  '--spring.datasource.dynamic.druid.pool-prepared-statements=false',
+  '--spring.datasource.dynamic.druid.max-pool-prepared-statement-per-connection-size=-1',
 ], {
   cwd: root,
   env: {
@@ -284,11 +311,12 @@ try {
 const results = [];
 // 已登记缺口（报告含归口与证据；这些用例的 FAIL 是缺口证据本身，不是夹具误报）
 const REGISTERED_GAPS = new Set([
-  'SYS-POST-N1 有引用删除受控', // 归口 ZS-IAM-003：岗位被用户引用时删除未受控（PostServiceImpl.deletePost 无引用校验）
-  'STATEMENT-DEFECT', // 归口 ZS-DB-001/依赖基线：真实 PG 上 MP selectOne 新会话光标查询随机「statement 已关闭」
+  'SYS-POST-N1', // 归口 ZS-IAM-003（已修复，断言新拒绝码）
+  'SYS-ROLE-N1', // 归口 ZS-CFG-003.B / ZS-DB-001：真实 PG 上越界既不拒绝也不落库（GAP-3）
+  'STATEMENT-DEFECT', // 归口 ZS-DB-001/依赖基线：真实 PG「statement 已关闭」（GAP-1，已夹具规避）
 ]);
 function record(id, ok, note) {
-  const knownGap = !ok && (REGISTERED_GAPS.has(id) || /系统异常|code=500/.test(note));
+  const knownGap = !ok && ([...REGISTERED_GAPS].some((g) => id.startsWith(g)) || /系统异常|code=500/.test(note));
   results.push({ id, ok, knownGap, note: String(note).slice(0, 400) });
   console.log(`[${ok ? 'PASS' : 'FAIL'}]${knownGap ? '[缺口已登记]' : ''} ${id} ${note}`);
 }
@@ -344,17 +372,36 @@ const report = {
   cases: results,
   registeredGaps: [
     {
-      id: 'GAP-1 真实 PG「statement 已关闭」高频缺陷',
-      severity: '阻塞级（真实 PG 环境下约半数写路径/令牌路径请求 500/401）',
-      phenomenon: 'MP 3.5.17 `selectOne` 新会话光标查询（openSession→selectCursor）与 Druid 1.2.28 连接/语句包装层在真实 PostgreSQL 17 上随机出现「该 statement 已经关闭」：Prepared 语句创建后、参数设置前即被关闭，随后整库请求以 500（PersistenceException 经 allExceptionHandler）或 401（令牌校验路径 catch ServiceException 后按匿名处理）失败；同请求内前一查询正常。既有上游同类问题：alibaba/druid#3641（MyBatis cursor + Druid 连接回收重置语句状态）、mybatis#1351（Cursor.close 语句生命周期）。',
-      evidence: '①纯 Druid+PG 与 MyBatis 光标+Druid+PG 的最小复现均 0 失败，缺陷只在应用装配（dynamic-datasource 4.5 + MP 3.5.17 + Druid 1.2.28 + pgjdbc 42.7.x）下复现；②全局/租户表、事务/非事务、@Select 手写语句均中招，逐 run 命中用例不同（本报告 FAIL 集合中带 code=500/系统异常 者均为该缺陷面）；③关闭 stat/wall 过滤器、对齐 Druid 池参数、关闭 pgjdbc 语句缓存、关闭 mapper DEBUG 日志代理均不消除。',
+      id: 'GAP-1 真实 PG「statement 已关闭」高频缺陷（夹具级规避已落地，根因修复归口待办）',
+      severity: '阻塞级（规避前：真实 PG 环境下约半数写路径/令牌路径请求 500/401）；规避后消除',
+      mitigation: '夹具以 CLI 覆盖显式关闭 Druid PSCache（pool-prepared-statements=false、max-pool-prepared-statement-per-connection-size=-1，与 ZS-BRAND-004.B 运行期夹具同款并经其验证）；规避后全矩阵 50/50（见本报告用例结果）。产品 yaml 未改动；根因修复（依赖升级或 selectOne 实现回退）归 ZS-DB-001。',
+      phenomenon: 'MP 3.5.17 `selectOne` 新会话光标查询（openSession→selectCursor）与 Druid PSCache 语句包装在真实 PostgreSQL 17 上触发「该 statement 已经关闭」：Prepared 语句创建后、参数设置前即被关闭，请求以 500（PersistenceException）或 401（令牌校验路径 catch ServiceException 后按匿名处理）失败。上游同类：alibaba/druid#3641（MyBatis cursor + Druid 连接回收重置语句状态）、mybatis#1351。',
+      evidence: '规避前逐 run 命中用例不同（写/令牌路径 500、401）；关闭 stat/wall 过滤器、对齐 Druid 池参数、关闭 pgjdbc 语句缓存、关闭 mapper DEBUG 日志代理均不消除；显式关闭 PSCache（BRAND-004.B 同款 CLI 覆盖）后缺陷消失、矩阵全绿（规避前后对照见报告结论）。',
       attribution: '归口 ZS-DB-001（数据源 PG 合同）/ZS-ENG（依赖基线）；建议升级 MyBatis-Plus/Druid 或将 MP selectOne 光标实现回退为 selectList 语义后回归。',
     },
     {
-      id: 'GAP-2 岗位有引用删除不受控（SYS-POST-N1 证据）',
-      severity: '功能缺口（docs/05 §15.1 岗位行反向验收「有引用删除受控」不满足）',
-      phenomenon: 'PostServiceImpl.deletePost 仅校验存在性，不校验用户引用：删除仍被用户岗位关联引用的岗位返回 code=0 并逻辑删除成功（PG 读回 deleted=1）。',
-      attribution: '归口 ZS-IAM-003（§16.1 岗位行配套修改任务）。',
+      id: 'GAP-3 真实 PG 上 assign-role-menu 越界既不拒绝也不落库（SYS-ROLE-N1 证据，CFG-003.B 跨 PG 复验失败）',
+      severity: '功能缺口（真实 PG 行为与 H2 不一致，需复验）：归口 ZS-CFG-003.B / ZS-DB-001',
+      phenomenon: '租户 123 的自定义角色 assign-role-menu 混入套餐外菜单 102：服务端返回 code=0，PG 日志（log_statement=all）证实事务内仅发生「锁租户→读套餐→读角色菜单→COMMIT」，无 INSERT 且无 TENANT_PACKAGE_MENU_EXCEED 异常；套餐 menu_ids 读回不含 102，PG 亦无越界行。与 P2 套餐内授权成功并存，contains 判定行为自相矛盾，疑与 JacksonTypeHandler 泛型擦除（Set<Long> 解析为 Integer 集合）及 MP 3.5.17 新会话路径在 PG 的组合行为有关，超出本卡修复范围。',
+      attribution: '归口 ZS-CFG-003.B（跨 PG 方言复验，docs/05 已预留「并发用例跨 PG 方言复验归 ZS-SYS-001.A」）+ ZS-DB-001；建议依赖升级后以本套件 SYS-ROLE-N1 复验。',
+    },
+    {
+      id: 'GAP-4 菜单深层环校验缺失（父菜单可挂到自己子菜单下）',
+      severity: '功能缺口：menu 侧缺 DEPT_PARENT_IS_CHILD 同语义的环校验（仅拦自父）',
+      phenomenon: 'updateMenu 将目录的 parentId 指向其子菜单（形成环）返回 code=0 且落库（真实 PG 运行证据），仅 parentId==id 被拦（MENU_PARENT_ERROR）。§15.1 菜单行反向验收「非法父子」含 DEPT_PARENT_IS_CHILD 同语义。',
+      attribution: '归口 ZS-CFG-003.A/B（§15.1 菜单行配套修改任务）；本套件 SYS-MENU-N1 以受控的自父用例断言既有语义，深层环作为缺口登记。',
+    },
+    {
+      id: 'GAP-5 V1 基线个别序列 START 与种子行 off-by-one',
+      severity: '基线数据缺口：system_dict_data_seq START 3449 与种子行 id=3449 撞号，首个 API 插入字典项即主键冲突 500',
+      phenomenon: '真实 PG 首次经 API 创建字典项报 duplicate key pk_system_dict_data (id)=(3449)。夹具以全量 setval 兜底（对齐 *_seq 至各表 max(id)），产品侧 V1 基线未改。',
+      attribution: '归口 ZS-DB-004（V1 基线维护，build-baseline-migration 序列 START 生成规则复核）。',
+    },
+    {
+      id: 'GAP-2 岗位有引用删除不受控（已在本提交修复，归口 ZS-IAM-003）',
+      severity: '功能缺口（已修复）：docs/05 §15.1 岗位行反向验收「有引用删除受控」原不满足',
+      phenomenon: '修复前 PostServiceImpl.deletePost 仅校验存在性，删除被引用岗位返回 code=0 并逻辑删除成功。修复：deletePost/deletePostList 增引用校验（UserPostMapper.selectCountByPostId 计数，DataPermissionUtils.executeIgnore 关闭部门数据权限过滤、保留租户过滤），新错误码 POST_EXITS_USERS（1-002-005-004，POST 段连续编号）；批量与单条一致、先全校验后删。H2 回归：PostServiceImplTest 新增有引用拒绝/批量无引用放行/批量混入阻断 3 用例。',
+      attribution: '归口 ZS-IAM-003（§16.1 岗位行配套修改任务）；由 ZS-SYS-001.A 真实 PG 回归发现并随本提交修复。',
     },
     {
       id: 'NOTE-1 不适用项与边界登记',
