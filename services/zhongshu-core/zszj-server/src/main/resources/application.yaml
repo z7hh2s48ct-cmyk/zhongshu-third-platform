@@ -345,8 +345,6 @@ zszj:
     ignore-caches:
       - user_role_ids
       - permission_menu_ids
-      - role # ZS-PERM-004.A：role 以全局主键 id 为键，与 user_role_ids/permission_menu_ids 同为跨技术租户单键空间，避免「租户后缀键/裸键」双键空间驱逐错位
-      - menu_role_ids # 同上：以全局主键 menuId 为键
       - oauth_client
       - notify_template
       - mail_account

@@ -5,6 +5,8 @@ import cn.zszj.framework.redis.core.TimeoutRedisCacheManager;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.cache.CacheProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cache.interceptor.CacheErrorHandler;
+import org.springframework.cache.annotation.CachingConfigurer;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -27,7 +29,15 @@ import static cn.zszj.framework.redis.config.ZszjRedisAutoConfiguration.buildRed
 @AutoConfiguration
 @EnableConfigurationProperties({CacheProperties.class, ZszjCacheProperties.class})
 @EnableCaching
-public class ZszjCacheAutoConfiguration {
+public class ZszjCacheAutoConfiguration implements CachingConfigurer {
+
+    /**
+     * ZS-PERM-004.A codex r0 P1：驱逐/清空失败同步重试 + ERROR 证据（撤权一致性加固）。
+     */
+    @Override
+    public CacheErrorHandler errorHandler() {
+        return new cn.zszj.framework.redis.core.RetryCacheErrorHandler();
+    }
 
     /**
      * RedisCacheConfiguration Bean

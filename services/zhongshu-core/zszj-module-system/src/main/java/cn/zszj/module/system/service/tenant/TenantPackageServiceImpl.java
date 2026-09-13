@@ -2,6 +2,7 @@ package cn.zszj.module.system.service.tenant;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import org.springframework.transaction.annotation.Transactional;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.catalog.ModuleCatalog;
@@ -60,7 +61,8 @@ public class TenantPackageServiceImpl implements TenantPackageService {
     }
 
     @Override
-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
+    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional（同 TenantServiceImpl——统一事务生命周期，驱逐与提交同序）
+    @Transactional(rollbackFor = Exception.class)
     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
         // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
         validateTenantPackageMenus(updateReqVO.getMenuIds());

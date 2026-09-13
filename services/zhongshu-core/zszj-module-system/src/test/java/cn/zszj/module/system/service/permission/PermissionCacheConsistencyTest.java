@@ -104,11 +104,16 @@ public class PermissionCacheConsistencyTest extends BaseDbAndRedisUnitTest {
 
     private static final String TEST_PERMISSION = "zs:perm-004:consistency";
 
-    // ========== ① 并发回填：驱逐早于提交的窗口被另一连接回填旧值 ==========
+    // ========== ① 并发回填：提交后驱逐使「他连接回填旧授权」最终自愈 ==========
 
     /**
-     * RED：修复前 @CacheEvict 在事务提交前执行——「已驱逐、未提交」窗口内，另一连接（模拟其他节点）
-     * 回读库中旧值重新入缓存；提交后陈旧条目存活，停用角色继续取权。
+     * 契约验证（codex r0 P2 改良）：本用例实证本仓库当前装配下（cache advisor 在 tx advisor 外层）
+     * 驱逐发生在提交后——「已驱逐、未提交」窗口不存在，他连接回填的旧值在提交后被驱逐清除。
+     *
+     * <p><b>已知残余窗口（登记延后）</b>：若他连接在「DB 读完成、缓存写入」间被屏障暂停，且写事务提交
+     * 并完成驱逐后该读线程才把旧值写回缓存——晚到旧值一次驱逐无法清除。彻底闭环需「权限版本校验 /
+     * 防旧值写回」机制，与驱逐失败的可靠补偿（RetryCacheErrorHandler 的 ERROR 证据消费）一并归
+     * ZS-LOGIN-005.B（B05）或独立小卡处置。
      */
     @Test
     public void testUpdateRoleStatus_committedTx_staleBackfillFromOtherConnection_selfHeals() throws Exception {
