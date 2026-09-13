@@ -99,6 +99,9 @@ public class TenantServiceImpl implements TenantService {
     // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
     // 为空操作，内层 Spring 事务提交驱逐缓存而 DB 要等外层 DS 结束才提交，留有「他连接回填旧授权、外层提交后无最终驱逐」窗口；
     // system 模块单库，统一 Spring 事务生命周期
+    // ZS-PERM-004.A codex r1 P1：createTenant 原也有 @DSTransactional，替换注解时此处遗漏——
+    // 必须补 @Transactional，否则租户插入与内部角色/授权操作分段提交，中途失败留下不完整租户
+    @Transactional(rollbackFor = Exception.class)
     @DataPermission(enable = false) // 参见 https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1154 说明
     public Long createTenant(TenantSaveReqVO createReqVO) {
         // 校验租户名称是否重复

@@ -24,6 +24,11 @@ import org.springframework.lang.Nullable;
 @Slf4j
 public class RetryCacheErrorHandler implements org.springframework.cache.interceptor.CacheErrorHandler {
 
+    /**
+     * 共享实例：{@link RetryEvictCache} 在 Cache 层复用同一重试与证据策略。
+     */
+    public static final RetryCacheErrorHandler INSTANCE = new RetryCacheErrorHandler();
+
     private static final int MAX_RETRIES = 2;
     private static final long RETRY_INTERVAL_MS = 100L;
 
@@ -52,7 +57,7 @@ public class RetryCacheErrorHandler implements org.springframework.cache.interce
             cache.evict(key);
             log.warn("[retryEvict][cache({}) key({}) 第 {} 次重试驱逐成功]", cache.getName(), key, attempt);
         } catch (RuntimeException ex) {
-            if (attempt <= MAX_RETRIES) {
+            if (attempt < MAX_RETRIES) { // ZS-PERM-004.A codex r1 P3：恰好重试 MAX_RETRIES 次
                 sleep();
                 retryEvict(cache, key, attempt + 1);
                 return;
@@ -67,7 +72,7 @@ public class RetryCacheErrorHandler implements org.springframework.cache.interce
             cache.clear();
             log.warn("[retryClear][cache({}) 第 {} 次重试清空成功]", cache.getName(), attempt);
         } catch (RuntimeException ex) {
-            if (attempt <= MAX_RETRIES) {
+            if (attempt < MAX_RETRIES) { // ZS-PERM-004.A codex r1 P3：恰好重试 MAX_RETRIES 次
                 sleep();
                 retryClear(cache, attempt + 1);
                 return;
