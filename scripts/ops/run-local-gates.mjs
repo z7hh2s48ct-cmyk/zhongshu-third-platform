@@ -149,7 +149,9 @@ async function runGates(gates, jobs) {
       console.log(`[${r.status}] ${r.id} (${r.ms}ms)`);
     }
   };
-  await Promise.all([serial(), ...Array.from({ length: Math.min(jobs, normal.length) }, worker)]);
+  // codex r1 P1：独占道与并发池必须先后而非同起——否则 G14 仍与 G11/G12 重叠、--jobs 1 也会双跑
+  await Promise.all(Array.from({ length: Math.min(jobs, normal.length) }, worker));
+  await serial();
   return results;
 }
 
