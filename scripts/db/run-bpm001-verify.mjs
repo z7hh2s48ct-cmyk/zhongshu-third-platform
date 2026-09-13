@@ -25,7 +25,8 @@
  *   - 缺依赖不静默跳过：Docker/工具链不可用 → 退出码 3；
  *   - Docker 负载 flaky：容器启动失败先清理残件、换端口重试一次。
  *   - 长 Maven 阶段走异步 spawn：SIGINT/SIGTERM 在事件循环内可达，触发清理后退出
- *     （sync 快操作除外；kill -9 级强杀不可拦截，容器遗留交由环境清理）。
+ *     （sync 快操作除外；kill -9 级强杀不可拦截，容器遗留交由环境清理）；
+ *     超时经 detached 进程组整树终止（taskkill /T、kill(-pid)）+ 15s 有界兜底返回。
  * 证据报告：JSON 摘要落 outputs/bpm-001/runtime-report.json（outputs/ 不入库）。
  *
  * 用法：node scripts/db/run-bpm001-verify.mjs
@@ -116,16 +117,39 @@ const results = [];
 const record = (id, ok, note = '') => { results.push({ id, ok, note }); ok ? pass++ : failCount++; console.log(`[${ok ? 'PASS' : 'FAIL'}] ${id} ${note}`); };
 
 // ---- 长 Maven 阶段：异步 spawn（事件循环保活，SIGINT/SIGTERM 可达并触发清理）----
-// Windows 下 Node spawn .cmd 有 EINVAL 防护，须经 cmd.exe
+// Windows 下 Node spawn .cmd 有 EINVAL 防护，须经 cmd.exe；detached 使子进程自成进程组，
+// 超时须整树终止（taskkill /T 或 kill(-pid)）：只杀外层 cmd.exe 时孙辈 java 仍持有管道，
+// 'close' 事件不会到达，流程将挂死（r2 评审实测复现）
+function killTree(child) {
+  try {
+    if (isWin) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
+}
 function runAsync(argv, opts = {}) {
   return new Promise((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { cwd: core, env: { ...childEnv, ...opts.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let settled = false;
+    const child = spawn(argv[0], argv.slice(1), { cwd: core, env: { ...childEnv, ...opts.env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let output = '';
+    const done = (status) => {
+      if (settled) return;
+      settled = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (timer) clearTimeout(timer);
+      resolve({ status, output });
+    };
     child.stdout.on('data', (d) => { output += d; });
     child.stderr.on('data', (d) => { output += d; });
-    const timer = opts.timeoutMs ? setTimeout(() => child.kill(), opts.timeoutMs) : null;
-    child.on('error', (e) => { if (timer) clearTimeout(timer); resolve({ status: -1, output: String(e) }); });
-    child.on('close', (code) => { if (timer) clearTimeout(timer); resolve({ status: code, output }); });
+    let timer = null, fallbackTimer = null;
+    if (opts.timeoutMs) {
+      timer = setTimeout(() => {
+        killTree(child);
+        // 整树终止兜底：即使个别句柄延迟释放，也在有界时间内返回失败，保证清理可达
+        fallbackTimer = setTimeout(() => done(-2), 15 * 1000);
+      }, opts.timeoutMs);
+    }
+    child.on('error', (e) => done(-1));
+    child.on('close', (code) => done(code));
   });
 }
 const mvnArgv = (mvnArgs) => isWin ? ['cmd.exe', '/d', '/s', '/c', 'mvn ' + mvnArgs.join(' ')] : ['mvn', ...mvnArgs];
