@@ -15,16 +15,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * ZS-LOGIN-004 P1（codex r2，格式迁移回归）：升级/滚动部署时既有<b>旧 String 计数器</b>必须惰性迁移为 Hash，
- * 保留计数与剩余 TTL，杜绝新实现 Hash 命令对旧键抛 {@code WRONGTYPE}。
+ * ZS-LOGIN-004 P1（codex r2/r3/r4，格式迁移回归）：升级/滚动部署时既有<b>旧 String 计数器</b>必须惰性迁移为 Hash，
+ * 保留计数与剩余 TTL，杜绝新实现 Hash 命令对旧键抛 {@code WRONGTYPE}；
+ * <b>迁移遇 PTTL<=0（过期边界 0 / 异常持久 -1）时必须视为已过期丢弃旧锁</b>，
+ * 绝不能迁移出无 TTL 的永久 Hash（永久拒绝，含正确码）。
  *
- * <p>缺陷：r1 把校验尝试计数从 String（{@code INCR}）改为 Hash（字段 {@code c} 计数 + {@code r:<token>} 预留标记）。
- * 部署到含既有计数器的环境时，未改名的键 {@code sms_code_validate_attempts:<mobile>:<scene>} 仍是旧实现写入的
- * <b>string</b>，新代码的 {@code HGET/HINCRBY/HDEL} 对其抛 {@code WRONGTYPE} → 连正确码校验都失败，
+ * <p>缺陷（r2 原始）：r1 把校验尝试计数从 String（{@code INCR}）改为 Hash（字段 {@code c} 计数 +
+ * {@code r:<token>} 预留标记）。部署到含既有计数器的环境时，未改名的键
+ * {@code sms_code_validate_attempts:<mobile>:<scene>} 仍是旧实现写入的 <b>string</b>，
+ * 新代码的 {@code HGET/HINCRBY/HDEL} 对其抛 {@code WRONGTYPE} → 连正确码校验都失败，
  * 直到旧计数器自然过期（默认最长约 10 分钟）。
  *
- * <p>修复：所有触及该键的 Lua 脚本前置「TYPE 分支」惰性迁移——旧 string 键存在时把值搬进 Hash 字段 {@code c}
- * 并以 {@code PTTL/PEXPIRE} 保留剩余 TTL，随后脚本照常作用于迁移后的 Hash。
+ * <p>修复（r3）：所有触及该键的 Lua 脚本前置「TYPE 分支」惰性迁移——旧 string 键存在时把值搬进 Hash 字段
+ * {@code c} 并以 {@code PTTL/PEXPIRE} 保留剩余 TTL，随后脚本照常作用于迁移后的 Hash。
+ *
+ * <p>修复（r4，codex r3 揪出 P2）：迁移片段按 {@code PTTL} 分支——
+ * <ul>
+ *   <li>{@code PTTL > 0}：搬迁旧值到 Hash 字段 {@code c}，PEXPIRE 保留剩余 TTL（同 r3 语义）；</li>
+ *   <li>{@code PTTL <= 0}（过期边界 0 / 异常持久 -1）：<b>仅 DEL 丢弃旧锁</b>，视为已过期——
+ *       后续脚本 {@code HGET} 得 nil → 计数按 0 起算，{@code HINCRBY} 首次以完整 lockDuration TTL 新建，
+ *       绝不产生无 TTL 的永久 Hash。</li>
+ * </ul>
  *
  * <p>RED（对着 r2，即修复前）：预存 string 计数器后任何 {@code getValidateAttempts/reserveValidateAttempt/
  * increaseValidateAttempts/releaseValidateAttempt} 都抛 {@code WRONGTYPE}（Spring 翻译为
@@ -32,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>本类使用真实内存 Redis（{@link BaseDbAndRedisUnitTest}）播种旧格式数据验证迁移语义。
  *
- * @author ZS-LOGIN-004 P1(r3) 惰性迁移
+ * @author ZS-LOGIN-004 P1(r3/r4) 惰性迁移 + PTTL<=0 视为过期
  */
 @Import(SmsCodeSecurityRedisDAO.class)
 public class SmsCodeSecurityRedisDaoAttemptLegacyMigrationTest extends BaseDbAndRedisUnitTest {
@@ -140,5 +151,42 @@ public class SmsCodeSecurityRedisDaoAttemptLegacyMigrationTest extends BaseDbAnd
         assertEquals(3L, smsCodeSecurityRedisDAO.getValidateAttempts(mobile, scene),
                 "释放应把计数扣回迁移时保留的旧值");
         assertEquals(DataType.HASH, stringRedisTemplate.type(key));
+    }
+
+    /**
+     * ZS-LOGIN-004 r4(P2)：迁移发生在过期边界（Redis 可能返回 {@code PTTL == 0} 而旧键仍存在），
+     * 或旧键因异常持久（{@code PTTL == -1}）——两种情况都必须视为「已过期」丢弃旧锁，
+     * 绝不能迁移出无 TTL 的永久 Hash（永久拒绝，含正确码；且成功消费的 {@code resetValidateAttempts} 也无法运行）。
+     *
+     * <p>缺陷（r3）：迁移片段无脑 {@code DEL + HSET c=legacy}，仅当 {@code pttl>0} 才 PEXPIRE。
+     * PTTL<=0 时旧锁被搬进 Hash 却<b>未设 TTL</b>——永久驻留；若其计数已达上限，
+     * 之后每次校验都被无限期拒绝（含正确码），成功消费的 reset 也无法运行。
+     *
+     * <p>修复（r4）：迁移片段按 {@code PTTL} 分支——{@code PTTL>0} 才搬迁并保留剩余 TTL；
+     * {@code PTTL<=0} 仅 {@code DEL} 丢弃旧锁，后续脚本 {@code HGET} 得 nil → 按 0 起算，
+     * {@code HINCRBY} 首次以完整 lockDuration TTL 新建。
+     *
+     * <p>RED（对着 r3，即修复前）：DEL + HSET c="5" 无 PEXPIRE → 永久 Hash 计数=5 → reserve 返回 rejected
+     * （{@code isReservedSlot()==false}）且 TTL 为 -1（{@link Duration#ZERO}）→ 两条断言均失败。
+     */
+    @Test
+    public void reserveValidateAttempt_legacyCounterWithoutTtl_treatedAsExpired_noPermanentLock() {
+        String mobile = "15691000106";
+        Integer scene = 1;
+        String key = SmsCodeSecurityRedisDAO.formatValidateAttemptsKey(mobile, scene);
+        // 故意不设 expire，使旧 string 计数器 PTTL=-1（模拟异常持久键 / 过期边界遗留）；
+        // 计数「5」恰达上限，若被误搬进无 TTL 的 Hash 就会造成永久锁死（含正确码）。
+        stringRedisTemplate.opsForValue().set(key, "5");
+
+        ValidateAttemptReservation reservation =
+                smsCodeSecurityRedisDAO.reserveValidateAttempt(mobile, scene, 5, LOCK);
+
+        assertTrue(reservation.isReservedSlot(),
+                "r4(P2)：旧锁剩余 PTTL<=0 必须视为已过期→丢弃→按 0 起算开新窗口，"
+                        + "绝不能因搬运旧计数=5 而永久拒绝（含正确码）");
+        Duration ttl = smsCodeSecurityRedisDAO.getValidateAttemptsTtl(mobile, scene);
+        assertTrue(ttl.toMillis() > 0,
+                "r4(P2)：迁移后计数 Hash 必须有正 TTL（自然过期通道），绝不能产生无 TTL 的永久锁，"
+                        + "实际=" + ttl.toMillis() + "ms");
     }
 }
