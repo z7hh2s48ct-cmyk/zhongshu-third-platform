@@ -4,11 +4,16 @@ import cn.hutool.core.date.LocalDateTimeUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.RandomUtil;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.http.HttpUtils;
+import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
+import cn.zszj.module.infra.enums.file.FileScopeEnum;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePageReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePresignedUrlRespVO;
@@ -20,13 +25,16 @@ import cn.zszj.module.infra.framework.file.core.utils.FileTypeUtils;
 import com.google.common.annotations.VisibleForTesting;
 import jakarta.annotation.Resource;
 import lombok.SneakyThrows;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 
 import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_SCOPE_INVALID;
 
 /**
  * 文件 Service 实现类
@@ -97,10 +105,14 @@ public class FileServiceImpl implements FileService {
         Assert.notNull(client, "客户端(master) 不能为空");
         String url = client.upload(content, path, type);
 
-        // 3. 保存到数据库
-        fileMapper.insert(new FileDO().setConfigId(client.getId())
+        // 3. 保存到数据库。ZS-FILE-001.A：记录上传主体、默认私有（公开素材须管理员显式调整）
+        FileDO file = new FileDO().setConfigId(client.getId())
                 .setName(name).setPath(path).setUrl(url)
-                .setType(type).setSize((long) content.length));
+                .setType(type).setSize((long) content.length)
+                .setOwnerUserId(currentUserOrZero()).setScope(FileScopeEnum.PRIVATE.getScope());
+        // ZS-FILE-001.A：显式记录技术租户（服务端确认归属，不依赖拦截器装配）
+        file.setTenantId(TenantContextHolder.getTenantId());
+        fileMapper.insert(file);
         return url;
     }
 
@@ -173,8 +185,14 @@ public class FileServiceImpl implements FileService {
         // 1.2 处理 URL 的合法性，移除 URL 中的查询参数（例如签名参数），保证 URL 的唯一性
         createReqVO.setUrl(HttpUtils.removeUrlQuery(createReqVO.getUrl())); // 目的：移除私有桶情况下，URL 的签名参数
 
-        // 2. 保存到数据库
+        // 2. 保存到数据库。ZS-FILE-001.A：presigned 直传同样记录主体并默认私有（FILE-003 将绑定上传申请）；
+        // configId 不信任客户端指定，空值由服务端取 master 存储配置兜底；显式记录技术租户
         FileDO file = BeanUtils.toBean(createReqVO, FileDO.class);
+        if (file.getConfigId() == null) {
+            file.setConfigId(fileConfigService.getMasterFileClient().getId());
+        }
+        file.setOwnerUserId(currentUserOrZero()).setScope(FileScopeEnum.PRIVATE.getScope())
+                .setTenantId(TenantContextHolder.getTenantId());
         fileMapper.insert(file);
         return file.getId();
     }
@@ -203,8 +221,13 @@ public class FileServiceImpl implements FileService {
     @Override
     @SneakyThrows
     public void deleteFileList(List<Long> ids) {
-        // 删除文件
+        // ZS-FILE-001.A：批量删除前校验「全部存在」——租户过滤下他租户/不存在的 id 查不到，
+        // 混入即整批拒绝（原先静默跳过，越权文件混入无感知）
         List<FileDO> files = fileMapper.selectByIds(ids);
+        if (files.size() != CollUtil.distinct(ids).size()) {
+            throw exception(FILE_NOT_EXISTS);
+        }
+        // 删除文件
         for (FileDO file : files) {
             FilePathUtils.validatePath(file.getPath());
             // 获取客户端
@@ -243,4 +266,49 @@ public class FileServiceImpl implements FileService {
         return fileMapper.selectLatestByConfigIdAndPath(configId, path);
     }
 
+
+    /**
+     * ZS-FILE-001.A：当前登录用户编号；匿名/系统上下文返回 0（owner 列 NOT NULL DEFAULT 0 语义一致）。
+     */
+    private Long currentUserOrZero() {
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+        return userId != null ? userId : 0L;
+    }
+
+    /**
+     * ZS-FILE-001.A：统一读取授权——PUBLIC 匿名可读；PRIVATE 需登录且与文件同技术租户。
+     *
+     * @param file      文件（含 scope 与 tenantId）
+     * @param loginUser 下载发起者（匿名传 null；由 Controller 从安全上下文透传，便于单测）
+     * @throws AccessDeniedException 私有文件匿名/跨租户读取
+     */
+    @Override
+    public void validateFileReadable(FileDO file, LoginUser loginUser) {
+        if (file == null) {
+            return; // 不存在由调用方按 404 处理
+        }
+        if (FileScopeEnum.PUBLIC.getScope().equals(file.getScope())) {
+            return; // 公开素材：批准用途内匿名可读
+        }
+        // 私有附件：必须登录且同技术租户（LoginUser.tenantId 由认证链填充，不依赖请求头）
+        if (loginUser == null
+                || !Objects.equals(loginUser.getTenantId(), file.getTenantId())) {
+            throw new AccessDeniedException("私有文件禁止匿名或跨租户读取");
+        }
+    }
+
+    /**
+     * ZS-FILE-001.A：管理员显式调整文件可见范围（历史存量迁移默认 PRIVATE，公开须显式标注）
+     */
+    @Override
+    public void updateFileScope(Long id, String scope) {
+        if (!FileScopeEnum.isValid(scope)) {
+            throw exception(FILE_SCOPE_INVALID);
+        }
+        FileDO file = validateFileExists(id);
+        FileDO updateObj = new FileDO().setId(file.getId()).setScope(scope);
+        fileMapper.updateById(updateObj);
+    }
+
+    // ZS-FILE-001.A 类尾占位
 }

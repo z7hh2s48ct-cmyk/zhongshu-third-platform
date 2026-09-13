@@ -33,4 +33,11 @@ public class FileRespVO {
     @Schema(description = "创建时间", requiredMode = Schema.RequiredMode.REQUIRED)
     private LocalDateTime createTime;
 
+
+    @Schema(description = "可见范围（ZS-FILE-001.A）", example = "PRIVATE")
+    private String scope;
+
+    @Schema(description = "上传主体用户编号（ZS-FILE-001.A）", example = "1")
+    private Long ownerUserId;
+
 }

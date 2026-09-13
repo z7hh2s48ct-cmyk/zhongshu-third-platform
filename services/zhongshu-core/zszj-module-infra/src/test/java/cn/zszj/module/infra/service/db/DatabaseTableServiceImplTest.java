@@ -64,7 +64,9 @@ public class DatabaseTableServiceImplTest extends BaseDbUnitTest {
     private void assertTableInfo(TableInfo tableInfo) {
         assertEquals("infra_config", tableInfo.getName());
         assertEquals("参数配置表", tableInfo.getComment());
-        assertEquals(13, tableInfo.getFields().size());
+        // codex 前欠账补同步：CFG-004 为 infra_config 新增 version 列（13→14）；
+        // ZS-FILE-001.A 的 infra_file 列变化不影响本断言
+        assertEquals(14, tableInfo.getFields().size());
         // id 字段
         TableField idField = tableInfo.getFields().get(0);
         assertEquals("id", idField.getName());
