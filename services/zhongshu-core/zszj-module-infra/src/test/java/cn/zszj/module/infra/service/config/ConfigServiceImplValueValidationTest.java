@@ -266,10 +266,10 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
 
         int threadCount = 2;
         // ZS-CFG-004 codex r1 修复（P1 客户端版本 + P2-2 断言收紧）：乐观锁版本由客户端携带——
-        // 两 worker 启动前各自读取同一 update_time 版本（模拟两个客户端打开同一表单后先后提交），
+        // 两 worker 启动前各自读取同一 version 版本（模拟两个客户端打开同一表单后先后提交），
         // 条件 UPDATE 以回传版本执行，恰好一方成功、一方 CONFIG_UPDATE_CONFLICT；
         // 成功仅在 updateConfig 正常返回后计数，非冲突异常一律记为失败，并核对最终落库值。
-        LocalDateTime editVersion = configMapper.selectById(configId).getUpdateTime();
+        Integer editVersion = configMapper.selectById(configId).getVersion();
         ConfigServiceImpl bareService = new ConfigServiceImpl();
         ReflectionTestUtils.setField(bareService, "configMapper", configMapper);
         ReflectionTestUtils.setField(bareService, "sensitiveClassifier", new ConfigSensitiveClassifier());
@@ -294,7 +294,7 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
                     reqVO.setCategory("test");
                     reqVO.setName("captcha retry");
                     reqVO.setVisible(true);
-                    reqVO.setUpdateTime(editVersion);
+                    reqVO.setVersion(editVersion);
                     bareService.updateConfig(reqVO);
                     successCount.incrementAndGet();
                     winnerValue.set(String.valueOf(newVal));
@@ -397,7 +397,7 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         reqVO.setCategory("test");
         reqVO.setName("captcha retry");
         reqVO.setVisible(false);
-        reqVO.setUpdateTime(configMapper.selectById(id).getUpdateTime()); // r1 P1：携带编辑时版本
+        reqVO.setVersion(configMapper.selectById(id).getVersion()); // r1 P1：携带编辑时版本
 
         configService.updateConfig(reqVO);
 
@@ -426,8 +426,8 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         reqVO.setCategory("test");
         reqVO.setName("test-" + key);
         reqVO.setVisible(true);
-        // ZS-CFG-004 codex r1 P1：更新须携带编辑时版本（模拟前端从详情回传 update_time）
-        reqVO.setUpdateTime(configMapper.selectById(id).getUpdateTime());
+        // ZS-CFG-004 codex r1 P1：更新须携带编辑时版本（模拟前端从详情回传 version）
+        reqVO.setVersion(configMapper.selectById(id).getVersion());
         return reqVO;
     }
 
@@ -450,13 +450,13 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         // A 基于旧表单提交 value=true + 旧版本——必须冲突拒绝且不得覆盖 B 的结果
         ConfigDO dbConfig = buildConfigDO("system.user.register-enabled", "true", true);
         configMapper.insert(dbConfig);
-        LocalDateTime staleVersion = dbConfig.getUpdateTime();
+        Integer staleVersion = configMapper.selectById(dbConfig.getId()).getVersion();
 
         ConfigSaveReqVO reqB = buildUpdateReqVO(dbConfig.getId(), "system.user.register-enabled", "false");
         configService.updateConfig(reqB);
 
         ConfigSaveReqVO reqA = buildUpdateReqVO(dbConfig.getId(), "system.user.register-enabled", "true");
-        reqA.setUpdateTime(staleVersion);
+        reqA.setVersion(staleVersion);
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqA));
         assertEquals(CONFIG_UPDATE_CONFLICT.getCode(), ex.getCode());
 
@@ -471,7 +471,7 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         configMapper.insert(dbConfig);
 
         ConfigSaveReqVO reqVO = buildUpdateReqVO(dbConfig.getId(), "system.user.register-enabled", "false");
-        reqVO.setUpdateTime(null);
+        reqVO.setVersion(null);
         ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqVO));
         assertEquals(CONFIG_UPDATE_CONFLICT.getCode(), ex.getCode());
 

@@ -12,8 +12,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 
-import java.time.LocalDateTime;
-
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.CONFIG_SENSITIVE_CAN_NOT_DOWNGRADE_ON_MASKED_ECHO;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.CONFIG_SENSITIVE_CAN_NOT_SET_VISIBLE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,12 +41,12 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
     @InjectMocks
     private ConfigServiceImpl configService;
 
-    /** 乐观锁版本：mock DO 的固定 update_time，成功路径 reqVO 须携带同值（codex r1 P1 客户端版本合同） */
-    private static final LocalDateTime EDIT_TIME = LocalDateTime.of(2026, 9, 13, 0, 0);
+    /** 乐观锁版本：mock DO 的固定 version，成功路径 reqVO 须携带同值（codex r1 P1 客户端版本合同） */
+    private static final Integer EDIT_VERSION = 0;
 
     private static ConfigDO config(String key, String value, boolean visible) {
         ConfigDO cfg = new ConfigDO();
-        cfg.setUpdateTime(EDIT_TIME);
+        cfg.setVersion(EDIT_VERSION);
         cfg.setConfigKey(key);
         cfg.setValue(value);
         cfg.setVisible(visible);
@@ -112,7 +110,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setName("用户初始密码");
         req.setValue("******"); // 回显的掩码，非管理员输入的新值
         req.setVisible(false);
-        req.setUpdateTime(EDIT_TIME);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(1L))
                 .thenReturn(config("system.user.init-password", "RealInitPwd123", false));
         when(configMapper.update(any(), any())).thenReturn(1);
@@ -134,7 +132,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setName("数据库密码");
         req.setValue("NewP@ssw0rd");
         req.setVisible(false);
-        req.setUpdateTime(EDIT_TIME);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(2L)).thenReturn(config("sys.db.password", "OldPwd", false));
         when(configMapper.update(any(), any())).thenReturn(1);
 
@@ -154,7 +152,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setName("横幅文案");
         req.setValue("******");
         req.setVisible(true);
-        req.setUpdateTime(EDIT_TIME);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(3L)).thenReturn(config("biz.banner.text", "old", true));
         when(configMapper.update(any(), any())).thenReturn(1);
 
@@ -218,7 +216,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setKey("biz.target");  // 目标 key（与库中 biz.source 不同 → key 变化）
         req.setValue("******");    // 回显掩码 → 保留旧值 "99"
         req.setVisible(false);     // 保持 SENSITIVE，不触发降级/翻可见守卫
-        req.setUpdateTime(EDIT_TIME);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(9L)).thenReturn(config("biz.source", "99", false));
         when(configMapper.update(any(), any())).thenReturn(1);
 
@@ -239,7 +237,7 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
         req.setKey("biz.same");    // 与库中一致 → key 未变
         req.setValue("******");    // 回显掩码 → 保留旧值
         req.setVisible(false);
-        req.setUpdateTime(EDIT_TIME);
+        req.setVersion(EDIT_VERSION);
         when(configMapper.selectById(10L)).thenReturn(config("biz.same", "kept", false));
         when(configMapper.update(any(), any())).thenReturn(1);
 

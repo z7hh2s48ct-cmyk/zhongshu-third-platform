@@ -15,7 +15,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
@@ -50,6 +49,8 @@ public class ConfigServiceImpl implements ConfigService {
         // 插入参数配置
         ConfigDO config = ConfigConvert.INSTANCE.convert(createReqVO);
         config.setType(ConfigTypeEnum.CUSTOM.getType());
+        // ZS-CFG-004 codex r2 P2 修复：版本由服务端初始化，忽略请求携带值（MapStruct 会自动映射同名 version 字段）
+        config.setVersion(0);
         configMapper.insert(config);
         return config.getId();
     }
@@ -94,20 +95,21 @@ public class ConfigServiceImpl implements ConfigService {
             configValueValidator.validate(updateReqVO.getKey(), updateObj.getValue());
         }
 
-        // ZS-CFG-004 codex r1 P1 修复：乐观锁版本由客户端携带——详情（ConfigRespVO.updateTime）返回编辑时版本，
-        // 更新必须原样回传并以该版本执行条件 UPDATE。原先以服务端保存开始时的重读 updateTime 作版本，
-        // 只能保护服务端读→写短窗，无法检测两个客户端先后保存的旧表单覆盖（H2 已复现：A 打开表单后
-        // B 先改值，A 再提交旧值仍成功）。
-        LocalDateTime expectedVersion = updateReqVO.getUpdateTime();
+        // ZS-CFG-004 codex r1 P1 修复 + codex r2 P1 改型：乐观锁版本改为【独立整数 version 列】——
+        // r1 曾以客户端回传 updateTime 作版本，r2 评审证明其根本缺陷：JSON 时间序列化丢毫秒以下精度
+        // （微秒版本回传即冲突拒绝）、datetime 秒级精度下同秒内两次更新版本不推进（旧表单仍可覆盖）、
+        // 创建路径 MapStruct 自动映射可伪造初始版本。整数 version 由服务端维护、成功更新原子 +1，
+        // 详情返回、更新必须原样回传，彻底保证每次更新版本唯一推进。
+        Integer expectedVersion = updateReqVO.getVersion();
         if (expectedVersion == null) {
             // 未携带版本 = 未加载详情的旧客户端/盲写，同样按冲突拒绝，防止绕过版本检测
             throw exception(CONFIG_UPDATE_CONFLICT);
         }
-        updateObj.setUpdateTime(LocalDateTime.now());
+        updateObj.setVersion(exists.getVersion() + 1);
         int affected = configMapper.update(updateObj,
                 new LambdaQueryWrapper<ConfigDO>()
                         .eq(ConfigDO::getId, updateObj.getId())
-                        .eq(ConfigDO::getUpdateTime, expectedVersion));
+                        .eq(ConfigDO::getVersion, expectedVersion));
         if (affected == 0) {
             throw exception(CONFIG_UPDATE_CONFLICT);
         }

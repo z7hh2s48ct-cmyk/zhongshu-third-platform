@@ -62,5 +62,9 @@ public class ConfigDO extends BaseDO {
      * 备注
      */
     private String remark;
+    /**
+     * 乐观锁版本（ZS-CFG-004）：服务端维护，成功更新原子 +1；更新请求须携带编辑时版本
+     */
+    private Integer version;
 
 }
