@@ -80,6 +80,7 @@ const container = `zszj-bpm001-${Date.now()}-${Math.floor(Math.random() * 100000
 let port = 4332 + Math.floor(Math.random() * 700);
 let cleaned = false;
 let cleanupError = '';
+let currentChild = null;
 const cleanup = () => {
   if (cleaned) return;
   for (let attempt = 0; attempt < 3 && !cleaned; attempt++) {
@@ -89,7 +90,12 @@ const cleanup = () => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
   }
 };
-const onSignal = (signal) => { cleanup(); process.exit(signal === 'SIGINT' ? 130 : 143); };
+const onSignal = (signal) => {
+  // detached 子进程自成进程组，终端 Ctrl+C 不会触达：中断路径必须显式整树终止
+  try { if (currentChild) killTree(currentChild); } catch { /* 已退出 */ }
+  cleanup();
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+};
 process.on('exit', () => { if (!cleaned) cleanup(); });
 process.on('SIGINT', () => onSignal('SIGINT'));
 process.on('SIGTERM', () => onSignal('SIGTERM'));
@@ -122,7 +128,7 @@ const record = (id, ok, note = '') => { results.push({ id, ok, note }); ok ? pas
 // 'close' 事件不会到达，流程将挂死（r2 评审实测复现）
 function killTree(child) {
   try {
-    if (isWin) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    if (isWin) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000, killSignal: 'SIGKILL' });
     else process.kill(-child.pid, 'SIGKILL');
   } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
 }
@@ -130,10 +136,12 @@ function runAsync(argv, opts = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const child = spawn(argv[0], argv.slice(1), { cwd: core, env: { ...childEnv, ...opts.env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    currentChild = child;
     let output = '';
     const done = (status) => {
       if (settled) return;
       settled = true;
+      if (currentChild === child) currentChild = null;
       if (fallbackTimer) clearTimeout(fallbackTimer);
       if (timer) clearTimeout(timer);
       resolve({ status, output });
