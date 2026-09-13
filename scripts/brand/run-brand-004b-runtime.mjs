@@ -57,6 +57,13 @@ function fatal(id, name, detail) {
   throw new Error(`致命失败：${name} ${detail ?? ''}`);
 }
 
+/** 基础设施失败：清理已建资源后按约定退出码退出（缺 Docker=3，其余非零）。 */
+function fail(code, message) {
+  cleanup();
+  console.error(message);
+  process.exit(code);
+}
+
 // ---------------------------------------------------------------------------
 // 基础设施（清理状态与资源标识先于 Docker 依赖检查初始化，保证缺 Docker 时仍能以退出码 3 干净退出）
 // ---------------------------------------------------------------------------
@@ -363,7 +370,14 @@ const mon = spawn('docker', ['exec', redisContainer, 'redis-cli', 'MONITOR'], { 
 let monText = '';
 mon.stdout.on('data', (d) => { monText += d.toString(); });
 mon.stderr.on('data', (d) => { monText += d.toString(); });
-await sleep(600);
+// 等 MONITOR 就绪应答（redis-cli 连接后先回一行 OK），固定延时在慢启动下会漏捕获探测请求；
+// 异步轮询（同步忙等会阻塞事件循环、stdout 数据事件无法到达）
+let monReady = false;
+for (let i = 0; i < 100 && !monReady; i++) {
+  monReady = /(^|\r?\n)OK(\r?\n|$)/.test(monText);
+  if (!monReady) await sleep(100);
+}
+check('F-mon', 'MONITOR 已就绪（10s 内收到 OK 应答）', monReady);
 const ctrlCall = await api('GET', '/admin-api/system/auth/get-permission-info', { token: adminToken });
 const fakeCall = await api('GET', '/admin-api/system/auth/get-permission-info', { token: fakeOld[0].token });
 await sleep(800);
