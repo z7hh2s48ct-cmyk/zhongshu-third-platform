@@ -20,6 +20,17 @@ import java.io.IOException;
  */
 public class TenantContextWebFilter extends OncePerRequestFilter {
 
+    /**
+     * ZS-SEC-012.B codex r2 P1：必须参与 ASYNC 派发——OncePerRequestFilter 默认跳过异步派发，
+     * 而首次 REQUEST 的 finally 已清理租户上下文；异步访问日志（ApiAccessLogFilter 同样参与 ASYNC
+     * 派发）在派发期记录时若上下文缺失，会被 ApiAccessLogServiceImpl 以 executeIgnore 落为 tenant_id=0，
+     * 原租户查不到自己的日志。参与后本过滤器在 ASYNC 派发内从 tenant-id 头重建上下文，finally 再清理。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {

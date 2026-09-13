@@ -45,6 +45,12 @@ import static cn.zszj.framework.common.util.json.JsonUtils.toJsonString;
 @Slf4j
 public class ApiAccessLogFilter extends ApiRequestFilter {
 
+    /**
+     * ZS-SEC-012.B codex r2 P2：请求开始时间跨派发复用的请求属性键
+     */
+    private static final String BEGIN_TIME_ATTRIBUTE = ApiAccessLogFilter.class.getName() + ".BEGIN_TIME";
+
+
     private final String applicationName;
 
     private final ApiAccessLogCommonApi apiAccessLogApi;
@@ -69,8 +75,11 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
     @SuppressWarnings("NullableProblems")
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        // 获得开始时间
-        LocalDateTime beginTime = LocalDateTime.now();
+        // 获得开始时间。ZS-SEC-012.B codex r2 P2：跨派发复用——ASYNC 派发时若重新取当前时间，
+        // 耗时只含最终派发的几毫秒，异步执行阶段（可能数秒）被丢弃；首次派发的时间存请求属性供复用
+        Object beginTimeAttr = request.getAttribute(BEGIN_TIME_ATTRIBUTE);
+        LocalDateTime beginTime = beginTimeAttr != null ? (LocalDateTime) beginTimeAttr : LocalDateTime.now();
+        request.setAttribute(BEGIN_TIME_ATTRIBUTE, beginTime);
         // 提前获得参数，避免 XssFilter 过滤处理
         Map<String, String> queryString = ServletUtils.getParamMap(request);
         String requestBody = ServletUtils.getBody(request);
