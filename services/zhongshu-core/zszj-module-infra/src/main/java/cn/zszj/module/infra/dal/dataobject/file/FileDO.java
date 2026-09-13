@@ -1,7 +1,6 @@
 package cn.zszj.module.infra.dal.dataobject.file;
 
-import cn.zszj.framework.mybatis.core.dataobject.BaseDO;
-import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.framework.tenant.core.db.TenantBaseDO;
 import com.baomidou.mybatisplus.annotation.KeySequence;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.*;
@@ -20,8 +19,19 @@ import lombok.*;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@TenantIgnore
-public class FileDO extends BaseDO {
+public class FileDO extends TenantBaseDO {
+
+
+    /**
+     * 上传主体用户编号（ZS-FILE-001.A：服务端确认的所有者，匿名/系统上传为 0）
+     */
+    private Long ownerUserId;
+    /**
+     * 可见范围（ZS-FILE-001.A）：PUBLIC=公开素材（匿名可读）；PRIVATE=私有附件（默认，需登录且同租户）
+     *
+     * 枚举 {@link cn.zszj.module.infra.enums.file.FileScopeEnum}
+     */
+    private String scope;
 
     /**
      * 编号，数据库自增

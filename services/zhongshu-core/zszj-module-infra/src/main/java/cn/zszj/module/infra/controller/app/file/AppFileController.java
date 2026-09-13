@@ -54,10 +54,6 @@ public class AppFileController {
         return success(fileService.presignPutUrl(name, directory));
     }
 
-    @PostMapping("/create")
-    @Operation(summary = "创建文件", description = "模式二：前端上传文件：配合 presigned-url 接口，记录上传了上传的文件")
-    public CommonResult<Long> createFile(@Valid @RequestBody FileCreateReqVO createReqVO) {
-        return success(fileService.createFile(createReqVO));
-    }
-
+    // ZS-FILE-001.A（codex r1 P1）：App 端 /create 同步禁用——presigned create 无上传申请绑定，
+    // 可冒领他人 configId/path 生成归属记录；凭证化重新交付归 ZS-FILE-003
 }

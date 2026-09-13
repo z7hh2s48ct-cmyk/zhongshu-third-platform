@@ -39,6 +39,8 @@ public interface ErrorCodeConstants {
     // ========= 文件相关 1-001-003-000 =================
     ErrorCode FILE_PATH_EXISTS = new ErrorCode(1_001_003_000, "文件路径已存在");
     ErrorCode FILE_NOT_EXISTS = new ErrorCode(1_001_003_001, "文件不存在");
+    // ZS-FILE-001.A：文件可见范围非法
+    ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");
     ErrorCode FILE_PATH_INVALID = new ErrorCode(1_001_003_003, "文件路径不正确");
 
