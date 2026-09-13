@@ -435,16 +435,22 @@ public class PermissionServiceImpl implements PermissionService {
      */
     private void validateMenusInTenantPackage(Long roleId, Set<Long> menuIds) {
         if (CollUtil.isEmpty(menuIds)) {
-            return;
+            return; // 空集合=撤权，无需套餐约束
         }
         RoleDO role = roleService.getRole(roleId);
-        TenantDO tenant = tenantMapper.selectById(role.getTenantId());
-        if (tenant == null || Objects.equals(tenant.getPackageId(), TenantDO.PACKAGE_ID_SYSTEM)) {
+        // ZS-CFG-003.B codex r0 P1：先取租户行锁再校验——与套餐变更收敛（updateTenantRoleMenu）、
+        // 租户换套餐（updateTenant）共用同一把租户行锁，堵住「校验通过→并发套餐收缩→仍写入越界菜单」的 TOCTOU；
+        // 本方法处于 @Transactional 中，锁持有至提交
+        TenantDO tenant = tenantMapper.selectByIdForUpdate(role.getTenantId());
+        if (tenant == null) {
+            throw exception(TENANT_NOT_EXISTS); // codex r0 P2：缺记录不豁免（普通角色不得借缺失关联获得任意授权）
+        }
+        if (Objects.equals(tenant.getPackageId(), TenantDO.PACKAGE_ID_SYSTEM)) {
             return; // 系统租户不使用套餐，菜单全量
         }
         TenantPackageDO tenantPackage = tenantPackageMapper.selectById(tenant.getPackageId());
         if (tenantPackage == null) {
-            return; // 防御性放行（见方法注释）
+            throw exception(TENANT_PACKAGE_NOT_EXISTS); // codex r0 P2：套餐缺失拒绝，不等同于系统租户豁免
         }
         Set<Long> packageMenuIds = CollUtil.emptyIfNull(tenantPackage.getMenuIds());
         List<Long> exceedMenuIds = menuIds.stream()

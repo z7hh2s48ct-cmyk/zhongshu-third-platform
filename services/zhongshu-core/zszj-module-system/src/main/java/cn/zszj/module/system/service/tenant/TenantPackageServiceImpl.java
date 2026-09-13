@@ -76,6 +76,8 @@ public class TenantPackageServiceImpl implements TenantPackageService {
         // 如果菜单发生变化，则修改每个租户的菜单
         if (!CollUtil.isEqualList(tenantPackage.getMenuIds(), updateReqVO.getMenuIds())) {
             List<TenantDO> tenants = tenantService.getTenantListByPackageId(tenantPackage.getId());
+            // ZS-CFG-003.B codex r0 P1：按租户 id 排序后收敛——多租户行锁获取顺序确定，避免并发套餐更新死锁
+            tenants.sort(java.util.Comparator.comparing(TenantDO::getId));
             tenants.forEach(tenant -> tenantService.updateTenantRoleMenu(tenant.getId(), updateReqVO.getMenuIds()));
         }
     }

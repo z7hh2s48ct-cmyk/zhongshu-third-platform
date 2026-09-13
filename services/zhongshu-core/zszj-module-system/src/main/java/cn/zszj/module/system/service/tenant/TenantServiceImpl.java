@@ -202,6 +202,8 @@ public class TenantServiceImpl implements TenantService {
     // ZS-PERM-004.A codex r0 P1：同上——统一 Spring 事务生命周期（本方法由套餐/租户更新链调用，驱逐须与提交同序）
     @Transactional(rollbackFor = Exception.class)
     public void updateTenantRoleMenu(Long tenantId, Set<Long> menuIds) {
+        // ZS-CFG-003.B codex r0 P1：先取租户行锁（与授权入口同一把锁），收敛与套餐校验/授权写入串行化
+        tenantMapper.selectByIdForUpdate(tenantId);
         TenantUtils.execute(tenantId, () -> {
             // 获得所有角色
             List<RoleDO> roles = roleService.getRoleList();

@@ -25,9 +25,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.TENANT_NOT_EXISTS;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.TENANT_PACKAGE_MENU_EXCEED;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.TENANT_PACKAGE_NOT_EXISTS;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -172,6 +176,74 @@ public class TenantPackageMenuIntersectionTest extends BaseDbUnitTest {
         assertEquals(Set.of(1L, 2L, 3L), adminMenus, "租户管理员角色随套餐全量");
     }
 
+    // ========== codex r0 P1/P2：缺记录拒绝 + 授权×收缩并发序列化 ==========
+
+    @Test
+    public void testAssignRoleMenu_missingTenant_rejected() {
+        Long roleId = seedRole(9_900_001L, "custom_role"); // 无对应租户行
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> permissionService.assignRoleMenu(roleId, Set.of(1L)));
+        assertEquals(TENANT_NOT_EXISTS.getCode(), ex.getCode(), "缺租户记录不得豁免套餐校验");
+    }
+
+    @Test
+    public void testAssignRoleMenu_missingPackage_rejected() {
+        seedTenant(TENANT_ID, 9_900_100L); // 指向不存在的套餐
+        Long roleId = seedRole(TENANT_ID, "custom_role");
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> permissionService.assignRoleMenu(roleId, Set.of(1L)));
+        assertEquals(TENANT_PACKAGE_NOT_EXISTS.getCode(), ex.getCode(), "缺套餐记录不得豁免");
+    }
+
+    /**
+     * 授权入口与套餐收缩共用租户行锁——收缩先持锁提交后，迟到的授权必须看到新套餐并拒绝越界菜单；
+     * 反向（先授权后收缩）由收敛逻辑删除越界菜单。两种交错结束后不变式：角色菜单 ⊆ 套餐菜单。
+     */
+    @Test
+    public void testConcurrentGrantAndShrink_serialized_finalSubsetHolds() throws Exception {
+        seedTenant(TENANT_ID, PACKAGE_ID);
+        seedPackage(PACKAGE_ID, Set.of(1L, 3L));
+        Long roleId = seedRole(TENANT_ID, "custom_role");
+        permissionService.assignRoleMenu(roleId, Set.of(1L));
+
+        CountDownLatch shrinkLocked = new CountDownLatch(1);
+        CountDownLatch shrinkCommitted = new CountDownLatch(1);
+        AtomicReference<Throwable> shrinkError = new AtomicReference<>();
+        Thread shrink = new Thread(() -> {
+            try {
+                org.springframework.transaction.support.TransactionTemplate tt =
+                        new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+                tt.executeWithoutResult(status -> {
+                    tenantMapper.selectByIdForUpdate(TENANT_ID); // 先持租户行锁
+                    shrinkLocked.countDown();
+                    tenantPackageMapper.updateById(new TenantPackageDO().setId(PACKAGE_ID)
+                            .setName("收缩套餐").setMenuIds(Set.of(1L))
+                            .setStatus(CommonStatusEnum.ENABLE.getStatus()));
+                    // 收敛：删除越界菜单 3 的授权
+                    roleMenuMapper.deleteListByRoleIdAndMenuIds(roleId, java.util.List.of(3L));
+                });
+            } catch (Throwable ex) {
+                shrinkError.set(ex);
+            } finally {
+                shrinkCommitted.countDown();
+            }
+        });
+        shrink.start();
+        assertTrue(shrinkLocked.await(10, java.util.concurrent.TimeUnit.SECONDS), "前置：收缩事务已持锁");
+
+        // 迟到的授权：必须阻塞到收缩提交后执行，看到收缩后的套餐 {1}，菜单 3 被拒绝
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> permissionService.assignRoleMenu(roleId, Set.of(1L, 3L)));
+        assertEquals(TENANT_PACKAGE_MENU_EXCEED.getCode(), ex.getCode());
+        assertTrue(shrinkCommitted.await(10, java.util.concurrent.TimeUnit.SECONDS));
+        assertNull(shrinkError.get(), "收缩事务不得失败: " + shrinkError.get());
+
+        // 终态不变式：角色菜单 ⊆ 套餐菜单
+        Set<Long> roleMenus = cn.zszj.framework.common.util.collection.CollectionUtils.convertSet(
+                roleMenuMapper.selectListByRoleId(roleId), cn.zszj.module.system.dal.dataobject.permission.RoleMenuDO::getMenuId);
+        assertTrue(Set.of(1L).containsAll(roleMenus), "角色菜单必须为套餐子集，实际: " + roleMenus);
+    }
+
     // ========== 造数辅助 ==========
 
     private void seedTenant(Long tenantId, Long packageId) {
@@ -206,6 +278,8 @@ public class TenantPackageMenuIntersectionTest extends BaseDbUnitTest {
 
     @Resource
     private cn.zszj.module.system.dal.mysql.permission.RoleMapper roleMapper;
+    @Resource
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private void roleMapperInsert(cn.zszj.module.system.dal.dataobject.permission.RoleDO role) {
         roleMapper.insert(role);

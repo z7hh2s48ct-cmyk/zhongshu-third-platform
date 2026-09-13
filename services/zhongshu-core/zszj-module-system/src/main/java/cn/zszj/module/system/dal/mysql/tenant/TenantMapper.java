@@ -13,6 +13,21 @@ import java.util.List;
 @Mapper
 public interface TenantMapper extends BaseMapperX<TenantDO> {
 
+    /**
+     * ZS-CFG-003.B codex r0 P1：按租户编号加行锁读取（SELECT ... FOR UPDATE）。
+     * 作为「授权写入 ↔ 套餐变更收敛 ↔ 租户换套餐」的统一锁：堵住套餐校验到授权提交之间的 TOCTOU
+     * （并发套餐收缩后仍能写入越界菜单）。
+     *
+     * @param id 租户编号
+     * @return 租户；不存在时返回 {@code null}（不持有该行锁）
+     */
+    default TenantDO selectByIdForUpdate(Long id) {
+        return selectOne(new LambdaQueryWrapperX<TenantDO>()
+                .eq(TenantDO::getId, id)
+                .last("FOR UPDATE"));
+    }
+
+
     default PageResult<TenantDO> selectPage(TenantPageReqVO reqVO) {
         return selectPage(reqVO, new LambdaQueryWrapperX<TenantDO>()
                 .likeIfPresent(TenantDO::getName, reqVO.getName())
