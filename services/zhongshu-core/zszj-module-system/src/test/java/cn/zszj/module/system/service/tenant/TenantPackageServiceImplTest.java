@@ -44,6 +44,8 @@ public class TenantPackageServiceImplTest extends BaseDbUnitTest {
 
     @Resource
     private TenantPackageMapper tenantPackageMapper;
+    @Resource
+    private cn.zszj.module.system.dal.mysql.tenant.TenantMapper tenantMapper;
 
     @MockitoBean
     private TenantService tenantService;
@@ -121,6 +123,11 @@ public class TenantPackageServiceImplTest extends BaseDbUnitTest {
         when(tenantService.getTenantListByPackageId(eq(reqVO.getId()))).thenReturn(
                 asList(randomPojo(TenantDO.class, o -> o.setId(tenantId01)),
                         randomPojo(TenantDO.class, o -> o.setId(tenantId02))));
+        // ZS-CFG-003.B：收敛前锁内重查绑定——需真实租户行（绑定本套餐）才触发 updateTenantRoleMenu
+        tenantMapper.insert(randomPojo(TenantDO.class, o -> o.setId(tenantId01)
+                .setPackageId(reqVO.getId()).setStatus(CommonStatusEnum.ENABLE.getStatus())));
+        tenantMapper.insert(randomPojo(TenantDO.class, o -> o.setId(tenantId02)
+                .setPackageId(reqVO.getId()).setStatus(CommonStatusEnum.ENABLE.getStatus())));
 
         // 调用
         tenantPackageService.updateTenantPackage(reqVO);

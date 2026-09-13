@@ -21,6 +21,7 @@ import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
 import cn.zszj.module.system.dal.mysql.tenant.TenantMapper;
+import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
 import cn.zszj.module.system.enums.permission.RoleCodeEnum;
 import cn.zszj.module.system.enums.permission.RoleTypeEnum;
 import cn.zszj.module.system.service.permission.MenuService;
@@ -62,6 +63,8 @@ public class TenantServiceImpl implements TenantService {
 
     @Resource
     private TenantMapper tenantMapper;
+    @Resource
+    private TenantPackageMapper tenantPackageMapper;
 
     @Resource
     private TenantPackageService tenantPackageService;
@@ -110,6 +113,9 @@ public class TenantServiceImpl implements TenantService {
         validTenantWebsiteDuplicate(createReqVO.getWebsites(), null);
         // 校验套餐被禁用
         TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(createReqVO.getPackageId());
+        // ZS-CFG-003.B codex r1 P1：创建租户同样先取套餐行锁——租户尚未绑定、不会出现在收缩枚举中，
+        // 若并发套餐收缩，管理员角色必须按收缩后的套餐菜单授予
+        tenantPackageMapper.selectByIdForUpdate(createReqVO.getPackageId());
 
         // 创建租户
         TenantDO tenant = BeanUtils.toBean(createReqVO, TenantDO.class);
@@ -159,6 +165,10 @@ public class TenantServiceImpl implements TenantService {
         validTenantWebsiteDuplicate(updateReqVO.getWebsites(), updateReqVO.getId());
         // 校验套餐被禁用
         TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
+        // ZS-CFG-003.B codex r1 P1：先取【目标套餐行锁】再动租户绑定——与 updateTenantPackage（套餐→租户锁序）
+        // 统一，堵「换套餐换入正在收缩的套餐、逃过该租户的收敛」的交错；换出套餐由其自身收缩流程在
+        // 锁内重查绑定后跳过（见 TenantPackageServiceImpl）
+        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
 
         // 更新租户
         TenantDO updateObj = BeanUtils.toBean(updateReqVO, TenantDO.class);

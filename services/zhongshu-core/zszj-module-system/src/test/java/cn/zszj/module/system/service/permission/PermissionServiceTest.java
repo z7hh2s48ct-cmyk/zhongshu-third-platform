@@ -51,6 +51,8 @@ public class PermissionServiceTest extends BaseDbUnitTest {
     @Resource
     private RoleMenuMapper roleMenuMapper;
     @Resource
+    private cn.zszj.module.system.dal.mysql.tenant.TenantMapper tenantMapper;
+    @Resource
     private UserRoleMapper userRoleMapper;
 
     @MockitoBean
@@ -148,6 +150,11 @@ public class PermissionServiceTest extends BaseDbUnitTest {
             o.setId(roleId);
             o.setTenantId(100L);
         }));
+        // ZS-CFG-003.B：授权入口现校验租户套餐子集——植入租户 100（系统租户 packageId=0，菜单全量）使原断言路径可达
+        cn.zszj.module.system.dal.dataobject.tenant.TenantDO tenant =
+                randomPojo(cn.zszj.module.system.dal.dataobject.tenant.TenantDO.class);
+        tenant.setId(100L).setPackageId(cn.zszj.module.system.dal.dataobject.tenant.TenantDO.PACKAGE_ID_SYSTEM);
+        tenantMapper.insert(tenant);
         // mock 数据
         RoleMenuDO roleMenu01 = randomPojo(RoleMenuDO.class).setRoleId(1L).setMenuId(100L);
         roleMenuMapper.insert(roleMenu01);
