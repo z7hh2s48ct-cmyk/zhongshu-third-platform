@@ -68,6 +68,37 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
         try {
             // 继续过滤器
             filterChain.doFilter(request, response);
+            // ZS-SEC-012.B codex r0 P1：异步请求（Callable / StreamingResponseBody / SSE）在首次 REQUEST
+            // 派发返回时尚未完成响应——此时 CommonResult 未写入，立即记录必然 result=null 误记成功
+            //（异步异常也伪报成功）。改为注册 AsyncListener，在完成/错误/超时回调中以【最终结果】记录；
+            // 非异步请求维持立即记录（原有行为）。
+            if (request.isAsyncStarted()) {
+                request.getAsyncContext().addListener(new jakarta.servlet.AsyncListener() {
+
+                    @Override
+                    public void onComplete(jakarta.servlet.AsyncEvent event) {
+                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody, null);
+                    }
+
+                    @Override
+                    public void onError(jakarta.servlet.AsyncEvent event) {
+                        // getThrowable() 为 Throwable，统一包装为 Exception 记录
+                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody,
+                                new IllegalStateException("async error", event.getThrowable()));
+                    }
+
+                    @Override
+                    public void onTimeout(jakarta.servlet.AsyncEvent event) {
+                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody,
+                                new IllegalStateException("async timeout"));
+                    }
+
+                    @Override
+                    public void onStartAsync(jakarta.servlet.AsyncEvent event) {
+                    }
+                });
+                return;
+            }
             // 正常执行，记录日志
             createApiAccessLog(request, beginTime, queryString, requestBody, null);
         } catch (Exception ex) {
@@ -79,6 +110,12 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
 
     private void createApiAccessLog(HttpServletRequest request, LocalDateTime beginTime,
                                     Map<String, String> queryString, String requestBody, Exception ex) {
+        // ZS-SEC-012.B codex r0 P1：同一请求只记录一条访问日志——ASYNC 二次派发时本 Filter 会再次执行，
+        // 而 complete 回调已记录过；以请求属性做幂等护栏
+        if (request.getAttribute(getClass().getName() + ".RECORDED") != null) {
+            return;
+        }
+        request.setAttribute(getClass().getName() + ".RECORDED", Boolean.TRUE);
         ApiAccessLogCreateReqDTO accessLog = new ApiAccessLogCreateReqDTO();
         try {
             boolean enable = buildApiAccessLog(accessLog, request, beginTime, queryString, requestBody, ex);

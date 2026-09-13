@@ -64,9 +64,10 @@ class SecurityChainJointRegressionTest extends SecurityChainJointRegressionTestB
                     .andExpect(jsonPath("$.code").value(0))
                     .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
 
-            // 跨线程上下文传播：异步线程读到的租户/用户与请求一致（非空、不串号）
-            assertTrue(body.contains("tenant=" + TENANT_1), "异步线程租户上下文必须与请求一致，实际: " + body);
-            assertTrue(body.contains(";user=1"), "异步线程登录用户必须与 token 一致，实际: " + body);
+            // 跨线程上下文传播（codex r0 P2：精确匹配防前缀漏检串号——池化线程复用下 tenant=10;user=104 不得通过）
+            assertTrue(body.contains("tenant=" + TENANT_1 + ";user="
+                            + cn.zszj.framework.security.fixture.MockOAuth2TokenApi.USER_T1_ADMIN),
+                    "异步线程租户/用户上下文必须与 token 精确一致，实际: " + body);
         }
 
         @Test
@@ -81,11 +82,14 @@ class SecurityChainJointRegressionTest extends SecurityChainJointRegressionTestB
             mockMvc.perform(asyncDispatch(mvcResult))
                     .andExpect(status().isOk()) // 统一出口：HTTP 200 + 业务码（平台既有契约）
                     .andExpect(jsonPath("$.code").value(500))
-                    .andExpect(jsonPath("$.msg").exists())
                     .andExpect(result -> {
                         String body = result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-                        assertTrue(!body.contains("IllegalStateException") || body.contains("服务器异常"),
-                                "异步异常必须收敛为统一错误消息，不得回显异常类名细节: " + body);
+                        // codex r0 P2：精确断言——统一消息必须存在，且不得泄漏异常类名/业务异常消息/堆栈
+                        assertTrue(body.contains("系统异常"), "异步异常必须收敛为统一错误消息，实际: " + body);
+                        assertTrue(!body.contains("IllegalStateException")
+                                        && !body.contains("async-boom")
+                                        && !body.contains("java.lang."),
+                                "异步异常响应不得回显异常类名/原始消息/堆栈: " + body);
                     });
         }
 
@@ -215,6 +219,35 @@ class SecurityChainJointRegressionTest extends SecurityChainJointRegressionTestB
                             .header("Access-Control-Request-Headers", "trace-id,authorization,tenant-id"))
                     .andExpect(status().isOk())
                     .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"));
+        }
+    }
+    // ========== 5. codex r0 P2：池化线程复用下的交替租户上下文传播（防串号） ==========
+
+    /**
+     * taskExecutor 池仅 2 线程，交替两租户/两用户多次请求——若 TTL 传播缺失或上下文清理缺失，
+     * 复用线程会读到上一个请求的租户/用户，本用例必现串号。
+     */
+    @Test
+    @DisplayName("池化线程复用：交替租户/用户逐请求精确匹配（TTL 传播 + 清理合同）")
+    void asyncContextAlternatingTenants_noCrossTalk() throws Exception {
+        String[][] cases = {
+                {"token-t1-admin", "1", cn.zszj.framework.security.fixture.MockOAuth2TokenApi.USER_T1_ADMIN.toString()},
+                {"token-t2-admin", "2", cn.zszj.framework.security.fixture.MockOAuth2TokenApi.USER_T2_ADMIN.toString()},
+                {"token-t1-admin", "1", cn.zszj.framework.security.fixture.MockOAuth2TokenApi.USER_T1_ADMIN.toString()},
+                {"token-t2-admin", "2", cn.zszj.framework.security.fixture.MockOAuth2TokenApi.USER_T2_ADMIN.toString()},
+                {"token-t1-admin", "1", cn.zszj.framework.security.fixture.MockOAuth2TokenApi.USER_T1_ADMIN.toString()},
+        };
+        for (String[] c : cases) {
+            MvcResult mvcResult = mockMvc.perform(get("/admin-api/fixture/async/tenant-context")
+                            .header("Authorization", "Bearer " + c[0])
+                            .header("tenant-id", c[1]))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+            String body = mockMvc.perform(asyncDispatch(mvcResult))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(body.contains("tenant=" + c[1] + ";user=" + c[2]),
+                    "交替租户下上下文必须逐请求精确匹配，期望 tenant=" + c[1] + ";user=" + c[2] + "，实际: " + body);
         }
     }
 }

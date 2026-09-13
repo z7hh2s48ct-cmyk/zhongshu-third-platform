@@ -18,3 +18,20 @@ jobs:
           node-version: 22
       - name: 运行基线门禁（--fast：跳过需前端依赖的类型检查，其由 ZS-CLIENT-005.A 本地门禁覆盖）
         run: node scripts/ops/run-local-gates.mjs --fast
+
+  # ZS-SEC-012.B：安全链联合回归入 CI（与本地 G12 同一入口/同一用例集）。
+  # ubuntu-latest 由 setup-java 提供 JDK17 + 自带 mvn，无需 tools/env.sh（Windows 自引导工具链仅本地）。
+  security-chain-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 运行安全链联合回归（.A 31 + .B 9 + visit 夹具，未授权/失败不伪报成功）
+        working-directory: services/zhongshu-core
+        run: >-
+          mvn -pl zszj-framework/zszj-spring-boot-starter-biz-tenant -am
+          -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest
+          -Dsurefire.failIfNoSpecifiedTests=false test
