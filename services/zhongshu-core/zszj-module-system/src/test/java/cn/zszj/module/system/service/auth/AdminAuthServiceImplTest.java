@@ -27,6 +27,7 @@ import jakarta.validation.Validator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static cn.hutool.core.util.RandomUtil.randomEle;
@@ -40,6 +41,14 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @Import(AdminAuthServiceImpl.class)
+// ZS-LOGIN-004：本类既有用例覆盖短信登录 / 社交登录 / 自助注册等入口，需显式开启对应登录方式门控（生产默认全关）。
+// 门控「默认关闭即拒绝」的行为由 AdminAuthServiceImplDemoIsolationTest 专项覆盖，此处不重复。
+@TestPropertySource(properties = {
+        "zszj.security.login-mode.sms-enabled=true",
+        "zszj.security.login-mode.social-enabled=true",
+        "zszj.security.login-mode.register-enabled=true",
+        "zszj.security.login-mode.reset-password-enabled=true"
+})
 public class AdminAuthServiceImplTest extends BaseDbUnitTest {
 
     @Resource

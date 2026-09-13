@@ -16,6 +16,12 @@ public interface ErrorCodeConstants {
     ErrorCode AUTH_THIRD_LOGIN_NOT_BIND = new ErrorCode(1_002_000_005, "未绑定账号，需要进行绑定");
     ErrorCode AUTH_MOBILE_NOT_EXISTS = new ErrorCode(1_002_000_007, "手机号不存在");
     ErrorCode AUTH_REGISTER_CAPTCHA_CODE_ERROR = new ErrorCode(1_002_000_008, "验证码不正确，原因：{}");
+    /**
+     * ZS-LOGIN-004：登录方式门控。一期只获准「账号密码」这一种技术登录方式，短信登录 / 社交登录 / 自助注册 /
+     * 重置密码默认关闭，须经 {@code zszj.security.login-mode.*} 显式开启（生产模板默认 false）。
+     * 门控落在 Service 层而非 Controller，故绕过 HTTP 直调 Service 同样被拒。
+     */
+    ErrorCode AUTH_LOGIN_MODE_DISABLED = new ErrorCode(1_002_000_009, "登录方式({})未开启，请使用账号密码登录");
 
     // ========== 菜单模块 1-002-001-000 ==========
     ErrorCode MENU_NAME_DUPLICATE = new ErrorCode(1_002_001_000, "已经存在该名字的菜单");
@@ -111,6 +117,10 @@ public interface ErrorCodeConstants {
     ErrorCode SMS_CODE_USED = new ErrorCode(1_002_014_002, "验证码已使用");
     ErrorCode SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_DAY = new ErrorCode(1_002_014_004, "超过每日短信发送数量");
     ErrorCode SMS_CODE_SEND_TOO_FAST = new ErrorCode(1_002_014_005, "短信发送过于频繁");
+    // ZS-LOGIN-004：验证码暴力破解防护（尝试次数上限）+ 每 IP 频控 + 通道未就绪不得假报发送成功
+    ErrorCode SMS_CODE_EXCEED_ATTEMPT_LIMIT = new ErrorCode(1_002_014_006, "验证码错误尝试次数过多，请在 {} 秒后重新获取");
+    ErrorCode SMS_CODE_EXCEED_SEND_MAXIMUM_QUANTITY_PER_IP = new ErrorCode(1_002_014_007, "超过该 IP 的短信发送数量上限");
+    ErrorCode SMS_CODE_SEND_CHANNEL_NOT_READY = new ErrorCode(1_002_014_008, "短信通道未就绪（模板或渠道不存在/已禁用），验证码未发送");
 
     // ========== 租户信息 1-002-015-000 ==========
     ErrorCode TENANT_NOT_EXISTS = new ErrorCode(1_002_015_000, "租户不存在");

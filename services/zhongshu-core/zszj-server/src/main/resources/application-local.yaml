@@ -192,6 +192,9 @@ zszj:
       frame-options: DISABLE # ZS-SEC-004 P2 本地：admin-web(:80) 内嵌后端(:48080) /doc.html 的 swagger iframe；SAMEORIGIN 跨源阻断，本地放开，生产默认仍 SAMEORIGIN
   captcha:
     enable: false # 本地环境，暂时关闭图片验证码，方便登录等接口的测试；
+  sms-code: # ZS-LOGIN-004：固定演示验证码只允许出现在非生产 profile（本地联调用）
+    begin-code: 9999
+    end-code: 9999
   security:
     mock-enable: ${ZSZJ_APPLICATION_LOCAL_SECURITY_MOCK_ENABLE:false} # 默认禁用模拟认证（ZS-ENG-004）；如需本地调试，经环境变量显式开启
   pay:

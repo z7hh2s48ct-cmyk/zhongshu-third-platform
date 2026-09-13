@@ -104,6 +104,22 @@ public class SmsSendServiceImpl implements SmsSendService {
         return sendLogId;
     }
 
+    @Override
+    public boolean isTemplateSendable(String templateCode) {
+        SmsTemplateDO template = smsTemplateService.getSmsTemplateByCodeFromCache(templateCode);
+        if (template == null) {
+            return false;
+        }
+        if (!CommonStatusEnum.ENABLE.getStatus().equals(template.getStatus())) {
+            return false;
+        }
+        SmsChannelDO channel = smsChannelService.getSmsChannel(template.getChannelId());
+        if (channel == null) {
+            return false;
+        }
+        return CommonStatusEnum.ENABLE.getStatus().equals(channel.getStatus());
+    }
+
     @VisibleForTesting
     SmsChannelDO validateSmsChannel(Long channelId) {
         // 获得短信模板。考虑到效率，从缓存中获取
