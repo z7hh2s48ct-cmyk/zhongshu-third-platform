@@ -164,18 +164,28 @@ public class TenantServiceImpl implements TenantService {
         // 校验租户域名是否重复
         validTenantWebsiteDuplicate(updateReqVO.getWebsites(), updateReqVO.getId());
         // 校验套餐被禁用
-        TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
+        tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
         // ZS-CFG-003.B codex r1 P1：先取【目标套餐行锁】再动租户绑定——与 updateTenantPackage（套餐→租户锁序）
         // 统一，堵「换套餐换入正在收缩的套餐、逃过该租户的收敛」的交错；换出套餐由其自身收缩流程在
         // 锁内重查绑定后跳过（见 TenantPackageServiceImpl）
-        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
+        // codex r2 P2：使用锁定查询返回的套餐（收缩/扩大后的最新菜单）完成授权
+        TenantPackageDO tenantPackage = tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
+        if (tenantPackage == null) {
+            throw exception(TENANT_PACKAGE_NOT_EXISTS);
+        }
+        // codex r2 P1：锁租户行后读取【当前绑定】——并发换绑提交后，锁前快照已失效，
+        // 收敛判断与绑定写回必须以锁内数据为准
+        TenantDO lockedTenant = tenantMapper.selectByIdForUpdate(updateReqVO.getId());
+        if (lockedTenant == null) {
+            throw exception(TENANT_NOT_EXISTS);
+        }
 
         // 更新租户
         TenantDO updateObj = BeanUtils.toBean(updateReqVO, TenantDO.class);
         tenantMapper.updateById(updateObj);
-        // 如果套餐发生变化，则修改其角色的权限
-        if (ObjectUtil.notEqual(tenant.getPackageId(), updateReqVO.getPackageId())) {
-            updateTenantRoleMenu(tenant.getId(), tenantPackage.getMenuIds());
+        // 如果套餐发生变化（以锁内绑定为准），则修改其角色的权限
+        if (ObjectUtil.notEqual(lockedTenant.getPackageId(), updateReqVO.getPackageId())) {
+            updateTenantRoleMenu(lockedTenant.getId(), tenantPackage.getMenuIds());
         }
     }
 

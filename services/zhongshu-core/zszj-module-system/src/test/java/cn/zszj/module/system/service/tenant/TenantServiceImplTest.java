@@ -12,6 +12,7 @@ import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
 import cn.zszj.module.system.dal.mysql.tenant.TenantMapper;
+import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
 import cn.zszj.module.system.enums.permission.RoleCodeEnum;
 import cn.zszj.module.system.enums.permission.RoleTypeEnum;
 import cn.zszj.module.system.service.permission.MenuService;
@@ -60,6 +61,8 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
 
     @Resource
     private TenantMapper tenantMapper;
+    @Resource
+    private TenantPackageMapper tenantPackageMapper;
 
     @MockitoBean
     private TenantProperties tenantProperties;
@@ -191,6 +194,9 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
         TenantPackageDO tenantPackage = randomPojo(TenantPackageDO.class,
                 o -> o.setMenuIds(asSet(200L, 201L)));
         when(tenantPackageService.validTenantPackage(eq(reqVO.getPackageId()))).thenReturn(tenantPackage);
+        // ZS-CFG-003.B：updateTenant 现以【套餐行锁内的锁定读】取最新菜单——需真实套餐行
+        tenantPackageMapper.insert(randomPojo(TenantPackageDO.class, o -> o.setId(reqVO.getPackageId())
+                .setMenuIds(asSet(200L, 201L)).setStatus(CommonStatusEnum.ENABLE.getStatus())));
         // mock 所有角色
         RoleDO role100 = randomPojo(RoleDO.class, o -> o.setId(100L).setCode(RoleCodeEnum.TENANT_ADMIN.getCode()));
         role100.setTenantId(dbTenant.getId());

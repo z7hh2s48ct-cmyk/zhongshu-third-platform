@@ -72,6 +72,9 @@ public class TenantPackageServiceImpl implements TenantPackageService {
     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
         // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
         validateTenantPackageMenus(updateReqVO.getMenuIds());
+        // ZS-CFG-003.B codex r2 P1：先取本套餐行锁再读取——并发套餐更新用锁前旧值判断"菜单未变化"
+        // 跳过收敛的交错必须串行化；比较基准一律取锁定读
+        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getId());
         // 校验存在
         TenantPackageDO tenantPackage = validateTenantPackageExists(updateReqVO.getId());
         // 校验套餐名是否重复
