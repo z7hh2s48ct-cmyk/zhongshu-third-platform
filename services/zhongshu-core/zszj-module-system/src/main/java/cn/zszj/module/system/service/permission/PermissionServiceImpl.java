@@ -23,7 +23,6 @@ import cn.zszj.module.system.dal.redis.RedisKeyConstants;
 import cn.zszj.module.system.enums.permission.DataScopeEnum;
 import cn.zszj.module.system.service.dept.DeptService;
 import cn.zszj.module.system.service.user.AdminUserService;
-import com.baomidou.dynamic.datasource.annotation.DSTransactional;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.Sets;
@@ -139,7 +138,9 @@ public class PermissionServiceImpl implements PermissionService {
     // ========== 角色-菜单的相关方法  ==========
 
     @Override
-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
+    // ZS-PERM-004.A：改用 Spring @Transactional——@DSTransactional（dynamic-datasource 本地事务）
+    // 不激活 Spring 事务同步，缓存驱逐时机与其他 Spring 事务方法不一致（system 模块单库，语义等价）
+    @Transactional(rollbackFor = Exception.class)
     @Caching(evict = {
             @CacheEvict(value = RedisKeyConstants.MENU_ROLE_ID_LIST,
             allEntries = true),
@@ -213,7 +214,9 @@ public class PermissionServiceImpl implements PermissionService {
     // ========== 用户-角色的相关方法  ==========
 
     @Override
-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
+    // ZS-PERM-004.A：改用 Spring @Transactional——@DSTransactional（dynamic-datasource 本地事务）
+    // 不激活 Spring 事务同步，缓存驱逐时机与其他 Spring 事务方法不一致（system 模块单库，语义等价）
+    @Transactional(rollbackFor = Exception.class)
     @CacheEvict(value = RedisKeyConstants.USER_ROLE_ID_LIST, key = "#userId")
     public void assignUserRole(Long userId, Set<Long> roleIds) {
         // 获得角色拥有角色编号
