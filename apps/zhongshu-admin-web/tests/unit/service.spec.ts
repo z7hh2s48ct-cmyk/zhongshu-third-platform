@@ -133,6 +133,91 @@ describe('service 请求拦截器：B03 登录请求合同凭据范围', () => {
   })
 })
 
+describe('service codex r2 回归：协议相对 URL 与刷新重放泄露（P1）', () => {
+  it('协议相对 URL（//host/path）不携带平台凭据，且不得拼进 baseURL 误判为批准来源', async () => {
+    await service.request({ url: '//oss.example/upload', method: 'PUT' })
+    expect(getHeader(captured.headers, 'Authorization')).toBeUndefined()
+    expect(getHeader(captured.headers, 'tenant-id')).toBeUndefined()
+    expect(getHeader(captured.headers, 'trace-id')).toBeUndefined()
+    // axios 将 //host 视为绝对地址直发外部主机；判定用的完整地址必须是原样 //host，而非 baseURL 拼接
+    expect(captured.url).toBe('//oss.example/upload')
+  })
+
+  it('刷新成功后回放：批准来源请求重放 Bearer；外部地址请求显式清除残留 Authorization', async () => {
+    const calls: any[] = []
+    ;(service as any).defaults.adapter = async (config: any) => {
+      calls.push(config)
+      const isFirst = calls.length === 1
+      return {
+        data: isFirst ? { code: 401, msg: '账号未登录' } : { code: 0, data: 'ok' },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+        request: { responseType: 'json' },
+      }
+    }
+    // 拦截全局 axios.post（refreshToken 使用原始 axios 实例）
+    const axiosMod = await import('axios')
+    const postSpy = vi.spyOn(axiosMod.default, 'post').mockResolvedValue({
+      data: { code: 0, data: { userId: 1, accessToken: 'NEW_TOKEN', refreshToken: 'RT' } },
+    } as any)
+    postSpy.mockClear() // 同文件前序用例可能已触发刷新，清空计数
+
+    // 队首请求为外部地址且 401 → 刷新后回放，不得把平台凭据重放到外部主机
+    await service.request({ url: 'https://oss.cdn.example.com/bucket/key', method: 'PUT' })
+    expect(postSpy).toHaveBeenCalledTimes(1)
+    expect(getHeader(calls[0].headers, 'Authorization')).toBeUndefined()
+    expect(getHeader(calls[1].headers, 'Authorization')).toBeUndefined()
+
+    // 批准来源请求 401 → 刷新后回放，应携带重放的 Bearer
+    const calls2: any[] = []
+    ;(service as any).defaults.adapter = async (config: any) => {
+      calls2.push(config)
+      const isFirst = calls2.length === 1
+      return {
+        data: isFirst ? { code: 401, msg: '账号未登录' } : { code: 0, data: 'ok' },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+        request: { responseType: 'json' },
+      }
+    }
+    await service.request({ url: '/system/user/profile/get', method: 'GET' })
+    expect(getHeader(calls2[1].headers, 'Authorization')).toBe('Bearer ADMIN_TOKEN')
+  })
+
+  it('刷新请求的 tenant-id 只随本次请求发送，不写入 axios 全局 defaults（防 useUpload 外部直传泄露）', async () => {
+    const calls: any[] = []
+    ;(service as any).defaults.adapter = async (config: any) => {
+      calls.push(config)
+      const isFirst = calls.length === 1
+      return {
+        data: isFirst ? { code: 401, msg: '账号未登录' } : { code: 0, data: 'ok' },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+        request: { responseType: 'json' },
+      }
+    }
+    const axiosMod = await import('axios')
+    const postSpy = vi.spyOn(axiosMod.default, 'post').mockResolvedValue({
+      data: { code: 0, data: { userId: 1, accessToken: 'NEW_TOKEN', refreshToken: 'RT' } },
+    } as any)
+    postSpy.mockClear() // 同文件前序用例可能已触发刷新，清空计数
+
+    await service.request({ url: '/system/user/profile/get', method: 'GET' })
+    expect(postSpy).toHaveBeenCalledTimes(1)
+    // 刷新请求自身携带 tenant-id
+    const refreshArg: any = postSpy.mock.calls[0][2]
+    expect(refreshArg.headers['tenant-id']).toBe(1)
+    // 全局 defaults 不被污染
+    expect((axiosMod.default.defaults.headers.common as any)['tenant-id']).toBeUndefined()
+  })
+})
+
 describe('service 响应拦截器：异常收敛与可追踪', () => {
   it('验收④：解密失败显式 reject，且携带 trace-id', async () => {
     h.decryptImpl = () => {

@@ -144,10 +144,32 @@ function isApprovedApiOrigin(url: string, approvedOrigin: string): boolean {
   }
 }
 
+/**
+ * ZS-CLIENT-003 codex P1：401 刷新成功后回放/重放请求时，按与请求拦截器<b>同一凭据合同</b>重放平台凭据——
+ * 仅「批准 origin + 调用方未退出 + 非白名单」才重新携带 Authorization；
+ * 其余（外部绝对地址 / 协议相对地址 / 调用方退出 / 白名单）显式清除 Authorization，
+ * 防止刷新前残留的 Bearer Token 被重放泄露给外部主机。
+ */
+function reapplyAuthorizationHeader(config: InternalAxiosRequestConfig): void {
+  const isApproved = isApprovedApiOrigin(resolveFullUrl(config), resolveApprovedOrigin())
+  const callerOptOut = (config!.headers || {}).isToken === false
+  const whitelisted = isWhitelistedPath(config.url || '')
+  if (isApproved && !callerOptOut && !whitelisted) {
+    config.headers!.Authorization = 'Bearer ' + getAccessToken()
+  } else {
+    config.headers!.Authorization = undefined as any
+  }
+}
+
 /** 组合 baseURL 与 url 得到用于来源判定的完整地址 */
 function resolveFullUrl(config: InternalAxiosRequestConfig): string {
   const url = config.url || ''
   if (ABSOLUTE_URL_RE.test(url)) {
+    return url
+  }
+  // ZS-CLIENT-003 codex P1：协议相对地址（//host/path）会被 axios 视为绝对地址直发外部主机，
+  // 不得拼接 baseURL 后误判为批准来源——原样返回，交由 isApprovedApiOrigin 失败关闭
+  if (url.startsWith('//')) {
     return url
   }
   const base = config.baseURL || base_url || ''
@@ -341,7 +363,8 @@ service.interceptors.response.use(
           const refreshTokenRes = await refreshToken()
           // 2.1 刷新成功，则回放队列的请求 + 当前请求
           setToken((await refreshTokenRes).data.data)
-          config.headers!.Authorization = 'Bearer ' + getAccessToken()
+          // ZS-CLIENT-003 codex P1：按凭据合同重放 Authorization（外部地址/退出方不得携带平台凭据）
+          reapplyAuthorizationHeader(config)
           requestList.forEach((cb: any) => {
             cb()
           })
@@ -366,7 +389,8 @@ service.interceptors.response.use(
         // 添加到队列，等待刷新获取到新的令牌
         return new Promise((resolve) => {
           requestList.push(() => {
-            config.headers!.Authorization = 'Bearer ' + getAccessToken() // 让每个请求携带自定义token 请根据实际情况自行修改
+            // ZS-CLIENT-003 codex P1：按凭据合同重放 Authorization（外部地址/退出方不得携带平台凭据）
+            reapplyAuthorizationHeader(config)
             resolve(service(config))
           })
         })
@@ -424,8 +448,11 @@ service.interceptors.response.use(
 )
 
 const refreshToken = async () => {
-  axios.defaults.headers.common['tenant-id'] = getTenantId()
-  return await axios.post(base_url + '/system/auth/refresh-token?refreshToken=' + getRefreshToken())
+  // ZS-CLIENT-003 codex P2：租户头只随本次刷新请求发送，不再写入 axios 全局 defaults——
+  // 否则刷新后 useUpload 的全局 axios.put 直传外部存储会泄露 tenant-id
+  return await axios.post(base_url + '/system/auth/refresh-token?refreshToken=' + getRefreshToken(), null, {
+    headers: { 'tenant-id': getTenantId() }
+  })
 }
 const handleAuthorized = () => {
   const { t } = useI18n()
