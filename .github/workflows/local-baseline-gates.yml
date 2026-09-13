@@ -32,6 +32,6 @@ jobs:
       - name: 运行安全链联合回归（.A 31 + .B 9 + visit 夹具，未授权/失败不伪报成功）
         working-directory: services/zhongshu-core
         run: >-
-          mvn -pl zszj-framework/zszj-spring-boot-starter-biz-tenant -am
-          -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest
+          mvn -pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am
+          -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest
           -Dsurefire.failIfNoSpecifiedTests=false test

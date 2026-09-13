@@ -35,15 +35,15 @@ public abstract class SecurityChainJointRegressionTestBase {
     }
 
     /**
-     * ZS-SEC-012.B codex r0 P2：提供与生产同名的【池化】taskExecutor——Spring MVC 异步（Callable）
-     * 优先取名为 taskExecutor 的 bean；池化使工作线程跨请求复用，配合 job starter 的
-     * ZszjAsyncAutoConfiguration（TtlRunnable 装饰 BPP）构成真实的「跨线程上下文传播」路径，
-     * 池不传播则交替租户用例必现串号（SimpleAsyncTaskExecutor 每请求新线程会掩盖缺陷）。
+     * ZS-SEC-012.B codex r0/r1 P2：提供【池化】applicationTaskExecutor——Spring Boot MVC 异步
+     * （Callable）接线查找名为 applicationTaskExecutor 的 TaskExecutor bean；池化使工作线程跨请求
+     * 复用，配合 job starter 的 ZszjAsyncAutoConfiguration（TtlRunnable 装饰 BPP，夹具已放开排除）
+     * 构成真实的「跨线程上下文传播」路径；池不传播则交替租户用例必现串号。
      */
     @org.springframework.context.annotation.Configuration
     public static class AsyncExecutorConfiguration {
 
-        @org.springframework.context.annotation.Bean("taskExecutor")
+        @org.springframework.context.annotation.Bean("applicationTaskExecutor")
         public org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor taskExecutor() {
             org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
                     new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();

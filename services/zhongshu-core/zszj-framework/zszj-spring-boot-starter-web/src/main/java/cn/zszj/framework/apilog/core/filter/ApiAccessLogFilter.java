@@ -55,6 +55,16 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
         this.apiAccessLogApi = apiAccessLogApi;
     }
 
+    /**
+     * ZS-SEC-012.B codex r0/r1 P1：必须参与 ASYNC 派发——OncePerRequestFilter 默认跳过异步派发，
+     * 导致异步请求的访问日志只能挂在首次派发（结果未定，伪报成功）。参与后可在 ASYNC 派发内
+     * 以最终结果记录（租户上下文由派发期过滤器重建，归属正确）。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     @Override
     @SuppressWarnings("NullableProblems")
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -69,38 +79,24 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
             // 继续过滤器
             filterChain.doFilter(request, response);
             // ZS-SEC-012.B codex r0 P1：异步请求（Callable / StreamingResponseBody / SSE）在首次 REQUEST
-            // 派发返回时尚未完成响应——此时 CommonResult 未写入，立即记录必然 result=null 误记成功
-            //（异步异常也伪报成功）。改为注册 AsyncListener，在完成/错误/超时回调中以【最终结果】记录；
-            // 非异步请求维持立即记录（原有行为）。
+            // 派发返回时尚未完成响应——此时 CommonResult 未写入，立即记录必然 result=null 伪报成功
+            //（异步异常也伪报成功）。处理：首次派发直接返回【不记录】，等容器 ASYNC 派发完成后，
+            // 过滤器链会再次执行（TenantContextWebFilter 等同步重建上下文），在派发内以最终结果记录——
+            // codex r1 P1：AsyncListener 回调方案会在租户上下文清理后执行，导致日志归属 tenant_id=0，故弃用。
             if (request.isAsyncStarted()) {
-                request.getAsyncContext().addListener(new jakarta.servlet.AsyncListener() {
-
-                    @Override
-                    public void onComplete(jakarta.servlet.AsyncEvent event) {
-                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody, null);
-                    }
-
-                    @Override
-                    public void onError(jakarta.servlet.AsyncEvent event) {
-                        // getThrowable() 为 Throwable，统一包装为 Exception 记录
-                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody,
-                                new IllegalStateException("async error", event.getThrowable()));
-                    }
-
-                    @Override
-                    public void onTimeout(jakarta.servlet.AsyncEvent event) {
-                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody,
-                                new IllegalStateException("async timeout"));
-                    }
-
-                    @Override
-                    public void onStartAsync(jakarta.servlet.AsyncEvent event) {
-                    }
-                });
                 return;
             }
-            // 正常执行，记录日志
-            createApiAccessLog(request, beginTime, queryString, requestBody, null);
+            boolean asyncDispatch = request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC;
+            Exception asyncFailure = null;
+            if (asyncDispatch) {
+                // codex r1 P1：异步派发若未写 CommonResult 且响应已失败（超时/错误），不得伪报成功
+                CommonResult<?> dispatched = WebFrameworkUtils.getCommonResult(request);
+                if (dispatched == null && response.getStatus() >= 400) {
+                    asyncFailure = new IllegalStateException("async dispatch failed with status " + response.getStatus());
+                }
+            }
+            // 记录日志（同步请求原行为；异步请求在 ASYNC 派发内以最终结果记录，幂等护栏防重复）
+            createApiAccessLog(request, beginTime, queryString, requestBody, asyncFailure);
         } catch (Exception ex) {
             // 异常执行，记录日志
             createApiAccessLog(request, beginTime, queryString, requestBody, ex);

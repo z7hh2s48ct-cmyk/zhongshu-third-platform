@@ -5,7 +5,7 @@
  * admin-web service 12 用例 + miniapp http/interceptor 36 用例），任一失败即非零退出。
  * 与 run-local-gates 的 G13 门禁配合：本地与 CI 同一入口。
  *
- * 依赖：apps/*/node_modules 已由 pnpm install 安装（CI 由 ZS-CLIENT-005.A 流水线负责）。
+ * 依赖：各 app 的 node_modules 已由 pnpm install 安装（CI 由 ZS-CLIENT-005.A 流水线负责）。
  */
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,9 @@ const apps = [
 let failed = false;
 for (const app of apps) {
   console.log(`[client-contract] 运行 ${app.name} vitest …`);
-  const r = spawnSync('npx', ['vitest', 'run'], { cwd: join(root, app.dir), encoding: 'utf8', stdio: 'inherit' });
+  // codex r1 P2：跨平台——Windows 下 npx 是 npx.cmd，spawnSync 不经 shell 无法运行；改为 node 直启本地 vitest 入口
+  const vitestEntry = join(root, app.dir, 'node_modules', 'vitest', 'vitest.mjs');
+  const r = spawnSync(process.execPath, [vitestEntry, 'run'], { cwd: join(root, app.dir), encoding: 'utf8', stdio: 'inherit' });
   if (r.error || r.status !== 0) {
     console.error(`[client-contract] ${app.name} 失败（exit=${r.status ?? r.error?.code}）`);
     failed = true;

@@ -28,7 +28,8 @@ spring:
       - cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration
       # job starter
       - cn.zszj.framework.quartz.config.ZszjQuartzAutoConfiguration
-      - cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration
+      # cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration 保留（ZS-SEC-012.B codex r1 P2）：
+      # 其 TtlRunnable BPP 是异步跨线程租户上下文传播的生产机制，交替租户用例依赖它
       # web starter 中与本夹具无关的自动配置
       - cn.zszj.framework.apilog.config.ZszjApiLogAutoConfiguration
       - cn.zszj.framework.swagger.config.ZszjSwaggerAutoConfiguration
