@@ -37,6 +37,153 @@ let isRefreshToken = false
 // 请求白名单，无须 token 的接口
 const whiteList: string[] = ['/login', '/refresh-token']
 
+/* ------------------------------------------------------------------ *
+ * ZS-CLIENT-003（B03 登录请求合同）：凭据范围与可追踪性辅助
+ * 与移动端 interceptor.ts 保持同一请求合同：凭据仅发往批准 API origin，
+ * 白名单精确段边界匹配，trace/correlation 标识透传（ZS-SEC-006）。
+ * ------------------------------------------------------------------ */
+
+/** 标准 scheme 绝对地址判定 */
+const ABSOLUTE_URL_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//
+
+/** 生成客户端关联标识（trace/correlation id） */
+function generateTraceId(): string {
+  const g = globalThis as any
+  try {
+    if (g.crypto && typeof g.crypto.randomUUID === 'function') {
+      return g.crypto.randomUUID()
+    }
+  } catch {
+    // 运行时不提供 crypto 时回退到时间戳 + 随机数
+  }
+  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** 剥离 query/hash 得到路径；绝对 URL 取其 pathname */
+function extractPathname(url: string): string {
+  if (!url) {
+    return ''
+  }
+  if (ABSOLUTE_URL_RE.test(url)) {
+    try {
+      return new URL(url).pathname
+    } catch {
+      // 解析失败时退回手动剥离
+    }
+  }
+  return url.split('#')[0].split('?')[0]
+}
+
+/** 精确路由匹配：白名单条目以 '/' 起始，用段边界 endsWith 判定，避免 '/login' 误命中 '/login-history' */
+function isWhitelistedPath(url: string, list: string[] = whiteList): boolean {
+  const pathname = extractPathname(url)
+  if (!pathname) {
+    return false
+  }
+  return list.some(entry => pathname === entry || pathname.endsWith(entry))
+}
+
+/** 批准来源解析：由 base_url 推导 origin；base_url 为相对地址时回退当前页面 origin */
+function resolveApprovedOrigin(): string {
+  const base = base_url || ''
+  if (ABSOLUTE_URL_RE.test(base)) {
+    try {
+      return new URL(base).origin
+    } catch {
+      return ''
+    }
+  }
+  try {
+    const g = globalThis as any
+    if (g.window && g.window.location && g.window.location.origin) {
+      return g.window.location.origin
+    }
+  } catch {
+    // 无 window 环境（如 SSR/测试）忽略
+  }
+  return ''
+}
+
+/**
+ * 凭据仅发往批准 API origin：
+ * - 相对地址视为同源批准（协议相对 // 失败关闭）
+ * - 绝对地址需 origin 与批准 origin 一致（大小写不敏感）
+ * - 批准 origin 未知时对绝对地址失败关闭
+ */
+function isApprovedApiOrigin(url: string, approvedOrigin: string): boolean {
+  if (!url) {
+    return false
+  }
+  if (!ABSOLUTE_URL_RE.test(url)) {
+    return !url.startsWith('//')
+  }
+  if (!approvedOrigin) {
+    return false
+  }
+  try {
+    return new URL(url).origin.toLowerCase() === approvedOrigin.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+/** 组合 baseURL 与 url 得到用于来源判定的完整地址 */
+function resolveFullUrl(config: InternalAxiosRequestConfig): string {
+  const url = config.url || ''
+  if (ABSOLUTE_URL_RE.test(url)) {
+    return url
+  }
+  const base = config.baseURL || base_url || ''
+  if (!base) {
+    return url
+  }
+  return `${base.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`
+}
+
+/** trace/correlation 标识透传：调用方已提供则原样保留，否则生成；返回最终值（ZS-SEC-006） */
+function ensureTraceId(header: Record<string, any>): string {
+  let existing: any
+  for (const key of Object.keys(header)) {
+    if (key.toLowerCase() === 'trace-id' && header[key]) {
+      existing = header[key]
+      break
+    }
+  }
+  if (!existing && typeof (header as any).get === 'function') {
+    existing = (header as any).get('trace-id')
+  }
+  const value = existing ? String(existing) : generateTraceId()
+  header['trace-id'] = value
+  return value
+}
+
+/** 从 axios 响应/错误对象读取 trace/correlation 标识（大小写不敏感），用于异常回显 */
+function readTraceIdFromAxios(source: any): string | undefined {
+  const candidates = [
+    source && source.headers,
+    source && source.response && source.response.headers,
+    source && source.config && source.config.headers,
+    source && source.response && source.response.config && source.response.config.headers,
+  ]
+  for (const header of candidates) {
+    if (!header) {
+      continue
+    }
+    for (const key of Object.keys(header)) {
+      if (key.toLowerCase() === 'trace-id' && header[key]) {
+        return String(header[key])
+      }
+    }
+    if (typeof header.get === 'function') {
+      const v = header.get('trace-id')
+      if (v) {
+        return String(v)
+      }
+    }
+  }
+  return undefined
+}
+
 // 创建axios实例
 const service: AxiosInstance = axios.create({
   baseURL: base_url, // api 的 base_url
@@ -51,16 +198,19 @@ const service: AxiosInstance = axios.create({
 // request拦截器
 service.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    // 是否需要设置 token；命中白名单的接口（如 /login）不带 token
-    let isToken = (config!.headers || {}).isToken !== false
-    if (isToken && whiteList.some((v) => config.url?.includes(v))) {
-      isToken = false
-    }
-    if (getAccessToken() && isToken) {
+    // ZS-CLIENT-003（B03 登录请求合同）：凭据范围判定
+    //   - isApproved：仅批准 API origin 才携带平台凭据（Token / 租户头 / trace-id）
+    //   - callerOptOut：调用方显式 headers.isToken === false
+    //   - whitelisted：登录 / 刷新令牌等白名单路径（精确段边界匹配，不再用 includes 子串）
+    const isApproved = isApprovedApiOrigin(resolveFullUrl(config), resolveApprovedOrigin())
+    const callerOptOut = (config!.headers || {}).isToken === false
+    const whitelisted = isWhitelistedPath(config.url || '')
+    const allowToken = isApproved && !callerOptOut && !whitelisted
+    if (allowToken && getAccessToken()) {
       config.headers.Authorization = 'Bearer ' + getAccessToken() // 让每个请求携带自定义 token
     }
-    // 设置租户
-    if (tenantEnable && tenantEnable === 'true') {
+    // 设置租户（仅批准来源；登录仍需租户上下文，故 tenant-id 只受 isApproved 约束）
+    if (isApproved && tenantEnable && tenantEnable === 'true') {
       const tenantId = getTenantId()
       if (tenantId) config.headers['tenant-id'] = tenantId
       // ZS-SEC-001.A：仅当跨租户访问能力显式开启、且已登录时才注入 visit-tenant-id 访问租户头；
@@ -71,6 +221,10 @@ service.interceptors.request.use(
           config.headers['visit-tenant-id'] = visitTenantId
         }
       }
+    }
+    // trace/correlation 标识透传（ZS-SEC-006）：仅批准来源注入/回显，外部来源不携带
+    if (isApproved) {
+      ensureTraceId(config.headers)
     }
     const method = config.method?.toUpperCase()
     // 防止 GET 请求缓存
@@ -131,7 +285,10 @@ service.interceptors.response.use(
         data = ApiEncrypt.decryptResponse(data)
       } catch (error) {
         console.error('响应数据解密失败:', error)
-        throw new Error('响应数据解密失败: ' + (error as Error).message)
+        // ZS-CLIENT-003（验收④）：解密失败显式 reject，并回显 trace/correlation 标识，避免调用方永久 loading
+        const decryptError = new Error('响应数据解密失败: ' + (error as Error).message)
+        ;(decryptError as any).traceId = readTraceIdFromAxios(response)
+        return Promise.reject(decryptError)
       }
     }
 
@@ -199,7 +356,9 @@ service.interceptors.response.use(
       }
     } else if (code === 500) {
       ElMessage.error(t('sys.api.errMsg500'))
-      return Promise.reject(new Error(msg))
+      const err500 = new Error(msg)
+      ;(err500 as any).traceId = readTraceIdFromAxios(response)
+      return Promise.reject(err500)
     } else if (code === 901) {
       ElMessage.error({
         offset: 300,
@@ -213,7 +372,9 @@ service.interceptors.response.use(
           '<div> &nbsp; </div>' +
           '<div>5 分钟搭建本地环境</div>'
       })
-      return Promise.reject(new Error(msg))
+      const err901 = new Error(msg)
+      ;(err901 as any).traceId = readTraceIdFromAxios(response)
+      return Promise.reject(err901)
     } else if (code !== 0 && code !== 200) {
       if (msg === '无效的刷新令牌') {
         // hard coding：忽略这个提示，直接登出
@@ -239,6 +400,8 @@ service.interceptors.response.use(
       message = t('sys.api.apiRequestFailed') + message.substr(message.length - 3)
     }
     ElMessage.error(message)
+    // ZS-CLIENT-003（验收⑤）：断网/超时/取消等一致 reject 且回显 trace/correlation 标识
+    ;(error as any).traceId = readTraceIdFromAxios(error)
     return Promise.reject(error)
   }
 )

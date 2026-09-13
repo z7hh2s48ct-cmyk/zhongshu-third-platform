@@ -19,6 +19,47 @@ interface RefreshTask {
   options: CustomRequestOptions
 }
 
+/**
+ * ZS-CLIENT-003：读取 trace/correlation 标识（ZS-SEC-006）。
+ * 优先响应头（大小写不敏感），回退请求侧头，便于断网/取消等无响应场景仍可追踪。
+ */
+function readTraceId(res: any, options: CustomRequestOptions): string | undefined {
+  const resHeader = (res && res.header) || {}
+  for (const key of Object.keys(resHeader)) {
+    if (key.toLowerCase() === 'trace-id' && resHeader[key]) {
+      return String(resHeader[key])
+    }
+  }
+  const reqHeader = (options && (options as any).header) || {}
+  for (const key of Object.keys(reqHeader)) {
+    if (key.toLowerCase() === 'trace-id' && reqHeader[key]) {
+      return String(reqHeader[key])
+    }
+  }
+  return undefined
+}
+
+/**
+ * ZS-CLIENT-003：为拒绝原因附加 traceId，保证异常一致可追踪。
+ * 对象则挂载 traceId 属性；原始值（字符串等）包装为 Error，避免丢失标识。
+ */
+function withTrace(reason: any, traceId?: string): any {
+  if (!traceId) {
+    return reason
+  }
+  if (reason && typeof reason === 'object') {
+    try {
+      (reason as any).traceId = traceId
+    } catch {
+      // 冻结对象等无法挂载时忽略，保持原拒绝值
+    }
+    return reason
+  }
+  const err = new Error(typeof reason === 'string' ? reason : '请求失败')
+  ;(err as any).traceId = traceId
+  return err
+}
+
 /** 拒绝刷新 token 队列 */
 function rejectTaskQueue(reason?: any) {
   const tasks = [...taskQueue]
@@ -79,6 +120,8 @@ export function http<T>(options: CustomRequestOptions) {
       // #endif
       // 响应成功
       success: async (res) => {
+        // ZS-CLIENT-003：读取 trace/correlation 标识（优先响应头，回退请求侧），供各拒绝分支回显
+        const traceId = readTraceId(res, options)
         let responseData = res.data as IResponse<T>
         // add by panda：检查是否需要解密响应数据
         const encryptHeader = ApiEncrypt.getEncryptHeader()
@@ -89,7 +132,9 @@ export function http<T>(options: CustomRequestOptions) {
             responseData = ApiEncrypt.decryptResponse(responseData)
           } catch (error) {
             console.error('响应数据解密失败:', error)
-            throw new Error(`响应数据解密失败: ${(error as Error).message}`)
+            // ZS-CLIENT-003（验收④）：解密失败必须显式 reject 外层 Promise；
+            // 原实现在 async success 回调内 throw，会使外层 new Promise 永不 settle → 调用方永久 loading
+            return reject(withTrace(new Error(`响应数据解密失败: ${(error as Error).message}`), traceId))
           }
         }
 
@@ -101,22 +146,22 @@ export function http<T>(options: CustomRequestOptions) {
           const tokenStore = useTokenStore()
           // 已在处理登录失效时，后续 401 直接拒绝，避免 logout 等请求再次触发刷新
           if (loginExpiredHandling) {
-            return reject(res)
+            return reject(withTrace(res, traceId))
           }
           // 对应帖子：https://t.zsxq.com/UHHUR
           // 刷新 token 后重试仍 401，说明不是 accessToken 过期，避免进入无限刷新
           if (options.__isRefreshTokenRetry) {
             await handleLoginExpired(tokenStore)
-            return reject(res)
+            return reject(withTrace(res, traceId))
           }
           // refresh-token 本身失效时直接抛给外层刷新流程处理
           if (options.url?.includes('/refresh-token')) {
-            return reject(res)
+            return reject(withTrace(res, traceId))
           }
           if (!isDoubleTokenMode) {
             // 未启用双token策略，清理用户信息，跳转到登录页
             await handleLoginExpired(tokenStore)
-            return reject(res)
+            return reject(withTrace(res, traceId))
           }
 
           /* -------- 无感刷新 token ----------- */
@@ -163,7 +208,7 @@ export function http<T>(options: CustomRequestOptions) {
 
           if (!refreshToken) {
             await handleLoginExpired(tokenStore)
-            return reject(res)
+            return reject(withTrace(res, traceId))
           }
           return
         }
@@ -183,7 +228,8 @@ export function http<T>(options: CustomRequestOptions) {
               title: responseData.msg || responseData.message || '请求错误',
             })
             // add by 芋艿：reject 替代原本的 resolve，避免调用的地方以为请求成功
-            return reject(responseData)
+            // ZS-CLIENT-003（验收⑤）：业务错误一致 reject 且回显 trace/correlation 标识
+            return reject(withTrace(responseData, traceId))
           }
           if (options.returnRawResponse) {
             return resolve(responseData as unknown as T)
@@ -197,7 +243,7 @@ export function http<T>(options: CustomRequestOptions) {
           icon: 'none',
           title: (res.data as any).msg || '请求错误',
         })
-        reject(res)
+        reject(withTrace(res, traceId))
       },
       // 响应失败
       fail(err) {
@@ -205,7 +251,8 @@ export function http<T>(options: CustomRequestOptions) {
           icon: 'none',
           title: '网络错误，换个网络试试',
         })
-        reject(err)
+        // ZS-CLIENT-003（验收⑤）：断网/取消一致 reject 且回显请求侧 trace/correlation 标识
+        reject(withTrace(err, readTraceId(undefined, options)))
       },
     })
   })
