@@ -1,34 +1,0 @@
-运行 12 项门禁（模式 full，并发 12）…
-[PASS] G6 模块白名单 (46ms)
-[PASS] G8 Flyway 迁移规范 (46ms)
-[PASS] G7 数据源 PG 合同 (50ms)
-[PASS] G9 配置秘密门禁 (45ms)
-[FAIL] G5 文档一致性全量 (63ms)
-[PASS] G4 文档一致性单测 (112ms)
-[PASS] G1 来源复制校验器单测 (128ms)
-[PASS] G2 品牌命名门禁单测 (124ms)
-[FAIL] G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest） (108ms)
-[PASS] G3 品牌命名全仓扫描 (1655ms)
-[PASS] G2b 命名迁移工具单测（冻结文件排除 + 租户域名唯一） (2191ms)
-[PASS] G10 Web 类型检查基线 (27947ms)
-
-===== 本地基线门禁汇总 =====
-PASS  G1 来源复制校验器单测
-PASS  G2 品牌命名门禁单测
-PASS  G2b 命名迁移工具单测（冻结文件排除 + 租户域名唯一）
-PASS  G3 品牌命名全仓扫描
-PASS  G4 文档一致性单测
-FAIL  G5 文档一致性全量
-PASS  G6 模块白名单
-PASS  G7 数据源 PG 合同
-PASS  G8 Flyway 迁移规范
-PASS  G9 配置秘密门禁
-PASS  G10 Web 类型检查基线
-FAIL  G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）
-
------ 失败详情（输出末尾）-----
-[FAIL] G5 文档一致性全量
-  [info] docs/01-底座代码复用与改造方案.md: 仓库外引用（不校验）: ../../../企业FDE项目/众墅之家设计小程序/03-众墅之家设计小程序后端技术架构-V1.0.md | [info] docs/01-底座代码复用与改造方案.md: 仓库外引用（不校验）: ../../../企业FDE项目/众墅之家设计小程序/众墅之家设计小程序后端实施蓝图-V1.0.md | [info] docs/02-一期底座需求规格与待决策台账.md: 仓库外引用（不校验）: ../../../企业FDE项目/众墅之家设计小程序/03-众墅之家设计小程序后端技术架构-V1.0.md | [info] docs/02-一期底座需求规格与待决策台账.md: 仓库外引用（不校验）: ../../../企业FDE项目/众墅之家设计小程序/众墅之家设计小程序后端实施蓝图-V1.0.md
-[FAIL] G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）
-  } |  | Node.js v24.19.0 | [client-contract] zhongshu-miniapp 失败（exit=1）
-合计 12 项，失败 2 项（并发耗时 27974ms）
