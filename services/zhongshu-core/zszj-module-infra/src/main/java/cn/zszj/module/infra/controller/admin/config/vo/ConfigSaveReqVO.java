@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 @Schema(description = "管理后台 - 参数配置创建/修改 Request VO")
 @Data
 public class ConfigSaveReqVO {
@@ -40,5 +42,12 @@ public class ConfigSaveReqVO {
 
     @Schema(description = "备注", example = "备注一下很帅气！")
     private String remark;
+
+    /**
+     * 编辑时版本（乐观锁）。详情接口返回 update_time，更新时必须原样回传；
+     * 服务端以其为条件执行 UPDATE，未携带视为盲写按冲突拒绝。
+     */
+    @Schema(description = "更新时间（乐观锁版本，从详情回传）", example = "2026-09-13 10:00:00")
+    private LocalDateTime updateTime;
 
 }

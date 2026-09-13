@@ -14,12 +14,10 @@ import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.AdditionalAnswers.delegatesTo;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * ZS-CFG-004 B03：配置值校验测试。
@@ -197,8 +195,8 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
     void restartRequiredParam_isMarkedCorrectly() {
         // sys.login.lock-duration-minutes 是需重启参数
         assertTrue(configValueValidator.isRestartRequired("sys.login.lock-duration-minutes"));
-        // url.druid 也是需重启
-        assertTrue(configValueValidator.isRestartRequired("url.druid"));
+        // url.druid 由页面挂载时读取（codex r1 P2 修正为热生效，不再要求重启）
+        assertFalse(configValueValidator.isRestartRequired("url.druid"));
         // 热生效参数不需要重启
         assertFalse(configValueValidator.isRestartRequired("sys.login.captcha-max-retry"));
         assertFalse(configValueValidator.isRestartRequired("system.user.register-enabled"));
@@ -267,34 +265,28 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         Long configId = dbConfig.getId();
 
         int threadCount = 2;
-        // ZS-CFG-004 codex r0 P2-3 修复：原 barrier 只同步 worker 启动，未同步其数据库快照读——
-        // 一个 worker 可能在另一个读取行之前就完成更新，使两次更新各自基于最新 update_time 合法成功，
-        // 从而令"恰好一个成功"断言 flaky（内存 H2 下 200 次约 30 次失败）。改为在【两个快照读之后、
-        // 任一写之前】同步：拦截 selectById，读取真实快照后抵达 barrier，确保两 worker 读到同一
-        // update_time 版本后才进入条件 UPDATE，令乐观锁冲突（affected==0 → CONFIG_UPDATE_CONFLICT）确定性发生。
-        CyclicBarrier snapshotBarrier = new CyclicBarrier(threadCount);
-        ConfigMapper synchronizedMapper = mock(ConfigMapper.class, delegatesTo(configMapper));
-        when(synchronizedMapper.selectById(configId)).thenAnswer(inv -> {
-            ConfigDO snapshot = configMapper.selectById(configId); // 真实 H2 快照读
-            snapshotBarrier.await(5, TimeUnit.SECONDS);            // 两个快照读齐后再放行任一写
-            return snapshot;
-        });
-
-        // 绕开 Spring CGLIB 代理（@Validated），用裸实例注入"委托真实 H2 mapper 的桩 + 真实分类器/校验器"，
-        // 使乐观锁条件 UPDATE 仍打在真实 H2 上（保留乐观锁语义验证），仅在快照读处插入 barrier。
+        // ZS-CFG-004 codex r1 修复（P1 客户端版本 + P2-2 断言收紧）：乐观锁版本由客户端携带——
+        // 两 worker 启动前各自读取同一 update_time 版本（模拟两个客户端打开同一表单后先后提交），
+        // 条件 UPDATE 以回传版本执行，恰好一方成功、一方 CONFIG_UPDATE_CONFLICT；
+        // 成功仅在 updateConfig 正常返回后计数，非冲突异常一律记为失败，并核对最终落库值。
+        LocalDateTime editVersion = configMapper.selectById(configId).getUpdateTime();
         ConfigServiceImpl bareService = new ConfigServiceImpl();
-        ReflectionTestUtils.setField(bareService, "configMapper", synchronizedMapper);
+        ReflectionTestUtils.setField(bareService, "configMapper", configMapper);
         ReflectionTestUtils.setField(bareService, "sensitiveClassifier", new ConfigSensitiveClassifier());
         ReflectionTestUtils.setField(bareService, "configValueValidator", configValueValidator);
 
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger conflictCount = new AtomicInteger(0);
+        AtomicReference<Throwable> unexpected = new AtomicReference<>();
+        AtomicReference<String> winnerValue = new AtomicReference<>();
+        CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threadCount);
 
         for (int i = 0; i < threadCount; i++) {
             final int newVal = i + 6; // 6, 7 都是合法值 [1,10]
             new Thread(() -> {
                 try {
+                    start.await();
                     ConfigSaveReqVO reqVO = new ConfigSaveReqVO();
                     reqVO.setId(configId);
                     reqVO.setKey("sys.login.captcha-max-retry");
@@ -302,27 +294,32 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
                     reqVO.setCategory("test");
                     reqVO.setName("captcha retry");
                     reqVO.setVisible(true);
+                    reqVO.setUpdateTime(editVersion);
                     bareService.updateConfig(reqVO);
                     successCount.incrementAndGet();
+                    winnerValue.set(String.valueOf(newVal));
                 } catch (ServiceException e) {
                     if (CONFIG_UPDATE_CONFLICT.getCode().equals(e.getCode())) {
                         conflictCount.incrementAndGet();
                     } else {
-                        // Other service exceptions count as success for debugging
-                        successCount.incrementAndGet();
+                        unexpected.set(e);
                     }
                 } catch (Exception e) {
-                    // Barrier/Interrupted exceptions
+                    unexpected.set(e);
                 } finally {
                     done.countDown();
                 }
             }).start();
         }
+        start.countDown();
 
         assertTrue(done.await(10, TimeUnit.SECONDS), "Threads should complete within timeout");
+        assertNull(unexpected.get(), "不得出现预期外的异常: " + unexpected.get());
         // 冲突结果明确：恰好一方成功，一方冲突拒绝
         assertEquals(1, successCount.get(), "Exactly one update should succeed");
         assertEquals(1, conflictCount.get(), "Exactly one update should get conflict");
+        // 最终落库值必须等于成功方提交的值
+        assertEquals(winnerValue.get(), configMapper.selectById(configId).getValue());
     }
 
     // ========== 6. 恢复路径仍走校验，不绕过 ==========
@@ -400,6 +397,7 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         reqVO.setCategory("test");
         reqVO.setName("captcha retry");
         reqVO.setVisible(false);
+        reqVO.setUpdateTime(configMapper.selectById(id).getUpdateTime()); // r1 P1：携带编辑时版本
 
         configService.updateConfig(reqVO);
 
@@ -428,6 +426,8 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         reqVO.setCategory("test");
         reqVO.setName("test-" + key);
         reqVO.setVisible(true);
+        // ZS-CFG-004 codex r1 P1：更新须携带编辑时版本（模拟前端从详情回传 update_time）
+        reqVO.setUpdateTime(configMapper.selectById(id).getUpdateTime());
         return reqVO;
     }
 
@@ -440,5 +440,41 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         config.setName("test-" + key);
         config.setType(ConfigTypeEnum.CUSTOM.getType());
         return config;
+    }
+
+    // ========== 8. codex r1 P1：旧表单覆盖检测（客户端携带版本） ==========
+
+    @Test
+    void updateConfig_staleFormWithOldVersion_conflictAndNotOverwrite() {
+        // 客户端 A 打开表单读到版本 staleVersion；客户端 B 先把注册开关改为 false；
+        // A 基于旧表单提交 value=true + 旧版本——必须冲突拒绝且不得覆盖 B 的结果
+        ConfigDO dbConfig = buildConfigDO("system.user.register-enabled", "true", true);
+        configMapper.insert(dbConfig);
+        LocalDateTime staleVersion = dbConfig.getUpdateTime();
+
+        ConfigSaveReqVO reqB = buildUpdateReqVO(dbConfig.getId(), "system.user.register-enabled", "false");
+        configService.updateConfig(reqB);
+
+        ConfigSaveReqVO reqA = buildUpdateReqVO(dbConfig.getId(), "system.user.register-enabled", "true");
+        reqA.setUpdateTime(staleVersion);
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqA));
+        assertEquals(CONFIG_UPDATE_CONFLICT.getCode(), ex.getCode());
+
+        assertEquals("false", configMapper.selectById(dbConfig.getId()).getValue(),
+                "旧表单提交不得覆盖他人已保存的新值");
+    }
+
+    @Test
+    void updateConfig_missingVersion_rejectAsBlindWrite() {
+        // 未携带版本=未加载详情的旧客户端/盲写，按冲突拒绝，防止绕过版本检测
+        ConfigDO dbConfig = buildConfigDO("system.user.register-enabled", "true", true);
+        configMapper.insert(dbConfig);
+
+        ConfigSaveReqVO reqVO = buildUpdateReqVO(dbConfig.getId(), "system.user.register-enabled", "false");
+        reqVO.setUpdateTime(null);
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqVO));
+        assertEquals(CONFIG_UPDATE_CONFLICT.getCode(), ex.getCode());
+
+        assertEquals("true", configMapper.selectById(dbConfig.getId()).getValue(), "盲写不得落库");
     }
 }

@@ -13,31 +13,35 @@ import java.util.*;
  */
 public enum ConfigParamCatalog {
 
+    // 参数标注约定（codex r1 P2 修复）：wired=true 表示已有生产消费方读写该 key（保存/重启确实改变业务行为）；
+    // wired=false 为【预留】——值合同（类型/范围/枚举）仍强校验，但尚无消费方接入，保存不改变运行行为。
+    // hotReload 以真实读取时机为准：注册开关/初始密码由服务层每次读取（热）；url.druid 由页面挂载时读取（热）。
+
     // ===== Boolean 类型 =====
-    /** 用户注册开关（热生效） */
+    /** 用户注册开关（热生效，注册门禁消费） */
     SYSTEM_USER_REGISTER_ENABLED("system.user.register-enabled", ValueType.BOOLEAN,
-            null, null, null, true, false),
+            null, null, null, true, false, true),
 
     // ===== Integer 类型（带范围）=====
-    /** 登录验证码最大重试次数（热生效，1~10） */
+    /** 登录验证码最大重试次数（预留：尚未接入消费方，1~10） */
     SYS_LOGIN_CAPTCHA_MAX_RETRY("sys.login.captcha-max-retry", ValueType.INTEGER,
-            1, 10, null, true, false),
-    /** 登录锁定持续分钟数（需重启，1~1440） */
+            1, 10, null, true, false, false),
+    /** 登录锁定持续分钟数（预留：尚未接入消费方，1~1440） */
     SYS_LOGIN_LOCK_DURATION_MINUTES("sys.login.lock-duration-minutes", ValueType.INTEGER,
-            1, 1440, null, false, false),
+            1, 1440, null, false, false, false),
 
     // ===== Enum 类型（受限值集）=====
-    /** 文件上传模式（热生效，local/oss/s3） */
+    /** 文件上传模式（预留：尚未接入消费方，local/oss/s3） */
     SYS_FILE_UPLOAD_MODE("sys.file.upload-mode", ValueType.ENUM,
-            null, null, Set.of("local", "oss", "s3"), true, false),
+            null, null, Set.of("local", "oss", "s3"), true, false, false),
 
     // ===== String 类型 =====
-    /** 用户初始密码（热生效，敏感） */
+    /** 用户初始密码（热生效，敏感，创建用户消费） */
     SYSTEM_USER_INIT_PASSWORD("system.user.init-password", ValueType.STRING,
-            null, null, null, true, true),
-    /** Druid 监控地址（需重启） */
+            null, null, null, true, true, true),
+    /** Druid 监控地址（页面挂载时读取，即时生效） */
     URL_DRUID("url.druid", ValueType.STRING,
-            null, null, null, false, false),
+            null, null, null, true, false, true),
     ;
 
     /**
@@ -61,9 +65,11 @@ public enum ConfigParamCatalog {
     private final Set<String> allowedValues;
     private final boolean hotReload;
     private final boolean sensitive;
+    /** 是否已接入生产消费方（false=预留：保存不改变运行行为，仅值合同强校验） */
+    private final boolean wired;
 
     ConfigParamCatalog(String key, ValueType valueType, Integer minInt, Integer maxInt,
-                       Set<String> allowedValues, boolean hotReload, boolean sensitive) {
+                       Set<String> allowedValues, boolean hotReload, boolean sensitive, boolean wired) {
         this.key = key;
         this.valueType = valueType;
         this.minInt = minInt;
@@ -71,6 +77,7 @@ public enum ConfigParamCatalog {
         this.allowedValues = allowedValues != null ? Collections.unmodifiableSet(allowedValues) : null;
         this.hotReload = hotReload;
         this.sensitive = sensitive;
+        this.wired = wired;
     }
 
     public String getKey() {
@@ -99,6 +106,10 @@ public enum ConfigParamCatalog {
 
     public boolean isSensitive() {
         return sensitive;
+    }
+
+    public boolean isWired() {
+        return wired;
     }
 
     // ===== 查找 =====

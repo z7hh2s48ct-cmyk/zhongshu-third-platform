@@ -58,13 +58,14 @@ public class ConfigServiceImplTest extends BaseDbUnitTest {
         // 准备参数
         ConfigSaveReqVO reqVO = randomPojo(ConfigSaveReqVO.class, o -> {
             o.setId(dbConfig.getId()); // 设置更新的 ID
+            o.setUpdateTime(dbConfig.getUpdateTime()); // ZS-CFG-004 r1：更新须携带编辑时版本（乐观锁）
         });
 
         // 调用
         configService.updateConfig(reqVO);
-        // 校验是否更新正确
+        // 校验是否更新正确（update_time 由服务端在更新时刷新，不属于回传断言范围）
         ConfigDO config = configMapper.selectById(reqVO.getId()); // 获取最新的
-        assertPojoEquals(reqVO, config);
+        assertPojoEquals(reqVO, config, "updateTime");
     }
 
     @Test

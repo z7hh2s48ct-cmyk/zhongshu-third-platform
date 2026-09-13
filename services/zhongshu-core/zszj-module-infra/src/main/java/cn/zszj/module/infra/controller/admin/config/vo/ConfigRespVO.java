@@ -53,4 +53,7 @@ public class ConfigRespVO {
     @ExcelProperty("创建时间")
     private LocalDateTime createTime;
 
+    @Schema(description = "更新时间（乐观锁版本，更新时须原样回传）", requiredMode = Schema.RequiredMode.REQUIRED, example = "时间戳格式")
+    private LocalDateTime updateTime;
+
 }

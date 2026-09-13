@@ -94,13 +94,20 @@ public class ConfigServiceImpl implements ConfigService {
             configValueValidator.validate(updateReqVO.getKey(), updateObj.getValue());
         }
 
-        // ZS-CFG-004 B03：乐观锁——条件更新防并发冲突（复用 update_time 作为版本标识）
-        LocalDateTime snapshotTime = exists.getUpdateTime();
+        // ZS-CFG-004 codex r1 P1 修复：乐观锁版本由客户端携带——详情（ConfigRespVO.updateTime）返回编辑时版本，
+        // 更新必须原样回传并以该版本执行条件 UPDATE。原先以服务端保存开始时的重读 updateTime 作版本，
+        // 只能保护服务端读→写短窗，无法检测两个客户端先后保存的旧表单覆盖（H2 已复现：A 打开表单后
+        // B 先改值，A 再提交旧值仍成功）。
+        LocalDateTime expectedVersion = updateReqVO.getUpdateTime();
+        if (expectedVersion == null) {
+            // 未携带版本 = 未加载详情的旧客户端/盲写，同样按冲突拒绝，防止绕过版本检测
+            throw exception(CONFIG_UPDATE_CONFLICT);
+        }
         updateObj.setUpdateTime(LocalDateTime.now());
         int affected = configMapper.update(updateObj,
                 new LambdaQueryWrapper<ConfigDO>()
                         .eq(ConfigDO::getId, updateObj.getId())
-                        .eq(ConfigDO::getUpdateTime, snapshotTime));
+                        .eq(ConfigDO::getUpdateTime, expectedVersion));
         if (affected == 0) {
             throw exception(CONFIG_UPDATE_CONFLICT);
         }
