@@ -23,9 +23,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      # ZS-BPM-001 第 9 套件：BPM 独立构建消费本地仓库产物，须先安装当前提交的兄弟依赖模块
+      # ZS-BPM-001 第 9 套件：BPM 独立构建消费本地仓库产物，须先安装当前提交的依赖模块；
+      # zszj-dependencies BOM 不会经 -am 传递，必须显式列入（否则 Non-resolvable import POM）
       # （根 reactor 保持 BPM 注释态=关闭模块，ModuleWhitelistTest 门禁不变）
-      - name: 安装兄弟依赖模块产物
-        run: mvn -B -f services/zhongshu-core/pom.xml -pl zszj-module-system,zszj-module-infra -am install -Dmaven.test.skip=true
+      - name: 安装依赖模块产物
+        run: mvn -B -f services/zhongshu-core/pom.xml -pl zszj-dependencies,zszj-module-system,zszj-module-infra -am install -Dmaven.test.skip=true
       - name: 运行 PG 技术回归套件
         run: node scripts/db/run-pg-regression.mjs
