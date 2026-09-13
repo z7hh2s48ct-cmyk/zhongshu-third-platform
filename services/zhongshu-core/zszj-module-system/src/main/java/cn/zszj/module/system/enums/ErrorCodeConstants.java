@@ -69,6 +69,7 @@ public interface ErrorCodeConstants {
     ErrorCode POST_NOT_ENABLE = new ErrorCode(1_002_005_001, "岗位({}) 不处于开启状态，不允许选择");
     ErrorCode POST_NAME_DUPLICATE = new ErrorCode(1_002_005_002, "已经存在该名字的岗位");
     ErrorCode POST_CODE_DUPLICATE = new ErrorCode(1_002_005_003, "已经存在该标识的岗位");
+    ErrorCode POST_EXITS_USERS = new ErrorCode(1_002_005_004, "存在用户引用，无法删除");
 
     // ========== 字典类型 1-002-006-000 ==========
     ErrorCode DICT_TYPE_NOT_EXISTS = new ErrorCode(1_002_006_001, "当前字典类型不存在");
