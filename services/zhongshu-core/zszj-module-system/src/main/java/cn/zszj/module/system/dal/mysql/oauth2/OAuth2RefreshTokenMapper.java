@@ -7,7 +7,9 @@ import cn.zszj.framework.tenant.core.aop.TenantIgnore;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -47,6 +49,15 @@ public interface OAuth2RefreshTokenMapper extends BaseMapperX<OAuth2RefreshToken
      * @param refreshToken 刷新令牌串
      * @return 刷新令牌；不存在（含已被退出删除）时返回 {@code null}，此时不会持有任何行锁
      */
+    /**
+     * ZS-LOGIN-005.A：鉴权权威存在性核验（gate 合成令牌）——{@code flushCache=TRUE} 强制回源，
+     * 绕过 MyBatis SESSION 一级缓存；忽略租户；仅统计未删除行。
+     */
+    @TenantIgnore
+    @Select("SELECT COUNT(1) FROM system_oauth2_refresh_token WHERE refresh_token = #{refreshToken} AND deleted = 0")
+    @Options(flushCache = Options.FlushCachePolicy.TRUE)
+    int selectAuthorityCountByRefreshToken(@Param("refreshToken") String refreshToken);
+
     @TenantIgnore // 与 selectByRefreshToken 保持一致：退出/刷新可能不携带 tenant-id 请求头
     default OAuth2RefreshTokenDO selectByRefreshTokenForUpdate(String refreshToken) {
         LambdaQueryWrapperX<OAuth2RefreshTokenDO> wrapper = new LambdaQueryWrapperX<>();

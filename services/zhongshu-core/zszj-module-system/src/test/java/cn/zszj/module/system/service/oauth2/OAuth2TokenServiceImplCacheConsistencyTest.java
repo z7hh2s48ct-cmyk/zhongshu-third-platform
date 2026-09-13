@@ -154,6 +154,9 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
                 OAuth2AccessTokenDO created = oauth2TokenService.createAccessToken(userId,
                         UserTypeEnum.ADMIN.getValue(), clientId, java.util.List.of("read"));
                 tokenRef.set(created.getAccessToken());
+                // ZS-LOGIN-005.A codex r0 P2：发布必须推迟到提交后——事务内不得已出现在缓存
+                assertNull(oauth2AccessTokenRedisDAO.get(tokenRef.get()),
+                        "事务提交前新令牌缓存不得提前发布");
                 throw new RuntimeException("强制回滚");
             });
         } catch (RuntimeException ignored) {
@@ -200,8 +203,12 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
         OAuth2AccessTokenDO access = seedSession(clientId, userId);
         assertNotNull(oauth2TokenService.getAccessToken(access.getAccessToken()), "前置：预热缓存条目存在");
 
-        transactionTemplate.executeWithoutResult(status ->
-                oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue()));
+        transactionTemplate.executeWithoutResult(status -> {
+            oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+            // ZS-LOGIN-005.A codex r0 P2：失效必须推迟到提交后——事务内缓存条目仍在（不得抢跑）
+            assertNotNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                    "事务提交前撤销的缓存失效不得抢跑执行");
+        });
 
         assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
                 "提交后撤销的缓存失效必须已执行");
