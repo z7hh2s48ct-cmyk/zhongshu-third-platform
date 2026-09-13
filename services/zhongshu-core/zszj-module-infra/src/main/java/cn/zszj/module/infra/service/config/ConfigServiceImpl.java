@@ -101,11 +101,13 @@ public class ConfigServiceImpl implements ConfigService {
         // 创建路径 MapStruct 自动映射可伪造初始版本。整数 version 由服务端维护、成功更新原子 +1，
         // 详情返回、更新必须原样回传，彻底保证每次更新版本唯一推进。
         Integer expectedVersion = updateReqVO.getVersion();
-        if (expectedVersion == null) {
-            // 未携带版本 = 未加载详情的旧客户端/盲写，同样按冲突拒绝，防止绕过版本检测
+        // ZS-CFG-004 codex r3 P2 修复：快照版本与请求版本必须一致才递增——否则请求预填高版本（如 8）、
+        // 快照 7、期间他人推进至 8 时，本请求仍以 7→8 成功，版本不推进且可回填旧快照值。
+        // 不一致立即按冲突拒绝；条件 UPDATE 保留作兜底（覆盖读后写之间的极短窗口）。
+        if (expectedVersion == null || !expectedVersion.equals(exists.getVersion())) {
             throw exception(CONFIG_UPDATE_CONFLICT);
         }
-        updateObj.setVersion(exists.getVersion() + 1);
+        updateObj.setVersion(expectedVersion + 1);
         int affected = configMapper.update(updateObj,
                 new LambdaQueryWrapper<ConfigDO>()
                         .eq(ConfigDO::getId, updateObj.getId())

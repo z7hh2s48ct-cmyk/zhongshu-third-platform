@@ -477,4 +477,32 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
 
         assertEquals("true", configMapper.selectById(dbConfig.getId()).getValue(), "盲写不得落库");
     }
+
+    @Test
+    void updateConfig_requestVersionDivergesFromSnapshot_conflictAndNotOverwrite() {
+        // codex r3 P2：请求预填版本 ≠ 服务端快照版本时必须冲突（否则可借 7→8 成功致版本不推进/旧值回填）
+        ConfigDO dbConfig = buildConfigDO("system.user.register-enabled", "true", true);
+        configMapper.insert(dbConfig);
+        Long id = dbConfig.getId();
+
+        ConfigSaveReqVO reqVO = buildUpdateReqVO(id, "system.user.register-enabled", "false");
+        reqVO.setVersion(reqVO.getVersion() + 5); // 预填高于当前快照的版本
+        ServiceException ex = assertThrows(ServiceException.class, () -> configService.updateConfig(reqVO));
+        assertEquals(CONFIG_UPDATE_CONFLICT.getCode(), ex.getCode());
+        assertEquals("true", configMapper.selectById(id).getValue(), "值不得变更");
+        assertEquals(0, configMapper.selectById(id).getVersion(), "版本不得推进");
+    }
+
+    @Test
+    void updateConfig_success_versionAdvancesByExactlyOne() {
+        ConfigDO dbConfig = buildConfigDO("sys.login.captcha-max-retry", "5", true);
+        configMapper.insert(dbConfig);
+        Long id = dbConfig.getId();
+        int before = configMapper.selectById(id).getVersion();
+
+        ConfigSaveReqVO reqVO = buildUpdateReqVO(id, "sys.login.captcha-max-retry", "6");
+        configService.updateConfig(reqVO);
+        assertEquals(before + 1, configMapper.selectById(id).getVersion(), "成功更新恰好推进 1");
+        assertEquals("6", configMapper.selectById(id).getValue());
+    }
 }
