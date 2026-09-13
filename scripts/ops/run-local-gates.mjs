@@ -7,6 +7,8 @@
  *   G7 数据源 PG 合同（ZS-DB-001.A）/ G8 Flyway 迁移规范（ZS-DB-003）/ G9 配置秘密门禁（ZS-CFG-001.A）
  *   G10 Web 类型检查基线（ZS-CLIENT-005.A，较慢；--fast 跳过）
  *   G11 启用模块后端单测（--mvn 显式启用；需 tools/env.sh 工具链，排除已登记的上游基线失败）
+ *   G12 安全链联合回归（ZS-SEC-012.B：--mvn 显式启用；真实安全链夹具 + 全面 async/CORS 端到端 + .A 全量，本地与 CI 同入口）
+ *   G13 双端请求层合同回归（ZS-SEC-012.B/CLIENT-003：slow，本地 vitest 双端；CI 由 CLIENT-005.A 流水线覆盖）
  * PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入，不在本骨架。
  *
  * 提速（ZS-GOV-001 提效方案 P1）：
@@ -40,6 +42,10 @@ export const GATES = [
   { id: 'G10 Web 类型检查基线', cmd: ['node', 'scripts/client/verify-ts-baseline.mjs'], areas: ['apps/zhongshu-admin-web/', 'scripts/client/'], slow: true },
   { id: 'G11 启用模块后端单测（common/infra，排除上游基线失败）', areas: ['services/'], mvn: true,
     mvnArgs: '-pl zszj-framework/zszj-common,zszj-module-infra -am -Dtest=!CodegenEngineUniappTest#testExecute_treeSearch -Dsurefire.failIfNoSpecifiedTests=false test' },
+  { id: 'G12 安全链联合回归（ZS-SEC-012.A/.B：真实安全链+全面async+CORS 端到端）', areas: ['services/'], mvn: true,
+    mvnArgs: '-pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest -Dsurefire.failIfNoSpecifiedTests=false test' },
+  { id: 'G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）', areas: ['apps/', 'scripts/ops/'], slow: true,
+    cmd: ['node', 'scripts/ops/run-client-contract-tests.mjs'] },
 ];
 
 // 增量模式下视为「良性、不触发全量回退」的未归类路径前缀（生成物/评审原始稿/计划稿）

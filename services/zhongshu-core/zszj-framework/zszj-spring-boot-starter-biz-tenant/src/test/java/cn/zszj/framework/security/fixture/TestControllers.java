@@ -7,6 +7,7 @@ import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -199,5 +200,41 @@ public class TestControllers {
     @GetMapping("/async/profile")
     public Callable<CommonResult<String>> asyncProfile() {
         return () -> CommonResult.success("async-profile");
+    }
+
+    // ========== 7. 异步端点扩展（ZS-SEC-012.B：全面 async 运行时合同） ==========
+
+    /**
+     * 受保护异步端点：在异步线程回读【租户上下文 + 登录用户】——验证跨线程上下文传播合同
+     * （异步线程能看到与请求一致的租户编号与登录用户，而非空值/串号）。
+     */
+    @GetMapping("/async/tenant-context")
+    public Callable<CommonResult<String>> asyncTenantContext() {
+        return () -> CommonResult.success("tenant=" + cn.zszj.framework.tenant.core.context.TenantContextHolder.getTenantId()
+                + ";user=" + cn.zszj.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId());
+    }
+
+    /**
+     * 受保护异步端点：异步阶段抛出运行时异常——验证【异步异常出口】仍走统一异常处理器
+     * （GlobalExceptionHandler 经 ASYNC 派发输出 CommonResult，而非原始堆栈/连接重置）。
+     */
+    @GetMapping("/async/error")
+    public Callable<CommonResult<String>> asyncError() {
+        return () -> {
+            throw new IllegalStateException("async-boom");
+        };
+    }
+
+    /**
+     * 受保护流式端点（{@link StreamingResponseBody}）：验证流式响应同样经 ASYNC 派发执行，
+     * 且首次 REQUEST 派发受认证约束。
+     */
+    @GetMapping("/async/stream")
+    public StreamingResponseBody asyncStream() {
+        return outputStream -> {
+            outputStream.write("stream-ok-part1;".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            outputStream.write("stream-ok-part2".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            outputStream.flush();
+        };
     }
 }

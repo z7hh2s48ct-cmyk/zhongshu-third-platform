@@ -45,6 +45,12 @@ import static cn.zszj.framework.common.util.json.JsonUtils.toJsonString;
 @Slf4j
 public class ApiAccessLogFilter extends ApiRequestFilter {
 
+    /**
+     * ZS-SEC-012.B codex r2 P2：请求开始时间跨派发复用的请求属性键
+     */
+    private static final String BEGIN_TIME_ATTRIBUTE = ApiAccessLogFilter.class.getName() + ".BEGIN_TIME";
+
+
     private final String applicationName;
 
     private final ApiAccessLogCommonApi apiAccessLogApi;
@@ -55,12 +61,25 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
         this.apiAccessLogApi = apiAccessLogApi;
     }
 
+    /**
+     * ZS-SEC-012.B codex r0/r1 P1：必须参与 ASYNC 派发——OncePerRequestFilter 默认跳过异步派发，
+     * 导致异步请求的访问日志只能挂在首次派发（结果未定，伪报成功）。参与后可在 ASYNC 派发内
+     * 以最终结果记录（租户上下文由派发期过滤器重建，归属正确）。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     @Override
     @SuppressWarnings("NullableProblems")
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        // 获得开始时间
-        LocalDateTime beginTime = LocalDateTime.now();
+        // 获得开始时间。ZS-SEC-012.B codex r2 P2：跨派发复用——ASYNC 派发时若重新取当前时间，
+        // 耗时只含最终派发的几毫秒，异步执行阶段（可能数秒）被丢弃；首次派发的时间存请求属性供复用
+        Object beginTimeAttr = request.getAttribute(BEGIN_TIME_ATTRIBUTE);
+        LocalDateTime beginTime = beginTimeAttr != null ? (LocalDateTime) beginTimeAttr : LocalDateTime.now();
+        request.setAttribute(BEGIN_TIME_ATTRIBUTE, beginTime);
         // 提前获得参数，避免 XssFilter 过滤处理
         Map<String, String> queryString = ServletUtils.getParamMap(request);
         String requestBody = ServletUtils.getBody(request);
@@ -68,8 +87,25 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
         try {
             // 继续过滤器
             filterChain.doFilter(request, response);
-            // 正常执行，记录日志
-            createApiAccessLog(request, beginTime, queryString, requestBody, null);
+            // ZS-SEC-012.B codex r0 P1：异步请求（Callable / StreamingResponseBody / SSE）在首次 REQUEST
+            // 派发返回时尚未完成响应——此时 CommonResult 未写入，立即记录必然 result=null 伪报成功
+            //（异步异常也伪报成功）。处理：首次派发直接返回【不记录】，等容器 ASYNC 派发完成后，
+            // 过滤器链会再次执行（TenantContextWebFilter 等同步重建上下文），在派发内以最终结果记录——
+            // codex r1 P1：AsyncListener 回调方案会在租户上下文清理后执行，导致日志归属 tenant_id=0，故弃用。
+            if (request.isAsyncStarted()) {
+                return;
+            }
+            boolean asyncDispatch = request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC;
+            Exception asyncFailure = null;
+            if (asyncDispatch) {
+                // codex r1 P1：异步派发若未写 CommonResult 且响应已失败（超时/错误），不得伪报成功
+                CommonResult<?> dispatched = WebFrameworkUtils.getCommonResult(request);
+                if (dispatched == null && response.getStatus() >= 400) {
+                    asyncFailure = new IllegalStateException("async dispatch failed with status " + response.getStatus());
+                }
+            }
+            // 记录日志（同步请求原行为；异步请求在 ASYNC 派发内以最终结果记录，幂等护栏防重复）
+            createApiAccessLog(request, beginTime, queryString, requestBody, asyncFailure);
         } catch (Exception ex) {
             // 异常执行，记录日志
             createApiAccessLog(request, beginTime, queryString, requestBody, ex);
@@ -79,6 +115,12 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
 
     private void createApiAccessLog(HttpServletRequest request, LocalDateTime beginTime,
                                     Map<String, String> queryString, String requestBody, Exception ex) {
+        // ZS-SEC-012.B codex r0 P1：同一请求只记录一条访问日志——ASYNC 二次派发时本 Filter 会再次执行，
+        // 而 complete 回调已记录过；以请求属性做幂等护栏
+        if (request.getAttribute(getClass().getName() + ".RECORDED") != null) {
+            return;
+        }
+        request.setAttribute(getClass().getName() + ".RECORDED", Boolean.TRUE);
         ApiAccessLogCreateReqDTO accessLog = new ApiAccessLogCreateReqDTO();
         try {
             boolean enable = buildApiAccessLog(accessLog, request, beginTime, queryString, requestBody, ex);
