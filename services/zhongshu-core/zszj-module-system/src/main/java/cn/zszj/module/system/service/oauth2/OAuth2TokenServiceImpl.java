@@ -242,8 +242,9 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
                     ? oauth2RefreshTokenMapper.selectAuthorityCountByRefreshToken(accessToken)
                     : oauth2AccessTokenMapper.selectAuthorityCountByAccessToken(accessToken);
             if (count <= 0) {
-                oauth2AccessTokenRedisDAO.markRevoked(accessToken, millisUntil(accessTokenDO.getExpiresTime()));
-                oauth2AccessTokenRedisDAO.delete(accessToken);
+                // 自愈复用 revokeWithTombstone（墓碑/删除各自容错，codex r1 P2：避免墓碑失败中断删除、
+                // Redis 异常被误记为 DB 核验异常）；随后仍按 401 拒绝
+                revokeWithTombstone(accessToken, accessTokenDO.getExpiresTime());
                 throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌不存在");
             }
         } catch (ServiceException ex) {
@@ -580,15 +581,13 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             }
         };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // ZS-LOGIN-005.A codex r1 P3：单次执行于事务结束后（afterCompletion 覆盖全部结束状态）——
+            // COMMITTED 即「提交后失效」；ROLLED_BACK / STATUS_UNKNOWN 为幂等兜底（回滚补偿 +
+            // 前序同步回调异常跳过 afterCommit 的情形一并覆盖），且避免 afterCommit+afterCompletion 双跑翻倍
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
-                public void afterCommit() {
-                    safeAll.run();
-                }
-
-                @Override
                 public void afterCompletion(int status) {
-                    safeAll.run(); // 幂等兜底：回滚 / STATUS_UNKNOWN / afterCommit 被前序回调异常跳过
+                    safeAll.run();
                 }
             });
         } else {
@@ -610,17 +609,15 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             }
         };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // ZS-LOGIN-005.A：与失效动作一致，单次执行于事务结束后——COMMITTED 才发布；
+            // ROLLED_BACK / STATUS_UNKNOWN（提交/回滚异常）按保守清理处理：误清缓存只损失可用性
+            // （miss 回源重建），残留幽灵发布则是安全缺口
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
-                public void afterCommit() {
-                    safePublish.run();
-                }
-
-                @Override
                 public void afterCompletion(int status) {
-                    // ZS-LOGIN-005.A codex r0 P2：STATUS_UNKNOWN（提交/回滚异常）按保守清理处理——
-                    // 误清缓存只损失可用性（miss 回源重建），残留幽灵发布则是安全缺口
-                    if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    if (status == TransactionSynchronization.STATUS_COMMITTED) {
+                        safePublish.run();
+                    } else {
                         try {
                             rollbackCleanup.run();
                         } catch (Exception ex) {

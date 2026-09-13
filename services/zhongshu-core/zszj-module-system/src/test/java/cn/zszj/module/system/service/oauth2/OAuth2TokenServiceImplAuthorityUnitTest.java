@@ -117,6 +117,25 @@ public class OAuth2TokenServiceImplAuthorityUnitTest {
         verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
     }
 
+    @Test
+    void batchRevoke_tombstoneFails_deleteAndLaterStepsStillRun() {
+        // codex r1 P2：墓碑写入失败后，删缓存与后续步骤（代际键清理）必须继续执行——逐项隔离
+        Long userId = 480L;
+        String orphan = "fff-orphan-refresh";
+        when(accessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()))
+                .thenReturn(List.of());
+        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()))
+                .thenReturn(List.of(makeRefreshToken(orphan, userId)));
+        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of());
+        doThrow(new RuntimeException("tombstone down")).when(redisDAO).markRevoked(anyString(), anyLong());
+
+        assertDoesNotThrow(() -> service.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue()));
+
+        verify(redisDAO, times(1)).delete(orphan); // 墓碑失败不中断删缓存
+        verify(redisDAO, times(1)).deleteSessionGeneration(orphan); // 后续步骤继续
+        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
+    }
+
     private static cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO makeRefreshToken(
             String refreshToken, Long userId) {
         cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO rt =

@@ -32,6 +32,7 @@ import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 
@@ -240,5 +241,92 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
                 "前置：DB 行随回滚恢复");
         assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
                 "回滚补偿仍须清缓存（miss 回源重建，避免撤销态不一致）");
+    }
+
+    // ========== ④ codex r1：前序同步回调异常跳过 afterCommit 后，事务结束兜底仍完成失效 ==========
+
+    /**
+     * 前序同步回调在 afterCommit 抛异常会跳过同事务内后续 afterCommit 回调；
+     * afterCompletion 兜底必须仍完成缓存失效（修复前若只挂 afterCommit 则失效被跳过）。
+     */
+    @Test
+    public void testRemoveAccessTokenByUser_priorCallbackThrows_fallbackStillInvalidates() {
+        String clientId = randomString();
+        mockClient(clientId);
+        Long userId = randomLongId();
+        OAuth2AccessTokenDO access = seedSession(clientId, userId);
+        assertNotNull(oauth2TokenService.getAccessToken(access.getAccessToken()), "前置：预热缓存条目存在");
+
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                // 故意先注册一个 afterCommit 抛异常的同步回调（先于 service 内部注册的回调执行）
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                throw new RuntimeException("前序回调异常");
+                            }
+                        });
+                oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+            });
+        } catch (RuntimeException ignored) {
+            // Spring 语义：afterCommit 回调异常在事务已提交后向外传播；事务仍已提交，afterCompletion 仍会执行
+        }
+
+        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                "前序 afterCommit 异常跳过后，事务结束兜底必须仍完成缓存失效");
+    }
+
+    // ========== ⑤ codex r1：flushCache 权威核验绕开 MyBatis SESSION 一级缓存旧快照 ==========
+
+    /**
+     * 长事务内（同 - SqlSession 复用）：T1 首次权威核验通过后，T2 在另一连接撤销并提交，
+     * T1 再次核验必须拒绝——普通 select 会命中一级缓存旧快照放行，flushCache=TRUE count 必须回源。
+     */
+    @Test
+    public void testCheckAccessToken_withinOpenTx_recheckAfterExternalRevoke_rejects() throws Exception {
+        String clientId = randomString();
+        mockClient(clientId);
+        Long userId = randomLongId();
+        OAuth2AccessTokenDO access = seedSession(clientId, userId);
+        assertNotNull(oauth2TokenService.getAccessToken(access.getAccessToken()), "前置：预热缓存条目存在");
+
+        java.util.concurrent.CountDownLatch t1Checked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch t2Committed = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<Throwable> t2Error = new AtomicReference<>();
+
+        Thread t2 = new Thread(() -> {
+            try {
+                assertTrue(t1Checked.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T1 首次核验超时");
+                transactionTemplate.executeWithoutResult(status ->
+                        oauth2TokenService.removeAccessToken(access.getAccessToken()));
+            } catch (Throwable ex) {
+                t2Error.set(ex);
+            } finally {
+                t2Committed.countDown();
+            }
+        });
+        t2.start();
+
+        transactionTemplate.executeWithoutResult(status -> {
+            try {
+                // T1 首次核验：行存在，通过
+                oauth2TokenService.checkAccessToken(access.getAccessToken());
+            } catch (Exception ex) {
+                throw new RuntimeException("T1 首次核验不应失败", ex);
+            }
+            t1Checked.countDown();
+            try {
+                assertTrue(t2Committed.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T2 撤销提交超时");
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(ex);
+            }
+            // T1 同事务内再次核验：T2 已在另一连接撤销并提交——flushCache=TRUE 必须回源拒绝
+            assertServiceException(() -> oauth2TokenService.checkAccessToken(access.getAccessToken()),
+                    new ErrorCode(401, "访问令牌不存在"));
+        });
+
+        assertNull(t2Error.get(), "T2 撤销不得失败: " + t2Error.get());
     }
 }
