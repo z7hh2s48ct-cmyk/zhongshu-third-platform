@@ -12,6 +12,8 @@ import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.infra.api.config.ConfigApi;
 import cn.zszj.module.infra.api.file.FileApi;
 import cn.zszj.module.system.controller.admin.user.vo.profile.UserProfileUpdatePasswordReqVO;
+import cn.zszj.module.system.controller.admin.user.vo.user.UserImportExcelVO;
+import cn.zszj.module.system.controller.admin.user.vo.user.UserImportRespVO;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
@@ -438,6 +440,55 @@ public class AdminUserServiceImplSessionInvalidateTest extends BaseDbUnitTest {
                 "删除用户必须留下会话失效审计日志，实际日志：" + formattedLogs());
         assertTrue(findAuditLog(resetUser.getId(), "密码"),
                 "改密必须留下会话失效审计日志，实际日志：" + formattedLogs());
+    }
+
+    // ========== ⑤ codex r1 P1：Excel 覆盖导入的禁用入口 ==========
+
+    /**
+     * 场景 ⑤：覆盖导入把既有账号置为禁用时，必须同事务撤销其全部会话。
+     *
+     * <p>RED：修复前 {@code importUserList(updateSupport=true)} 会把 Excel 的 status 直接更新进账号，
+     * 却从不调用统一撤销入口——导入禁用后旧 Access / Refresh / 合成凭据仍然可用。
+     */
+    @Test
+    public void testImportUserList_disableExistingUser_shouldRevokeAllSessions() {
+        AdminUserDO dbUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        userMapper.insert(dbUser);
+
+        UserImportExcelVO importUser = new UserImportExcelVO();
+        importUser.setUsername(dbUser.getUsername());
+        importUser.setNickname(dbUser.getNickname());
+        importUser.setMobile("13900000001");
+        importUser.setEmail("import-disable@example.com");
+        importUser.setStatus(CommonStatusEnum.DISABLE.getStatus());
+
+        UserImportRespVO respVO = userService.importUserList(newArrayList(importUser), true);
+
+        assertTrue(respVO.getUpdateUsernames().contains(dbUser.getUsername()),
+                "覆盖导入应更新既有账号，实际失败明细：" + respVO.getFailureUsernames());
+        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
+    }
+
+    /**
+     * 场景 ⑤-2：覆盖导入未改变启用状态（仍启用）时，不得误触发会话撤销。
+     */
+    @Test
+    public void testImportUserList_keepEnabledExistingUser_shouldNotRevokeSessions() {
+        AdminUserDO dbUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        userMapper.insert(dbUser);
+
+        UserImportExcelVO importUser = new UserImportExcelVO();
+        importUser.setUsername(dbUser.getUsername());
+        importUser.setNickname(dbUser.getNickname());
+        importUser.setMobile("13900000002");
+        importUser.setEmail("import-enable@example.com");
+        importUser.setStatus(CommonStatusEnum.ENABLE.getStatus());
+
+        UserImportRespVO respVO = userService.importUserList(newArrayList(importUser), true);
+
+        assertTrue(respVO.getUpdateUsernames().contains(dbUser.getUsername()),
+                "覆盖导入应更新既有账号，实际失败明细：" + respVO.getFailureUsernames());
+        verify(oauth2TokenService, never()).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
     }
 
     // ========== 工具方法 ==========

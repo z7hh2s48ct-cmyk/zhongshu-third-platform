@@ -18,6 +18,7 @@ import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenP
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
@@ -58,6 +59,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
 
     @Resource
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
+    @Resource
+    private OAuth2CodeMapper oauth2CodeMapper;
 
     @Resource
     private OAuth2ClientService oauth2ClientService;
@@ -247,11 +250,15 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
         for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
             oauth2AccessTokenMapper.deleteById(aliveToken.getId());
-            oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
+            revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
         }
         // 删除刷新令牌
+        OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
-        oauth2AccessTokenRedisDAO.delete(refreshToken);
+        // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
+        // 撤销时同样落墓碑（TTL 取刷新令牌剩余有效期，删除前读取），堵住并发门控路径从旧 DB 快照回填复活
+        revokeWithTombstone(refreshToken, refreshTokenDO != null ? refreshTokenDO.getExpiresTime()
+                : accessTokenDO.getExpiresTime());
         // ZS-LOGIN-002：会话终结，清理代际键（访问令牌侧的代际标识保留至自然过期，供审计定位）
         deleteSessionGenerationQuietly(refreshToken);
         return accessTokenDO;
@@ -348,15 +355,24 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
-                oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
+                revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
             }
+            // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
+            // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
+            OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
             // 删除刷新令牌
             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
             // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
             // key 即 refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时机
-            oauth2AccessTokenRedisDAO.delete(refreshToken);
+            revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
             // ZS-LOGIN-002：会话终结，清理代际键
             deleteSessionGenerationQuietly(refreshToken);
+        }
+        // ZS-LOGIN-003 codex r1 P1：一并失效未消费的 OAuth2 授权码——禁用/改密前签发的 code 若残留，
+        // 有效期内仍可经 grantAuthorizationCodeForAccessToken 兑换出新会话（撤销后复活）
+        int revokedCodes = oauth2CodeMapper.deleteByUserIdAndUserType(userId, userType);
+        if (revokedCodes > 0 && log.isInfoEnabled()) {
+            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的未消费授权码已一并失效：数量({})]", userType, userId, revokedCodes);
         }
         // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识）
         if (log.isInfoEnabled()) {
@@ -460,6 +476,19 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             log.warn("[recordSessionGeneration][ZS-LOGIN-002 会话(refresh={}) 代际登记失败，降级为不登记；"
                     + "不影响本次刷新结果，但审计侧将缺失该代际标识]", maskToken(refreshToken), ex);
         }
+    }
+
+    /**
+     * ZS-LOGIN-003 codex r1 P1：撤销缓存凭据前先落「撤销墓碑」，再删除缓存。
+     *
+     * <p>竞态背景：{@link #getAccessToken} 缓存未命中时从 DB 回源并回填缓存。若「读 DB 旧快照 →
+     * 本方撤销提交并删缓存 → 旧快照回填」交错，旧凭据会在 Redis 复活，后续缓存命中不再校验
+     * 用户状态，被禁用/删除用户的旧凭据（含 gate 开启时的合成凭据）继续有效。墓碑以
+     * 「查墓碑 + 写缓存」的 Lua 原子门闩拒绝该回填；TTL 取凭据剩余有效期，自清理。
+     */
+    private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
+        oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
+        oauth2AccessTokenRedisDAO.delete(token);
     }
 
     /**

@@ -399,6 +399,56 @@ public class OAuth2TokenServiceImplOrphanRevokeTest extends BaseDbAndRedisUnitTe
         });
     }
 
+    // ========== ⑤ codex r1 P1：撤销墓碑阻塞旧快照回填（缓存复活竞态） ==========
+
+    /**
+     * 场景 ⑤：撤销后，并发鉴权路径遗留的「旧 DB 快照」不得把已撤销凭据回填复活。
+     *
+     * <p>竞态：{@code getAccessToken} 缓存未命中时从 DB 回源；若「读 DB 旧快照 → 撤销提交并删缓存 →
+     * 旧快照回填」交错，旧凭据在 Redis 复活且后续命中不再校验用户状态。修复后撤销先落墓碑，
+     * {@code set()} 以「查墓碑 + 写缓存」Lua 门闩拒绝回填。
+     */
+    @Test
+    public void testRemoveAccessTokenByUser_tombstoneBlocksStaleSnapshotBackfill() {
+        // 准备
+        String clientId = randomString();
+        Long userId = randomLongId();
+        mockClient(clientId, 0L);
+        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
+        OAuth2RefreshTokenDO refresh = seedRefreshToken(clientId, userId);
+        OAuth2AccessTokenDO access = seedAccessToken(refresh.getRefreshToken(), userId, clientId);
+
+        // 撤销（写墓碑 + 删缓存 + 删 DB 行）
+        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()), "撤销后缓存应被清除");
+
+        // 模拟并发鉴权遗留的旧快照回填（该快照在撤销提交前读取，仍带未过期 expiresTime）
+        oauth2AccessTokenRedisDAO.set(access);
+
+        // 断言：墓碑拒绝回填，旧凭据不得复活
+        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                "撤销墓碑存在时，旧快照回填必须被拒绝（不得复活已撤销会话）");
+    }
+
+    /**
+     * 场景 ⑤-2：未撤销的存活凭据不受墓碑影响——缓存回填正常工作（门闩不误伤）。
+     */
+    @Test
+    public void testAccessTokenCache_setWithoutTombstone_shouldSucceed() {
+        String clientId = randomString();
+        Long userId = randomLongId();
+        mockClient(clientId, 0L);
+        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
+        OAuth2RefreshTokenDO refresh = seedRefreshToken(clientId, userId);
+        OAuth2AccessTokenDO access = seedAccessToken(refresh.getRefreshToken(), userId, clientId);
+
+        oauth2AccessTokenRedisDAO.delete(access.getAccessToken()); // 先清缓存
+        oauth2AccessTokenRedisDAO.set(access);                     // 无墓碑时回填
+
+        assertNotNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                "无撤销墓碑时缓存回填必须正常工作");
+    }
+
     private OAuth2RefreshTokenDO seedRefreshToken(String clientId, Long userId) {
         return seedRefreshToken(randomString(), clientId, userId);
     }

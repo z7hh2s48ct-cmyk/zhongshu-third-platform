@@ -1,11 +1,13 @@
 package cn.zszj.module.system.service.oauth2;
 
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.test.core.ut.BaseMockitoUnitTest;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.service.auth.AdminAuthService;
+import cn.zszj.module.system.service.user.AdminUserService;
 import com.google.common.collect.Lists;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -15,6 +17,8 @@ import java.util.List;
 
 import static cn.hutool.core.util.RandomUtil.randomEle;
 import static cn.zszj.framework.test.core.util.AssertUtils.assertPojoEquals;
+import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_NOT_EXISTS;
 import static cn.zszj.framework.test.core.util.RandomUtils.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.eq;
@@ -36,6 +40,8 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
     private OAuth2CodeService oauth2CodeService;
     @Mock
     private AdminAuthService adminAuthService;
+    @Mock
+    private AdminUserService adminUserService;
 
     @Test
     public void testGrantImplicit() {
@@ -81,14 +87,17 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
         List<String> scopes = Lists.newArrayList("read", "write");
         String redirectUri = randomString();
         String state = randomString();
-        // mock 方法（code）
+        // mock 方法（code）——技术账号（ADMIN）兑换时校验账号状态（ZS-LOGIN-003 codex r1 P1）
         OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class, o -> {
             o.setClientId(clientId);
             o.setRedirectUri(redirectUri);
             o.setState(state);
             o.setScopes(scopes);
+            o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
         when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
+        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(
+                new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.ENABLE.getStatus()));
         // mock 方法（创建令牌）
         OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class);
         when(oauth2TokenService.createAccessToken(eq(codeDO.getUserId()), eq(codeDO.getUserType()),
@@ -97,6 +106,51 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
         // 调用，并断言
         assertPojoEquals(accessTokenDO, oauth2GrantService.grantAuthorizationCodeForAccessToken(
                 clientId, code, redirectUri, state));
+    }
+
+    @Test
+    public void testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject() {
+        // 准备参数
+        String clientId = randomString();
+        String code = randomString();
+        String redirectUri = randomString();
+        String state = randomString();
+        // mock 方法（code 属已禁用的 ADMIN 用户）
+        OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class, o -> {
+            o.setClientId(clientId);
+            o.setRedirectUri(redirectUri);
+            o.setState(state);
+            o.setUserType(UserTypeEnum.ADMIN.getValue());
+        });
+        when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
+        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(
+                new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.DISABLE.getStatus()));
+
+        // 调用，并断言：禁用账号不得凭旧授权码换出新会话
+        assertServiceException(() -> oauth2GrantService.grantAuthorizationCodeForAccessToken(
+                clientId, code, redirectUri, state), USER_NOT_EXISTS);
+    }
+
+    @Test
+    public void testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject() {
+        // 准备参数
+        String clientId = randomString();
+        String code = randomString();
+        String redirectUri = randomString();
+        String state = randomString();
+        // mock 方法（code 属已被删除（查无）的 ADMIN 用户）
+        OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class, o -> {
+            o.setClientId(clientId);
+            o.setRedirectUri(redirectUri);
+            o.setState(state);
+            o.setUserType(UserTypeEnum.ADMIN.getValue());
+        });
+        when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
+        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(null);
+
+        // 调用，并断言
+        assertServiceException(() -> oauth2GrantService.grantAuthorizationCodeForAccessToken(
+                clientId, code, redirectUri, state), USER_NOT_EXISTS);
     }
 
     @Test

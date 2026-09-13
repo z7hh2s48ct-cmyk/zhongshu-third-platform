@@ -66,6 +66,11 @@ public interface RedisKeyConstants {
      * 由于动态过期时间，使用 RedisTemplate 操作
      */
     String OAUTH2_ACCESS_TOKEN = "oauth2_access_token:%s";
+    /**
+     * ZS-LOGIN-003 codex r1 P1：撤销墓碑——令牌串被撤销后写入，阻塞并发鉴权的缓存回填复活旧凭据。
+     * 值固定 "1"，TTL = 被撤销凭据的剩余有效期（自清理）。
+     */
+    String OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE = "oauth2_access_token_revoke_tomb:%s";
 
     /**
      * ZS-LOGIN-002：会话代际号（以刷新令牌为会话标识；本底座刷新沿用原 refresh token 不轮换）

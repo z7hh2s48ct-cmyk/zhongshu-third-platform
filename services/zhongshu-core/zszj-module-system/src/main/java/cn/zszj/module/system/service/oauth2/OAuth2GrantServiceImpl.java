@@ -3,12 +3,14 @@ package cn.zszj.module.system.service.oauth2;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.enums.ErrorCodeConstants;
 import cn.zszj.module.system.service.auth.AdminAuthService;
+import cn.zszj.module.system.service.user.AdminUserService;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.Resource;
@@ -30,6 +32,8 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
     private OAuth2CodeService oauth2CodeService;
     @Resource
     private AdminAuthService adminAuthService;
+    @Resource
+    private AdminUserService adminUserService;
 
     @Override
     public OAuth2AccessTokenDO grantImplicit(Long userId, Integer userType,
@@ -62,6 +66,16 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
         state = StrUtil.nullToDefault(state, ""); // 数据库 state 为 null 时，会设置为 "" 空串
         if (!StrUtil.equals(state, codeDO.getState())) {
             throw exception(ErrorCodeConstants.OAUTH2_GRANT_STATE_MISMATCH);
+        }
+
+        // ZS-LOGIN-003 codex r1 P1：兑换时校验账号状态——授权码签发后、兑换前账号可能已被禁用/删除，
+        // 不校验则撤销完成后仍能凭旧 code 换出可用新会话（撤销后复活）。技术账号（ADMIN）先闭环，
+        // 会员（MEMBER）兑换状态校验归其模块任务。
+        if (UserTypeEnum.ADMIN.getValue().equals(codeDO.getUserType())) {
+            AdminUserDO user = adminUserService.getUser(codeDO.getUserId());
+            if (user == null || CommonStatusEnum.isDisable(user.getStatus())) {
+                throw exception(ErrorCodeConstants.USER_NOT_EXISTS);
+            }
         }
 
         // 创建访问令牌

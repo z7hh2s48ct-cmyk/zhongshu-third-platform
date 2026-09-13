@@ -674,6 +674,12 @@ public class AdminUserServiceImpl implements AdminUserService {
             AdminUserDO updateUser = BeanUtils.toBean(importUser, AdminUserDO.class);
             updateUser.setId(existUser.getId());
             userMapper.updateById(updateUser);
+            // ZS-LOGIN-003 codex r1 P1：覆盖导入把已有账号置为禁用时，同事务内失效其全部登录会话——
+            // 此前该禁用入口未接统一撤销，旧 Access/Refresh/合成凭据在导入禁用后仍然可用
+            if (CommonStatusEnum.isDisable(updateUser.getStatus())
+                    && !CommonStatusEnum.isDisable(existUser.getStatus())) {
+                invalidateUserSessions(existUser.getId(), "Excel 覆盖导入禁用");
+            }
             respVO.getUpdateUsernames().add(importUser.getUsername());
         });
         return respVO;
