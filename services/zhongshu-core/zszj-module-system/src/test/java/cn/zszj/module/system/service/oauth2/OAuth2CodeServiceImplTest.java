@@ -62,6 +62,36 @@ class OAuth2CodeServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testConsumeAuthorizationCode_doubleConsume_secondRejects() {
+        // ZS-LOGIN-003 codex r3 P1：同一 code 只能消费一次——条件删除恰好影响 1 行才放行
+        Long userId = randomLongId();
+        OAuth2CodeDO codeDO = oauth2CodeService.createAuthorizationCode(userId,
+                UserTypeEnum.ADMIN.getValue(), randomString(), Lists.newArrayList("read"),
+                randomString(), randomString());
+
+        // 第一次消费成功
+        oauth2CodeService.consumeAuthorizationCode(codeDO.getCode());
+        // 第二次消费必须拒绝（同 code 并发重复兑换防线）
+        assertServiceException(() -> oauth2CodeService.consumeAuthorizationCode(codeDO.getCode()),
+                OAUTH2_CODE_NOT_EXISTS);
+    }
+
+    @Test
+    public void testConsumeAuthorizationCode_revokedByLifecycle_secondRejects() {
+        // ZS-LOGIN-003 codex r3 P1：code 已被生命周期撤销（用户级撤销 deleteByUserIdAndUserType 删除）后，
+        // 兑换必须拒绝——防「兑换读 code → 撤销删 code 并提交 → 兑换继续建令牌」复活会话
+        Long userId = randomLongId();
+        OAuth2CodeDO codeDO = oauth2CodeService.createAuthorizationCode(userId,
+                UserTypeEnum.ADMIN.getValue(), randomString(), Lists.newArrayList("read"),
+                randomString(), randomString());
+        // 模拟生命周期撤销：直接删除该用户的授权码
+        oauth2CodeMapper.deleteByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue());
+
+        assertServiceException(() -> oauth2CodeService.consumeAuthorizationCode(codeDO.getCode()),
+                OAUTH2_CODE_NOT_EXISTS);
+    }
+
+    @Test
     public void testConsumeAuthorizationCode_null() {
         // 调用，并断言
         assertServiceException(() -> oauth2CodeService.consumeAuthorizationCode(randomString()),

@@ -6,6 +6,7 @@ import cn.zszj.framework.test.core.ut.BaseMockitoUnitTest;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
 import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.service.auth.AdminAuthService;
 import com.google.common.collect.Lists;
@@ -42,6 +43,8 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
     private AdminAuthService adminAuthService;
     @Mock
     private AdminUserMapper adminUserMapper;
+    @Mock
+    private OAuth2CodeMapper oauth2CodeMapper;
 
     @Test
     public void testGrantImplicit() {
@@ -95,6 +98,8 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
             o.setScopes(scopes);
             o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
+        codeDO.setExpiresTime(java.time.LocalDateTime.now().plusMinutes(5)); // 未过期
+        when(oauth2CodeMapper.selectByCode(eq(code))).thenReturn(codeDO);
         when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
         when(adminUserMapper.selectByIdForUpdate(eq(codeDO.getUserId()))).thenReturn(
                 new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.ENABLE.getStatus()));
@@ -122,7 +127,8 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
             o.setState(state);
             o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
-        when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
+        codeDO.setExpiresTime(java.time.LocalDateTime.now().plusMinutes(5)); // 未过期
+        when(oauth2CodeMapper.selectByCode(eq(code))).thenReturn(codeDO);
         when(adminUserMapper.selectByIdForUpdate(eq(codeDO.getUserId()))).thenReturn(
                 new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.DISABLE.getStatus()));
 
@@ -145,7 +151,8 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
             o.setState(state);
             o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
-        when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
+        codeDO.setExpiresTime(java.time.LocalDateTime.now().plusMinutes(5)); // 未过期
+        when(oauth2CodeMapper.selectByCode(eq(code))).thenReturn(codeDO);
         when(adminUserMapper.selectByIdForUpdate(eq(codeDO.getUserId()))).thenReturn(null);
 
         // 调用，并断言
