@@ -204,8 +204,8 @@ console.log('[sys001] 夹具种子就绪：T1 管理员（pgcrypto BCrypt）+ T2
   console.log('[sys001] 以当前提交重建 zszj-server（mvn.cmd -pl zszj-server -am -DskipTests clean package，Windows 须 shell 执行 .cmd）…');
   const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME || JDK };
   const buildStartedAt = Date.now();
-  const r = spawnSync(MVN, ['-q', '-pl', 'zszj-server', '-am', '-DskipTests', 'clean', 'package'],
-    { cwd: join(root, 'services/zhongshu-core'), env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: true }); // Windows 上 .cmd 须经 shell 执行（否则 EINVAL）
+  const r = spawnSync(`"${MVN}" -q -pl zszj-server -am -DskipTests clean package`,
+    { cwd: join(root, 'services/zhongshu-core'), env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: true }); // Windows 上 .cmd 须经 shell 执行（否则 EINVAL）；MVN 路径加引号防空格
   if (r.error || r.status !== 0 || !existsSync(SERVER_JAR)) {
     fail(1, `[sys001] jar 构建失败（mvn exit=${r.status}，error=${r.error?.code ?? 'none'}）：
 ${(r.stdout + r.stderr).slice(0, 2000)}`);
@@ -373,10 +373,10 @@ const report = {
   registeredGaps: [
     {
       id: 'GAP-1 真实 PG「statement 已关闭」高频缺陷（夹具级规避已落地，根因修复归口待办）',
-      severity: '阻塞级（规避前：真实 PG 环境下约半数写路径/令牌路径请求 500/401）；规避后消除',
-      mitigation: '夹具以 CLI 覆盖显式关闭 Druid PSCache（pool-prepared-statements=false、max-pool-prepared-statement-per-connection-size=-1，与 ZS-BRAND-004.B 运行期夹具同款并经其验证）；规避后全矩阵 50/50（见本报告用例结果）。产品 yaml 未改动；根因修复（依赖升级或 selectOne 实现回退）归 ZS-DB-001。',
+      severity: '阻塞级（规避前：真实 PG 环境下约半数写路径/令牌路径请求 500/401）',
+      mitigation: '夹具以 CLI 覆盖显式关闭 Druid PSCache（pool-prepared-statements=false、max-pool-prepared-statement-per-connection-size=-1，与 ZS-BRAND-004.B 运行期夹具同款并经其验证）；规避效果以本次报告「结果汇总」实测为准（规避前基线 24~30/50 且逐 run 波动，规避后仅剩 GAP-3 一项 FAIL）。产品 yaml 未改动；根因修复（依赖升级或 selectOne 实现回退）归 ZS-DB-001。',
       phenomenon: 'MP 3.5.17 `selectOne` 新会话光标查询（openSession→selectCursor）与 Druid PSCache 语句包装在真实 PostgreSQL 17 上触发「该 statement 已经关闭」：Prepared 语句创建后、参数设置前即被关闭，请求以 500（PersistenceException）或 401（令牌校验路径 catch ServiceException 后按匿名处理）失败。上游同类：alibaba/druid#3641（MyBatis cursor + Druid 连接回收重置语句状态）、mybatis#1351。',
-      evidence: '规避前逐 run 命中用例不同（写/令牌路径 500、401）；关闭 stat/wall 过滤器、对齐 Druid 池参数、关闭 pgjdbc 语句缓存、关闭 mapper DEBUG 日志代理均不消除；显式关闭 PSCache（BRAND-004.B 同款 CLI 覆盖）后缺陷消失、矩阵全绿（规避前后对照见报告结论）。',
+      evidence: '规避前逐 run 命中用例不同（写/令牌路径 500、401）；关闭 stat/wall 过滤器、对齐 Druid 池参数、关闭 pgjdbc 语句缓存、关闭 mapper DEBUG 日志代理均不消除；显式关闭 PSCache（BRAND-004.B 同款 CLI 覆盖）后「statement 已关闭」残留为零（以本报告用例明细中 code=500/系统异常 计数为准）。',
       attribution: '归口 ZS-DB-001（数据源 PG 合同）/ZS-ENG（依赖基线）；建议升级 MyBatis-Plus/Druid 或将 MP selectOne 光标实现回退为 selectList 语义后回归。',
     },
     {
