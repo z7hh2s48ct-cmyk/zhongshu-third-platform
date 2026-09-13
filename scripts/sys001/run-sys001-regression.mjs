@@ -25,7 +25,7 @@ const keep = process.argv.includes('--keep');
 const PG_IMAGE = 'postgres:17-alpine';
 const REDIS_IMAGE = 'redis:7.4.11-alpine';
 const SERVER_JAR = join(root, 'services/zhongshu-core/zszj-server/target/zszj-server.jar');
-const MVN = join(root, 'tools/apache-maven-3.9.9/bin/mvn');
+const MVN = join(root, 'tools/apache-maven-3.9.9/bin', process.platform === 'win32' ? 'mvn.cmd' : 'mvn'); // Windows 须用 mvn.cmd 启动器
 const JDK = join(root, 'tools/jdk-17.0.20.1+1');
 const OUT_DIR = join(root, 'outputs/sys001');
 const serverLogPath = join(OUT_DIR, `server-${Date.now()}.log`);
@@ -201,6 +201,7 @@ serverProc = spawn(join(JDK, 'bin/java.exe'), [
   '-jar', SERVER_JAR,
   '--spring.profiles.active=local,harness',
   `--server.port=${serverPort}`,
+  '--server.address=127.0.0.1', // 夹具 HTTP 仅绑定回环，与 PG/Redis 端口回环约束对齐
 ], {
   cwd: root,
   env: {
@@ -230,9 +231,10 @@ async function request(method, path, { body, token, tenantId, headers } = {}) {
     headers: h,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  const text = await res.text(); // 先取原始文本，再尝试解析（避免二次读取 body）
   let json = null;
-  try { json = await res.json(); } catch { /* 非 JSON 响应保留 null */ }
-  return { status: res.status, contentType: res.headers.get('content-type') || '', body: json, text: json ? undefined : await res.text() };
+  try { json = JSON.parse(text); } catch { /* 非 JSON 响应保留 null */ }
+  return { status: res.status, contentType: res.headers.get('content-type') || '', body: json, text: json ? undefined : text };
 }
 
 // 就绪等待：匿名端点（租户 simple-list）返回业务码 0，证明 MVC + Tenant 链可用

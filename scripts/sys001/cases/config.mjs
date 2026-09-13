@@ -82,7 +82,7 @@ export async function run(ctx) {
   // 定位内置秘密键行（selectByIdFromCache → 详情走掩码合同）；version/掩码均以详情为准
   const rSensDetail = await request('GET', `${C}/get-value-by-key?key=system.user.init-password`, { token: t1.token, tenantId: t1.tenantId });
   const rSensPage = await request('GET', `${C}/page?pageNo=1&pageSize=100`, { token: t1.token, tenantId: t1.tenantId });
-  const sensRow = (rSensPage.body?.data?.list || []).find((r) => r.configKey === 'system.user.init-password');
+  const sensRow = (rSensPage.body?.data?.list || []).find((r) => r.key === 'system.user.init-password'); // ConfigRespVO 字段名为 key（configKey 经 convert 映射）
   const rGetById = await request('GET', `${C}/get?id=${sensRow?.id}`, { token: t1.token, tenantId: t1.tenantId });
   const rSetVisible = await request('PUT', `${C}/update`, {
     token: t1.token, tenantId: t1.tenantId,

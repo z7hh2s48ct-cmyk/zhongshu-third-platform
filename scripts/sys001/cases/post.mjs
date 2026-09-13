@@ -50,9 +50,11 @@ export async function run(ctx) {
   // ---------- SYS-POST-N1：有引用删除受控（岗位被用户引用时删除应被拒） ----------
   const rDelBusy = await request('DELETE', `/admin-api/system/post/delete?id=${postId}`, { token: t1.token, tenantId: t1.tenantId });
   const stillThere = pgQuery(`SELECT count(*) FROM system_post WHERE id=${postId} AND deleted=0`) === '1';
+  // 受控拒绝=业务码非 0 且非 500 基础设施异常；500 不得计为保护成功（缺口登记见报告 GAP-2）
+  const controlled = rDelBusy.body?.code !== 0 && rDelBusy.body?.code !== 500 && stillThere;
   record('SYS-POST-N1 有引用删除受控',
-    rDelBusy.body?.code !== 0 && stillThere,
-    `delete(被引用岗位) code=${rDelBusy.body?.code}（期望非 0 业务码），PG 行${stillThere ? '仍在' : '已被删'}`);
+    controlled,
+    `delete(被引用岗位) code=${rDelBusy.body?.code}（期望受控业务拒绝而非放行/基础设施异常），PG 行${stillThere ? '仍在' : '已被删'}`);
 
   // ---------- SYS-POST-N2：非法状态 400 ----------
   const rBadStatus = await request('POST', '/admin-api/system/post/create', {

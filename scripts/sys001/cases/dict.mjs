@@ -56,8 +56,9 @@ export async function run(ctx) {
     token: t1.token, tenantId: t1.tenantId,
     body: { dictType: typeCode, label: '重复值', value: '1', sort: 3, status: 0 },
   });
+  const dupDataControlled = rDupData.body?.code !== 0 && rDupData.body?.code !== 500; // 受控业务拒绝，500 基础设施异常不计
   record('SYS-DICT-N1 重复编码冲突受控',
-    rDupType.body?.code === 1002006004 && rDupData.body?.code !== 0
+    rDupType.body?.code === 1002006004 && dupDataControlled
     && pgQuery(`SELECT count(*) FROM system_dict_type WHERE type='${typeCode}' AND deleted=0`) === '1'
     && pgQuery(`SELECT count(*) FROM system_dict_data WHERE dict_type='${typeCode}' AND value='1' AND deleted=0`) === '1',
     `类型重复 code=${rDupType.body?.code}（期望 1002006004），数据重复 code=${rDupData.body?.code}（期望非 0），PG 均未新增`);
