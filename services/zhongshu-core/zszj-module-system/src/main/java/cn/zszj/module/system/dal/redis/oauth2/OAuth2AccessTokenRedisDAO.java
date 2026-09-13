@@ -5,6 +5,7 @@ import cn.zszj.framework.common.util.collection.CollectionUtils;
 import cn.zszj.framework.common.util.json.JsonUtils;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Repository;
 
 import jakarta.annotation.Resource;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_SESSION_GENERATION;
+import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE;
 import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_TOKEN;
 import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_REFRESH_SESSION_GENERATION;
 
@@ -25,6 +27,14 @@ import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_REFRESH_S
  */
 @Repository
 public class OAuth2AccessTokenRedisDAO {
+
+    /**
+     * ZS-LOGIN-003 codex r1 P1：缓存写入的撤销门闩——墓碑存在则拒绝回填。
+     * Lua 保证「查墓碑 + 写缓存」原子，堵住「读旧 DB 快照 → 撤销提交删缓存 → 旧快照回填复活」竞态。
+     */
+    private static final DefaultRedisScript<Long> SET_IF_NOT_REVOKED_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end "
+                    + "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1", Long.class);
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
@@ -40,8 +50,24 @@ public class OAuth2AccessTokenRedisDAO {
         accessTokenDO.setUpdater(null).setUpdateTime(null).setCreateTime(null).setCreator(null).setDeleted(null);
         long time = LocalDateTimeUtil.between(LocalDateTime.now(), accessTokenDO.getExpiresTime(), ChronoUnit.SECONDS);
         if (time > 0) {
-            stringRedisTemplate.opsForValue().set(redisKey, JsonUtils.toJsonString(accessTokenDO), time, TimeUnit.SECONDS);
+            // ZS-LOGIN-003 codex r1 P1：墓碑存在（该凭据串已被撤销）则拒绝回填，防止旧快照复活已撤销会话
+            stringRedisTemplate.execute(SET_IF_NOT_REVOKED_SCRIPT,
+                    java.util.Arrays.asList(redisKey, formatTombstoneKey(accessTokenDO.getAccessToken())),
+                    JsonUtils.toJsonString(accessTokenDO), String.valueOf(time));
         }
+    }
+
+    /**
+     * ZS-LOGIN-003 codex r1 P1：写入撤销墓碑（SETNX 语义），阻塞后续对该凭据串的任何缓存回填。
+     *
+     * @param token     被撤销的凭据串（访问令牌串，或充当合成凭据 key 的刷新令牌串）
+     * @param ttlMillis 墓碑存活毫秒数，取被撤销凭据的剩余有效期；<= 0（已过期）无需墓碑
+     */
+    public void markRevoked(String token, long ttlMillis) {
+        if (ttlMillis <= 0) {
+            return; // 已过期凭据不会因回填复活，无需墓碑
+        }
+        stringRedisTemplate.opsForValue().setIfAbsent(formatTombstoneKey(token), "1", ttlMillis, TimeUnit.MILLISECONDS);
     }
 
     public void delete(String accessToken) {
@@ -141,6 +167,10 @@ public class OAuth2AccessTokenRedisDAO {
 
     private static String formatKey(String accessToken) {
         return String.format(OAUTH2_ACCESS_TOKEN, accessToken);
+    }
+
+    private static String formatTombstoneKey(String token) {
+        return String.format(OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE, token);
     }
 
     private static String formatSessionGenerationKey(String refreshToken) {

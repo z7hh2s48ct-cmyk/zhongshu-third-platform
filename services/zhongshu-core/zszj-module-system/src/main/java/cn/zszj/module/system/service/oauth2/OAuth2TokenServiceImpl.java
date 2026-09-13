@@ -18,6 +18,8 @@ import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenP
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
@@ -58,6 +60,10 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
 
     @Resource
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
+    @Resource
+    private OAuth2CodeMapper oauth2CodeMapper;
+    @Resource
+    private AdminUserMapper adminUserMapper;
 
     @Resource
     private OAuth2ClientService oauth2ClientService;
@@ -148,10 +154,14 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         }
 
         // 移除相关的访问令牌（在行锁内重读，可撤销并发刷新已提交的旧代际令牌 → 重放旧代际按既有 401 失效）
+        // ZS-LOGIN-003 codex r2 P1：逐个落撤销墓碑——并发鉴权可能持有被淘汰旧令牌的 DB 快照，
+        // 若只删缓存不落墓碑，「读 A 快照 → 刷新删 A 建 B → 用户撤销 B/R → A 快照回填」交错会复活 A
         List<OAuth2AccessTokenDO> accessTokenDOs = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
         if (CollUtil.isNotEmpty(accessTokenDOs)) {
             oauth2AccessTokenMapper.deleteByIds(convertSet(accessTokenDOs, OAuth2AccessTokenDO::getId));
-            oauth2AccessTokenRedisDAO.deleteList(convertSet(accessTokenDOs, OAuth2AccessTokenDO::getAccessToken));
+            for (OAuth2AccessTokenDO evicted : accessTokenDOs) {
+                revokeWithTombstone(evicted.getAccessToken(), evicted.getExpiresTime());
+            }
         }
 
         // 已过期的情况下，删除刷新令牌
@@ -247,18 +257,22 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
         for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
             oauth2AccessTokenMapper.deleteById(aliveToken.getId());
-            oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
+            revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
         }
         // 删除刷新令牌
+        OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
-        oauth2AccessTokenRedisDAO.delete(refreshToken);
+        // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
+        // 撤销时同样落墓碑（TTL 取刷新令牌剩余有效期，删除前读取），堵住并发门控路径从旧 DB 快照回填复活
+        revokeWithTombstone(refreshToken, refreshTokenDO != null ? refreshTokenDO.getExpiresTime()
+                : accessTokenDO.getExpiresTime());
         // ZS-LOGIN-002：会话终结，清理代际键（访问令牌侧的代际标识保留至自然过期，供审计定位）
         deleteSessionGenerationQuietly(refreshToken);
         return accessTokenDO;
     }
 
     /**
-     * ZS-LOGIN-002：按用户维度批量撤销令牌（用户被禁用/删除等）。
+     * ZS-LOGIN-002：按用户维度批量撤销令牌（用户被禁用/删除/改密等）。
      *
      * <p>与 {@link #removeAccessToken(String)} 同样遵循「先锁刷新令牌行，再撤销访问令牌」的锁序，
      * 并在获锁后重读，避免与并发刷新互相复活。
@@ -270,14 +284,61 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
      *
      * <p>本方法此前<b>无 {@code @Transactional}</b>：加上事务既是原子性要求（批量撤销不应半途而废），
      * 也是行锁生效的前提（无事务则每条语句自动提交、锁立即释放）。
+     *
+     * <p><b>ZS-LOGIN-003 补齐（孤立刷新凭据）</b>：此前待撤销的 refresh-token 集合<b>完全由 access-token
+     * 记录反推</b>，且 access-token 为空时首句即 early-return。于是「无 Access 记录但仍有 Refresh」的
+     * 孤立刷新凭据<b>永远不会被撤销</b>——它仍可用于 {@link #refreshAccessToken} 换出全新访问令牌
+     * （会话复活），在 ZS-LOGIN-001 兼容门控开启时更可直接当作访问令牌通过鉴权；同时该门控下
+     * {@code convertToAccessToken} 写入 Redis 的「已缓存转换凭据」（key = refreshToken 串）也无人清理，
+     * 会一直存活到刷新令牌 TTL（default client 达 30 天）。现在改为取
+     * 「<b>access-token 反推 ∪ refresh-token 直查</b>」的<b>全集</b>，逐个撤销访问令牌、刷新令牌、
+     * Redis 缓存凭据（含合成条目）与会话代际键。
+     *
+     * <p><b>ZS-LOGIN-003 补齐（租户上下文）</b>：撤销是安全操作，必须覆盖该用户名下的<b>全部</b>会话，
+     * 不能被调用方的 ThreadLocal 租户上下文静默收窄——无租户上下文（定时任务 / MQ 消费）时租户拦截器会因
+     * {@code getRequiredTenantId()} 抛 NPE，跨租户运维调用时则查不到目标用户凭据 → 撤销静默 no-op，
+     * 被禁用/被删除用户的会话继续存活。故整个撤销体在 {@link TenantUtils#executeIgnore(Runnable)} 内执行，
+     * 退出后自动恢复调用方上下文（不污染）。
+     *
+     * <p><b>ZS-LOGIN-003 补齐（审计）</b>：大批会话被静默撤销此前无任何日志，事件不可追踪；
+     * 现在撤销完成后输出结构化 INFO 日志（用户编号 / 用户类型 / 会话数 / 其中孤立刷新凭据数），
+     * 与调用方（{@code AdminUserServiceImpl}）的「失效原因」日志经 trace-id 关联。
+     *
+     * <p><b>范围边界</b>：仅技术账号闭环（B03）。任职撤销 / 业务组织语义归 B07（D-09 后），本方法不预埋。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void removeAccessToken(Long userId, Integer userType) {
-        List<OAuth2AccessTokenDO> accessTokens = oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType);
-        if (CollUtil.isEmpty(accessTokens)) {
-            return;
+        TenantUtils.executeIgnore(() -> doRemoveAccessTokenByUser(userId, userType));
+    }
+
+    /**
+     * ZS-LOGIN-003：用户维度撤销的实际执行体，<b>必须</b>在「忽略租户」作用域内被调用。
+     *
+     * @param userId   用户编号
+     * @param userType 用户类型
+     */
+    private void doRemoveAccessTokenByUser(Long userId, Integer userType) {
+        // ZS-LOGIN-003 codex r2 P1：统一锁序最外层先锁用户行（仅技术账号）——
+        // 与凭据兑换路径（grantAuthorizationCodeForAccessToken 的 selectByIdForUpdate）及账号状态
+        // 更新（UPDATE 隐式行锁）互斥，杜绝「兑换读到启用态 → 撤销提交 → 兑换仍建新会话」交错；
+        // 会员（MEMBER）账号兑换状态校验归其模块任务，不加锁
+        if (UserTypeEnum.ADMIN.getValue().equals(userType)) {
+            adminUserMapper.selectByIdForUpdate(userId);
         }
+        // ZS-LOGIN-003 codex r2 P1：无论有无会话，未消费授权码都必须失效——用户取得 code 后退出登录
+        // 再被改密/禁用时无 Access/Refresh 记录，若因空会话提前返回将残留可兑换的旧 code（撤销后复活）
+        int revokedCodes = oauth2CodeMapper.deleteByUserIdAndUserType(userId, userType);
+        if (revokedCodes > 0 && log.isInfoEnabled()) {
+            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的未消费授权码已一并失效：数量({})]", userType, userId, revokedCodes);
+        }
+        // 1. 汇总待撤销的 refresh-token 全集：access-token 反推 ∪ refresh-token 直查
+        List<OAuth2AccessTokenDO> accessTokens =
+                ObjectUtil.defaultIfNull(oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType),
+                        Collections.emptyList());
+        List<OAuth2RefreshTokenDO> refreshTokens =
+                ObjectUtil.defaultIfNull(oauth2RefreshTokenMapper.selectListByUserIdAndUserType(userId, userType),
+                        Collections.emptyList());
         // ZS-LOGIN-002 P2-A：去重 + 自然序排序 refresh-token，确保并发批量撤销以稳定顺序获取行锁
         Set<String> sortedRefreshTokens = new TreeSet<>();
         for (OAuth2AccessTokenDO accessToken : accessTokens) {
@@ -285,11 +346,25 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
                 sortedRefreshTokens.add(accessToken.getRefreshToken());
             }
         }
-        // 按稳定顺序逐个锁定并撤销
+        // ZS-LOGIN-003：refresh-token 直查补齐「孤立刷新凭据」（无 access-token 记录，反推发现不了）
+        int orphanCount = 0;
+        for (OAuth2RefreshTokenDO refreshTokenDO : refreshTokens) {
+            String refreshToken = refreshTokenDO.getRefreshToken();
+            if (StrUtil.isEmpty(refreshToken)) {
+                continue;
+            }
+            if (sortedRefreshTokens.add(refreshToken)) {
+                orphanCount++;
+            }
+        }
+        if (sortedRefreshTokens.isEmpty()) {
+            return; // 该用户无任何会话，无害空操作（不加锁、不写日志）
+        }
+        // 2. 按稳定顺序逐个锁定并撤销
         for (String refreshToken : sortedRefreshTokens) {
             // ZS-LOGIN-002：行锁 + 获锁后重读
             oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
-            // 找到该 refresh-token 对应的任一 access-token 作为 fallback
+            // 找到该 refresh-token 对应的任一 access-token 作为 fallback；孤立刷新凭据没有 fallback（为 null）
             OAuth2AccessTokenDO fallback = null;
             for (OAuth2AccessTokenDO at : accessTokens) {
                 if (refreshToken.equals(at.getRefreshToken())) {
@@ -297,18 +372,26 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
                     break;
                 }
             }
-            if (fallback == null) {
-                continue;
-            }
+            // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
-                oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
+                revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
             }
+            // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
+            // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
+            OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
             // 删除刷新令牌
             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
-            oauth2AccessTokenRedisDAO.delete(refreshToken);
+            // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
+            // key 即 refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时机
+            revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
             // ZS-LOGIN-002：会话终结，清理代际键
             deleteSessionGenerationQuietly(refreshToken);
+        }
+        // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识）
+        if (log.isInfoEnabled()) {
+            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的全部会话已撤销：会话数({})，其中孤立刷新凭据({})]",
+                    userType, userId, sortedRefreshTokens.size(), orphanCount);
         }
     }
 
@@ -367,10 +450,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     /**
      * ZS-LOGIN-002：读取某刷新令牌下当前存活的访问令牌；若一条都读不到（例如已被并发路径删除），
      * 退化为仅包含入参 {@code fallback} 自身，保证「至少撤销调用方所持的那一张」。
+     *
+     * <p>ZS-LOGIN-003：{@code fallback} 允许为 {@code null}——用户维度撤销时，
+     * 「无 Access 记录但仍有 Refresh」的孤立刷新凭据没有可退化的 access-token，
+     * 此时返回空集合（该会话本来就没有访问令牌需要撤销）。
      */
     private List<OAuth2AccessTokenDO> listAliveAccessTokens(String refreshToken, OAuth2AccessTokenDO fallback) {
         List<OAuth2AccessTokenDO> aliveTokens = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
-        return CollUtil.isEmpty(aliveTokens) ? Collections.singletonList(fallback) : aliveTokens;
+        if (CollUtil.isNotEmpty(aliveTokens)) {
+            return aliveTokens;
+        }
+        return fallback == null ? Collections.emptyList() : Collections.singletonList(fallback);
     }
 
     /**
@@ -400,6 +490,19 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             log.warn("[recordSessionGeneration][ZS-LOGIN-002 会话(refresh={}) 代际登记失败，降级为不登记；"
                     + "不影响本次刷新结果，但审计侧将缺失该代际标识]", maskToken(refreshToken), ex);
         }
+    }
+
+    /**
+     * ZS-LOGIN-003 codex r1 P1：撤销缓存凭据前先落「撤销墓碑」，再删除缓存。
+     *
+     * <p>竞态背景：{@link #getAccessToken} 缓存未命中时从 DB 回源并回填缓存。若「读 DB 旧快照 →
+     * 本方撤销提交并删缓存 → 旧快照回填」交错，旧凭据会在 Redis 复活，后续缓存命中不再校验
+     * 用户状态，被禁用/删除用户的旧凭据（含 gate 开启时的合成凭据）继续有效。墓碑以
+     * 「查墓碑 + 写缓存」的 Lua 原子门闩拒绝该回填；TTL 取凭据剩余有效期，自清理。
+     */
+    private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
+        oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
+        oauth2AccessTokenRedisDAO.delete(token);
     }
 
     /**

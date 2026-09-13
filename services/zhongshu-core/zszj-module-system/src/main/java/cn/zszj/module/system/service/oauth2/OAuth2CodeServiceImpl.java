@@ -52,7 +52,14 @@ public class OAuth2CodeServiceImpl implements OAuth2CodeService {
         if (DateUtils.isExpired(codeDO.getExpiresTime())) {
             throw exception(OAUTH2_CODE_EXPIRE);
         }
-        oauth2CodeMapper.deleteById(codeDO.getId());
+        // ZS-LOGIN-003 codex r3 P1：条件删除且必须恰好影响 1 行——并发重复消费、或该 code 已被
+        // 生命周期撤销（removeAccessToken(userId,userType)）删除时，本方删除影响 0 行，必须拒绝兑换：
+        // 否则「兑换读 code → 撤销删 code 并提交 → 兑换继续建令牌」会在撤销完成后复活会话，
+        // 同一 code 也可被并发重复兑换
+        int deleted = oauth2CodeMapper.deleteById(codeDO.getId());
+        if (deleted != 1) {
+            throw exception(OAUTH2_CODE_NOT_EXISTS);
+        }
         return codeDO;
     }
 
