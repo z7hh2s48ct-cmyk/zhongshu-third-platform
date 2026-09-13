@@ -196,4 +196,66 @@ class LogSanitizeUtilsTest {
         }
     }
 
+
+    // ========== SEC-007 HANDOFF 补评 hotfix：POJONode 原文穿透 + Locale 无关归一 ==========
+
+    /**
+     * 模拟现网 @JsonRawValue 字段形态（如 AppDiyPagePropertyRespVO.property）：
+     * valueToTree 会把原文直出字段保留为 POJONode(RawValue)，递归脱敏不得跳过
+     */
+    static class RawValueDto {
+        @com.fasterxml.jackson.annotation.JsonRawValue
+        private final String property = "{\"password\":\"" + SECRET + "\",\"title\":\"page\"}";
+        private final String name = "demo";
+
+        public String getProperty() {
+            return property;
+        }
+
+        public String getName() {
+            return name;
+        }
+    }
+
+    @Test
+    void sanitizeResponseBody_rawJsonField_shouldBeTraversedAndMasked() {
+        cn.zszj.framework.common.pojo.CommonResult<RawValueDto> result =
+                cn.zszj.framework.common.pojo.CommonResult.success(new RawValueDto());
+
+        String sanitized = LogSanitizeUtils.sanitizeResponseBody(result);
+
+        assertFalse(sanitized.contains(SECRET)); // 原文穿透回归：SECRET 绝不出现
+        assertTrue(sanitized.contains("\"password\":\"***\"")); // raw 值内部敏感键掩码
+        assertTrue(sanitized.contains("\"title\":\"page\"")); // raw 值内部非敏感字段保留
+        assertTrue(sanitized.contains("\"name\":\"demo\"")); // 常规字段原样
+    }
+
+    @Test
+    void sanitizeMap_rawJsonField_shouldBeTraversedAndMasked() {
+        java.util.Map<String, Object> map = new LinkedHashMap<>();
+        map.put("payload", new RawValueDto());
+
+        String sanitized = LogSanitizeUtils.sanitizeMap(map);
+
+        assertFalse(sanitized.contains(SECRET));
+        assertTrue(sanitized.contains("\"password\":\"***\""));
+    }
+
+    @Test
+    void sanitizeJson_turkishLocale_shouldStillMaskUppercaseSensitiveKeys() {
+        java.util.Locale original = java.util.Locale.getDefault();
+        try {
+            java.util.Locale.setDefault(new java.util.Locale("tr", "TR"));
+            String json = "{\"AUTHORIZATION\":\"Bearer " + SECRET + "\",\"PRIVATEKEY\":\"" + SECRET + "\"}";
+
+            String result = LogSanitizeUtils.sanitizeJson(json);
+
+            assertFalse(result.contains(SECRET)); // 土耳其 locale 下大写敏感键仍须命中
+            assertTrue(result.contains("\"AUTHORIZATION\":\"***\""));
+            assertTrue(result.contains("\"PRIVATEKEY\":\"***\""));
+        } finally {
+            java.util.Locale.setDefault(original);
+        }
+    }
+
 }

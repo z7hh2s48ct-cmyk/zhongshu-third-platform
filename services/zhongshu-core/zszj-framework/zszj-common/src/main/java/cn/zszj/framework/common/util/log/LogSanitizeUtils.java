@@ -6,12 +6,17 @@ import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.common.util.json.JsonUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.POJONode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.util.RawValue;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -123,7 +128,7 @@ public class LogSanitizeUtils {
         }
         Set<String> extra = normalizeKeys(extraKeys);
         try {
-            JsonNode node = mapper().valueToTree(result);
+            JsonNode node = toSanitizableTree(result);
             JsonNode data = node.get("data");
             if (data != null) {
                 sanitizeNode(data, extra);
@@ -137,7 +142,7 @@ public class LogSanitizeUtils {
     private static String sanitizeObject(Object obj, String... extraKeys) {
         Set<String> extra = normalizeKeys(extraKeys);
         try {
-            JsonNode node = mapper().valueToTree(obj);
+            JsonNode node = toSanitizableTree(obj);
             sanitizeNode(node, extra);
             return truncate(mapper().writeValueAsString(node));
         } catch (Throwable t) {
@@ -150,12 +155,62 @@ public class LogSanitizeUtils {
             return "null";
         }
         try {
-            JsonNode node = mapper().valueToTree(arg);
+            JsonNode node = toSanitizableTree(arg);
             sanitizeNode(node, extra);
             return mapper().writeValueAsString(node);
         } catch (Throwable t) {
             return "<" + arg.getClass().getSimpleName() + ">";
         }
+    }
+
+
+    /**
+     * 物化 POJONode：@JsonRawValue 等原文直出字段经 valueToTree 保留为 POJONode，
+     * 递归脱敏会跳过非对象/数组节点导致原文穿透（SEC-007 HANDOFF 补评 P1）。
+     * 统一在脱敏前把整棵树物化为普通节点（String 原文按 JSON 解析，解析失败降级为文本节点）。
+     */
+    private static JsonNode toSanitizableTree(Object obj) {
+        return materializeRaw(mapper().valueToTree(obj));
+    }
+
+    private static JsonNode materializeRaw(JsonNode node) {
+        if (node == null || node.isNull() || (node.isValueNode() && !node.isPojo())) {
+            return node;
+        }
+        if (node.isPojo()) {
+            Object pojo = ((POJONode) node).getPojo();
+            // @JsonRawValue 场景 POJONode 包装的是 RawValue（getValue() 才是原文）
+            Object effective = pojo instanceof RawValue ? ((RawValue) pojo).rawValue() : pojo;
+            if (effective == null) {
+                return NullNode.getInstance();
+            }
+            if (effective instanceof String) {
+                try {
+                    return materializeRaw(mapper().readTree((String) effective));
+                } catch (Throwable t) {
+                    // fail-closed：原文不可解析时不得降级为携带原文的 TextNode（r1 P1），交外层安全摘要
+                    throw new IllegalStateException("Raw value is not valid JSON", t);
+                }
+            }
+            return materializeRaw(mapper().valueToTree(effective));
+        }
+        if (node.isObject()) {
+            ObjectNode copy = mapper().createObjectNode();
+            Iterator<Map.Entry<String, JsonNode>> iterator = node.fields();
+            while (iterator.hasNext()) {
+                Map.Entry<String, JsonNode> entry = iterator.next();
+                copy.set(entry.getKey(), materializeRaw(entry.getValue()));
+            }
+            return copy;
+        }
+        if (node.isArray()) {
+            ArrayNode copy = mapper().createArrayNode();
+            for (JsonNode child : node) {
+                copy.add(materializeRaw(child));
+            }
+            return copy;
+        }
+        return node;
     }
 
     /**
@@ -217,7 +272,7 @@ public class LogSanitizeUtils {
     }
 
     private static String normalizeKey(String key) {
-        return key.toLowerCase().replace("_", "").replace("-", "");
+        return key.toLowerCase(Locale.ROOT).replace("_", "").replace("-", "");
     }
 
     private static String truncate(String text) {
