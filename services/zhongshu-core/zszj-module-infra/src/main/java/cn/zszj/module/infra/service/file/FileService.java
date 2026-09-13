@@ -95,4 +95,19 @@ public interface FileService {
      */
     FileDO getFileByConfigIdAndPath(Long configId, String path);
 
+
+    /**
+     * ZS-FILE-001.A：统一读取授权——PUBLIC 匿名可读；PRIVATE 需登录且同技术租户
+     */
+    void validateFileReadable(FileDO file, cn.zszj.framework.security.core.LoginUser loginUser);
+
+    /**
+     * ZS-FILE-001.A：管理员显式调整文件可见范围（PUBLIC/PRIVATE）
+     */
+    void updateFileScope(Long id, String scope);
+
+    /**
+     * ZS-FILE-001.A（codex r0 P2）：下载场景跨租户定位文件记录（PUBLIC 对任意来源同址可用）
+     */
+    FileDO getFileByConfigIdAndPathIgnoreTenant(Long configId, String path);
 }

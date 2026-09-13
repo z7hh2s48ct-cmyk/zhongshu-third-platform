@@ -39,6 +39,8 @@ public class FileServiceImplTest extends BaseDbUnitTest {
 
     @MockitoBean
     private FileConfigService fileConfigService;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
 
     @BeforeEach
     public void setUp() {

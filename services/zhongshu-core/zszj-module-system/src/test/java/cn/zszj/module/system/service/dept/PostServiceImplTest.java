@@ -7,7 +7,9 @@ import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.system.controller.admin.dept.vo.post.PostPageReqVO;
 import cn.zszj.module.system.controller.admin.dept.vo.post.PostSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.dept.PostDO;
+import cn.zszj.module.system.dal.dataobject.dept.UserPostDO;
 import cn.zszj.module.system.dal.mysql.dept.PostMapper;
+import cn.zszj.module.system.dal.mysql.dept.UserPostMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
 
@@ -38,6 +40,9 @@ public class PostServiceImplTest extends BaseDbUnitTest {
 
     @Resource
     private PostMapper postMapper;
+
+    @Resource
+    private UserPostMapper userPostMapper;
 
     @Test
     public void testCreatePost_success() {
@@ -85,6 +90,52 @@ public class PostServiceImplTest extends BaseDbUnitTest {
         // 调用
         postService.deletePost(id);
         assertNull(postMapper.selectById(id));
+    }
+
+    @Test
+    public void testDeletePost_referencedReject() {
+        // mock 数据：岗位被用户引用
+        PostDO postDO = randomPostDO();
+        postMapper.insert(postDO);
+        userPostMapper.insert(new UserPostDO().setUserId(1L).setPostId(postDO.getId()));
+        // 准备参数
+        Long id = postDO.getId();
+
+        // 调用, 并断言异常
+        assertServiceException(() -> postService.deletePost(id), POST_EXITS_USERS);
+        // 断言岗位未被删除
+        assertNotNull(postMapper.selectById(id));
+    }
+
+    @Test
+    public void testDeletePostList_success() {
+        // mock 数据：两个岗位均无引用
+        PostDO post01 = randomPostDO();
+        PostDO post02 = randomPostDO();
+        postMapper.insert(post01);
+        postMapper.insert(post02);
+
+        // 调用
+        postService.deletePostList(Arrays.asList(post01.getId(), post02.getId()));
+        assertNull(postMapper.selectById(post01.getId()));
+        assertNull(postMapper.selectById(post02.getId()));
+    }
+
+    @Test
+    public void testDeletePostList_mixedReferencedReject() {
+        // mock 数据：批量中一个被引用、一个未引用
+        PostDO referenced = randomPostDO();
+        PostDO unreferenced = randomPostDO();
+        postMapper.insert(referenced);
+        postMapper.insert(unreferenced);
+        userPostMapper.insert(new UserPostDO().setUserId(1L).setPostId(referenced.getId()));
+
+        // 调用, 并断言异常：先全校验后删除，被引用项阻断整批
+        assertServiceException(() -> postService.deletePostList(
+                Arrays.asList(referenced.getId(), unreferenced.getId())), POST_EXITS_USERS);
+        // 断言两个岗位均未被删除
+        assertNotNull(postMapper.selectById(referenced.getId()));
+        assertNotNull(postMapper.selectById(unreferenced.getId()));
     }
 
     @Test

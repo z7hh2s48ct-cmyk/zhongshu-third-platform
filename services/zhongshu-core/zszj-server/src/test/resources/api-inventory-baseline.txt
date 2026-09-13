@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：328
+# 端点总数：327
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -238,7 +238,6 @@ POST|/admin-api/infra/demo03-student-erp/demo03-grade/create|ADMIN|PERMISSION|in
 POST|/admin-api/infra/demo03-student-inner/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentInnerController
 POST|/admin-api/infra/demo03-student-normal/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentNormalController
 POST|/admin-api/infra/file-config/create|ADMIN|PERMISSION|infra:file-config:create|infra|FileConfigController
-POST|/admin-api/infra/file/create|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/file/upload|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/job/create|ADMIN|PERMISSION|infra:job:create|infra|JobController
 POST|/admin-api/infra/job/sync|ADMIN|PERMISSION|infra:job:create|infra|JobController
@@ -286,7 +285,6 @@ POST|/admin-api/system/tenant-package/create|ADMIN|PERMISSION|system:tenant-pack
 POST|/admin-api/system/tenant/create|ADMIN|PERMISSION|system:tenant:create|system|TenantController
 POST|/admin-api/system/user/create|ADMIN|PERMISSION|system:user:create|system|UserController
 POST|/admin-api/system/user/import|ADMIN|PERMISSION|system:user:import|system|UserController
-POST|/app-api/infra/file/create|MEMBER|AUTHENTICATED|-|infra|AppFileController
 POST|/app-api/infra/file/upload|MEMBER|AUTHENTICATED|-|infra|AppFileController
 PUT|/admin-api/infra/api-error-log/update-status|ADMIN|PERMISSION|infra:api-error-log:update-status|infra|ApiErrorLogController
 PUT|/admin-api/infra/codegen/sync-from-db|ADMIN|PERMISSION|infra:codegen:update|infra|CodegenController
@@ -302,6 +300,7 @@ PUT|/admin-api/infra/demo03-student-inner/update|ADMIN|PERMISSION|infra:demo03-s
 PUT|/admin-api/infra/demo03-student-normal/update|ADMIN|PERMISSION|infra:demo03-student:update|infra|Demo03StudentNormalController
 PUT|/admin-api/infra/file-config/update-master|ADMIN|PERMISSION|infra:file-config:update|infra|FileConfigController
 PUT|/admin-api/infra/file-config/update|ADMIN|PERMISSION|infra:file-config:update|infra|FileConfigController
+PUT|/admin-api/infra/file/update-scope|ADMIN|PERMISSION|infra:file:update|infra|FileController
 PUT|/admin-api/infra/job/trigger|ADMIN|PERMISSION|infra:job:trigger|infra|JobController
 PUT|/admin-api/infra/job/update-status|ADMIN|PERMISSION|infra:job:update|infra|JobController
 PUT|/admin-api/infra/job/update|ADMIN|PERMISSION|infra:job:update|infra|JobController

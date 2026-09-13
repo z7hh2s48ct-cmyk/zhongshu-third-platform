@@ -6,8 +6,10 @@ import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.system.controller.admin.dept.vo.post.PostPageReqVO;
 import cn.zszj.module.system.controller.admin.dept.vo.post.PostSaveReqVO;
+import cn.zszj.framework.datapermission.core.util.DataPermissionUtils;
 import cn.zszj.module.system.dal.dataobject.dept.PostDO;
 import cn.zszj.module.system.dal.mysql.dept.PostMapper;
+import cn.zszj.module.system.dal.mysql.dept.UserPostMapper;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
@@ -32,6 +34,9 @@ public class PostServiceImpl implements PostService {
 
     @Resource
     private PostMapper postMapper;
+
+    @Resource
+    private UserPostMapper userPostMapper;
 
     @Override
     public Long createPost(PostSaveReqVO createReqVO) {
@@ -58,13 +63,25 @@ public class PostServiceImpl implements PostService {
     public void deletePost(Long id) {
         // 校验是否存在
         validatePostExists(id);
+        // ZS-IAM-003（ZS-SYS-001.A 真实 PG 回归发现）：岗位被用户引用时禁止删除；
+        // 引用计数须关闭部门数据权限过滤（IAM-003 r0 教训：计数必须全量）、保留租户过滤
+        validatePostNoUserReference(id);
         // 删除岗位
         postMapper.deleteById(id);
     }
 
     @Override
     public void deletePostList(List<Long> ids) {
+        // 与单条删除保持一致：先完成全部引用校验再删除，避免部分删除
+        ids.forEach(this::validatePostNoUserReference);
         postMapper.deleteByIds(ids);
+    }
+
+    private void validatePostNoUserReference(Long id) {
+        Long count = DataPermissionUtils.executeIgnore(() -> userPostMapper.selectCountByPostId(id));
+        if (count > 0) {
+            throw exception(POST_EXITS_USERS);
+        }
     }
 
     private void validatePostForCreateOrUpdate(Long id, String name, String code) {

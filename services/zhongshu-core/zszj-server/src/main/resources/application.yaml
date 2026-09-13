@@ -338,6 +338,9 @@ zszj:
     enable: true
     ignore-urls:
       - /jmreport/* # 积木报表，无法携带租户编号
+      # ZS-FILE-001.A：文件下载（含匿名 PUBLIC 素材，浏览器 img/src 不携带 tenant-id 头）；
+      # PRIVATE 的登录+同租户校验在 FileService#validateFileReadable 以 LoginUser 执行
+      - /admin-api/infra/file/*/get/**
     ignore-visit-urls:
       - /admin-api/system/user/profile/**
       - /admin-api/system/auth/**

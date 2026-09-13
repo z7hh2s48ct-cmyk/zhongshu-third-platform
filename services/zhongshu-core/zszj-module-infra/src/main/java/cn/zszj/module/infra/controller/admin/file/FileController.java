@@ -7,7 +7,7 @@ import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.http.HttpUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
-import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.module.infra.controller.admin.file.vo.file.*;
 import cn.zszj.module.infra.dal.dataobject.file.FileDO;
 import cn.zszj.module.infra.service.file.FileService;
@@ -66,12 +66,6 @@ public class FileController {
         return success(fileService.presignPutUrl(name, directory));
     }
 
-    @PostMapping("/create")
-    @Operation(summary = "创建文件", description = "模式二：前端上传文件：配合 presigned-url 接口，记录上传了上传的文件")
-    public CommonResult<Long> createFile(@Valid @RequestBody FileCreateReqVO createReqVO) {
-        return success(fileService.createFile(createReqVO));
-    }
-
     @GetMapping("/get")
     @Operation(summary = "获得文件")
     @Parameter(name = "id", description = "编号", required = true)
@@ -99,8 +93,7 @@ public class FileController {
     }
 
     @GetMapping("/{configId}/get/**")
-    @PermitAll
-    @TenantIgnore
+    @PermitAll // ZS-FILE-001.A：匿名仅可读 PUBLIC 公开素材；PRIVATE 在 service 校验登录+同租户
     @Operation(summary = "下载文件")
     @Parameter(name = "configId", description = "配置编号", required = true)
     public void getFileContent(HttpServletRequest request,
@@ -116,6 +109,16 @@ public class FileController {
         // https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1432/
         path = HttpUtils.decodeUrlPath(path);
 
+        // ZS-FILE-001.A（codex r0 P2）：跨租户定位记录——PUBLIC 对任意来源同址可用；
+        // PRIVATE 的租户归属校验以记录自身 tenant_id 执行（忽略请求携带租户，防租户过滤 404 误伤公开素材）
+        FileDO file = fileService.getFileByConfigIdAndPathIgnoreTenant(configId, path);
+        if (file == null) {
+            log.warn("[getFileContent][configId({}) path({}) 文件不存在]", configId, path);
+            response.setStatus(HttpStatus.NOT_FOUND.value());
+            return;
+        }
+        fileService.validateFileReadable(file, SecurityFrameworkUtils.getLoginUser());
+
         // 读取内容
         byte[] content = fileService.getFileContent(configId, path);
         if (content == null) {
@@ -123,9 +126,18 @@ public class FileController {
             response.setStatus(HttpStatus.NOT_FOUND.value());
             return;
         }
-        FileDO file = fileService.getFileByConfigIdAndPath(configId, path);
-        String filename = file != null && StrUtil.isNotEmpty(file.getName()) ? file.getName() : FileUtil.getName(path);
+        String filename = StrUtil.isNotEmpty(file.getName()) ? file.getName() : FileUtil.getName(path);
         writeAttachment(response, filename, content);
+    }
+
+    @PutMapping("/update-scope")
+    @Operation(summary = "调整文件可见范围", description = "ZS-FILE-001.A：PUBLIC=公开素材（匿名可读）；PRIVATE=私有附件（默认）")
+    @Parameter(name = "id", description = "编号", required = true)
+    @PreAuthorize("@ss.hasPermission('infra:file:update')")
+    public CommonResult<Boolean> updateFileScope(@RequestParam("id") Long id,
+                                                 @RequestParam("scope") String scope) {
+        fileService.updateFileScope(id, scope);
+        return success(true);
     }
 
     @GetMapping("/page")

@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS "infra_file" (
     "url" varchar(1024),
     "type" varchar(63) DEFAULT NULL,
     "size" bigint NOT NULL,
+    "owner_user_id" bigint NOT NULL DEFAULT 0,
+    "scope" varchar(16) NOT NULL DEFAULT 'PRIVATE',
     "creator" varchar(64) DEFAULT '',
     "create_time" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updater" varchar(64) DEFAULT '',
