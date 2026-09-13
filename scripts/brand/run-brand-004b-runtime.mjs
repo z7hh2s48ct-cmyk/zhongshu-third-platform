@@ -58,20 +58,8 @@ function fatal(id, name, detail) {
 }
 
 // ---------------------------------------------------------------------------
-// 基础设施
+// 基础设施（清理状态与资源标识先于 Docker 依赖检查初始化，保证缺 Docker 时仍能以退出码 3 干净退出）
 // ---------------------------------------------------------------------------
-function fail(code, message) {
-  cleanup();
-  console.error(message);
-  process.exit(code);
-}
-
-const dockerVersion = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8' });
-if (dockerVersion.error || dockerVersion.status !== 0) {
-  fail(3, `[runtime] Docker 不可用（${dockerVersion.error?.message ?? `exit=${dockerVersion.status}`}）：运行期证明无法在共享环境执行，不得静默跳过`);
-}
-console.log(`[runtime] docker server ${dockerVersion.stdout.trim()}`);
-
 const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 const pgContainer = `zszj-brand004b-pg-${stamp}`;
 const redisContainer = `zszj-brand004b-redis-${stamp}`;
@@ -87,8 +75,12 @@ let cleaned = false;
 function cleanup() {
   if (cleaned) return;
   cleaned = true;
-  if (!keep && serverProcess?.pid && process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(serverProcess.pid), '/T', '/F'], { stdio: 'ignore' });
+  if (serverProcess?.pid && !keep) {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/PID', String(serverProcess.pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      try { serverProcess.kill('SIGTERM'); } catch { /* 已退出 */ }
+    }
   }
   if (!keep) {
     for (const c of [pgContainer, redisContainer]) {
@@ -100,6 +92,12 @@ function cleanup() {
 }
 process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(130); });
+
+const dockerVersion = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8' });
+if (dockerVersion.error || dockerVersion.status !== 0) {
+  fail(3, `[runtime] Docker 不可用（${dockerVersion.error?.message ?? `exit=${dockerVersion.status}`}）：运行期证明无法在共享环境执行，不得静默跳过`);
+}
+console.log(`[runtime] docker server ${dockerVersion.stdout.trim()}`);
 
 function dockerRunRetry(image, name, runArgs) {
   let lastErr = '';
@@ -303,7 +301,8 @@ const genAfter = redisGet(refreshGenKey(userRefresh));
 check('D2', '会话代际号 == 成功刷新次数（无丢失更新）', genAfter === '3', `generation=${genAfter}`);
 const issuedTokens = [userTokenGen1, ...okRefreshes.map((r) => r.body.data.accessToken)];
 const uniqueTokens = [...new Set(issuedTokens)];
-check('D3', '刷新沿用同一刷新令牌（不轮换，前端契约不破）', new Set(okRefreshes.map((r) => r.body.data.refreshToken)).size === 1);
+check('D3', '刷新沿用同一刷新令牌（不轮换，前端契约不破）', okRefreshes.every((r) => r.body.data.refreshToken === userRefresh),
+  `refreshTokens=${[...new Set(okRefreshes.map((r) => r.body?.data?.refreshToken))].join(',') || '(空)'}`);
 
 // 并发完成序 ≠ 服务端提交序：以访问令牌代际键定位真实最高代际（LOGIN-002 合同：代际键即权威标识）
 const genOf = (t) => redisGet(accessGenKey(t));
@@ -327,19 +326,25 @@ console.log('[runtime] 步骤 5/7 管理员撤权不可绕过');
 const revoke = await api('PUT', '/admin-api/system/user/update-status', { token: adminToken, body: { id: USER_ID, status: 1 } });
 check('E1', '管理员禁用用户（update-status）成功', revoke.body?.code === 0, `HTTP ${revoke.status} body=${revoke.text.slice(0, 200)}`);
 await sleep(300); // 事务提交后缓存失效异步落地
+// E2 的 401 请求会触发 checkAccessToken 自愈（回源核验→落墓碑+清缓存），故先于该请求取证 Redis 原子状态，
+// 避免「撤销时未清键」被自愈修复掩盖
+check('E3', '撤权后访问令牌键被清理（自愈请求前取证，无旧键残留）', !redisKeys('oauth2_access_token:*').some((k) => uniqueTokens.some((t2) => k === accessKey(t2))),
+  redisKeys('oauth2_access_token:*').join(', '));
+check('E4', '撤权落撤销墓碑（自愈请求前取证；LOGIN-003：阻塞并发鉴权缓存回填复活）', !!redisGet(tombKey(newestToken)), `tomb=${redisGet(tombKey(newestToken))}`);
+check('E5', '撤权清理会话代际键（会话终结）', !redisKeys(refreshGenKey(userRefresh)).length, `value=${redisGet(refreshGenKey(userRefresh))}`);
 const newestAfterRevoke = await api('GET', '/admin-api/system/auth/get-permission-info', { token: newestToken });
 check('E2', '撤权后最新访问令牌立即 401', newestAfterRevoke.status === 401 || newestAfterRevoke.body?.code === 401, `HTTP ${newestAfterRevoke.status}`);
-check('E3', '撤权后访问令牌键被清理（无旧键残留）', !redisKeys('oauth2_access_token:*').some((k) => uniqueTokens.some((t2) => k === accessKey(t2))),
-  redisKeys('oauth2_access_token:*').join(', '));
-check('E4', '撤权落撤销墓碑（LOGIN-003：阻塞并发鉴权缓存回填复活）', !!redisGet(tombKey(newestToken)), `tomb=${redisGet(tombKey(newestToken))}`);
-check('E5', '撤权清理会话代际键（会话终结）', !redisKeys(refreshGenKey(userRefresh)).length, `value=${redisGet(refreshGenKey(userRefresh))}`);
 const lateRefresh = await api('POST', `/admin-api/system/auth/refresh-token?refreshToken=${encodeURIComponent(userRefresh)}`);
 check('E6', '撤权后凭刷新令牌无法复活会话', !(lateRefresh.body?.code === 0), `code=${lateRefresh.body?.code}`);
 
 // ---------------------------------------------------------------------------
-// 步骤 6：反向——旧名前缀凭据串不可用（构造旧名键调受保护 API 必须 401）
+// 步骤 6：反向——旧名前缀键不可用（键存在 + 命名空间隔离直接取证）
 // ---------------------------------------------------------------------------
 console.log('[runtime] 步骤 6/7 旧名前缀键不可用（反向）');
+// 阳性对照：把管理员真实有效令牌的凭据值复制到旧名前缀键——若任何代码路径读旧命名空间，
+// 该键即为「能通过鉴权的真凭据」；配合 MONITOR 取证直接证明服务端从未读旧前缀键。
+const ctrlLegacyKey = `yudao_oauth2_access_token:${adminToken}`;
+redisSet(ctrlLegacyKey, redisGet(accessKey(adminToken)));
 const fakeOld = [
   { key: 'yudao_oauth2_access_token:brand004b-old-cred-1', token: 'brand004b-old-cred-1' },
   { key: 'ruoyi_oauth2_access_token:brand004b-old-cred-2', token: 'brand004b-old-cred-2' },
@@ -350,16 +355,31 @@ for (const f of fakeOld) {
     clientId: 'default', expiresTime: Date.now() + 3600_000, tenantId: TENANT_ID,
   }));
 }
-check('F0', '旧名前缀键已注入 Redis（yudao_/ruoyi_ 前缀真实存在）', fakeOld.every((f) => redisGet(f.key) !== null));
-for (const f of fakeOld) {
-  const r = await api('GET', '/admin-api/system/auth/get-permission-info', { token: f.token });
-  check(`F-${f.token.slice(-1)}`, `旧名前缀键凭据串调受保护 API 必须 401（${f.key.split(':')[0]}）`,
-    r.status === 401 || r.body?.code === 401, `HTTP ${r.status} code=${r.body?.code}`);
-}
+check('F0', '旧名前缀键已注入 Redis（含阳性对照真凭据副本）', redisGet(ctrlLegacyKey) !== null && fakeOld.every((f) => redisGet(f.key) !== null));
+
+// MONITOR 取证：捕获窗口内发起「新命名空间 200 请求 + 旧名凭据 401 请求」，
+// 断言窗口内服务端命令流不出现任何旧名前缀键的读取（命名空间隔离的直接证据）
+const mon = spawn('docker', ['exec', redisContainer, 'redis-cli', 'MONITOR'], { stdio: ['ignore', 'pipe', 'pipe'] });
+let monText = '';
+mon.stdout.on('data', (d) => { monText += d.toString(); });
+mon.stderr.on('data', (d) => { monText += d.toString(); });
+await sleep(600);
+const ctrlCall = await api('GET', '/admin-api/system/auth/get-permission-info', { token: adminToken });
+const fakeCall = await api('GET', '/admin-api/system/auth/get-permission-info', { token: fakeOld[0].token });
+await sleep(800);
+try { mon.kill(); } catch { /* 已退出 */ }
+await sleep(300);
+const monLines = monText.split('\n').filter((l) => l.includes('"GET"') || l.includes('"EXISTS"') || l.includes('oauth2_access_token'));
+check('F1', 'MONITOR 捕获有效（窗口内观测到对新命名空间键的读取）',
+  monLines.some((l) => l.includes(`"GET" "oauth2_access_token:${adminToken}"`)), `capturedLines=${monLines.length}`);
+check('F2', '命名空间隔离直证：命令流无任何旧名前缀键读取（yudao_/ruoyi_ 零命中）',
+  !/(yudao|ruoyi|iocoder)_oauth2/i.test(monText), monLines.filter((l) => /yudao_|ruoyi_/i.test(l)).slice(0, 3).join(' | '));
+check('F-ctrl', '阳性对照成立：新命名空间读取正常放行（旧名副本存在期间）', ctrlCall.body?.code === 0, `HTTP ${ctrlCall.status} code=${ctrlCall.body?.code}`);
+check('F-rej', '旧名前缀键凭据串调受保护 API 必须 401', fakeCall.status === 401 || fakeCall.body?.code === 401, `HTTP ${fakeCall.status} code=${fakeCall.body?.code}`);
 const oldRefreshTry = await api('POST', `/admin-api/system/auth/refresh-token?refreshToken=${encodeURIComponent('yudao_oauth2_refresh_token:brand004b-old')}`);
 check('F3', '旧名前缀刷新凭据串无法换新令牌', !(oldRefreshTry.body?.code === 0), `code=${oldRefreshTry.body?.code}`);
-for (const f of fakeOld) rcli('DEL', f.key);
-check('F4', '注入的旧名键已清理（不污染终态键空间）', fakeOld.every((f) => redisGet(f.key) === null));
+rcli('DEL', ctrlLegacyKey, ...fakeOld.map((f) => f.key));
+check('F4', '注入的旧名键已清理（不污染终态键空间）', redisGet(ctrlLegacyKey) === null && fakeOld.every((f) => redisGet(f.key) === null));
 
 // ---------------------------------------------------------------------------
 // 步骤 7：退出（LOGIN-003 令牌级撤销）与终态键空间

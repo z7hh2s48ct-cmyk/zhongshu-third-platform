@@ -91,16 +91,15 @@ const JAVA_PRIVATE_CONST_RE = /private\s+static\s+final\s+String\s+([A-Z][A-Z0-9
 // 以名字语义过滤：字段/桶/脚本类常量不是键模式）。
 const DAO_HELPER_NAME_RE = /(LUA|FIELD|BUCKET|_TYPE$|SQL|SCRIPT)/;
 
-/** framework 保护层 *RedisDAO.java：仅提取键形态常量（含 ':' 或 %s）。 */
+/** framework 保护层 *RedisDAO.java：提取全部键名形态常量做旧名判定（不以值形态过滤——
+ *  含大写/连字符等的旧名值若被静默丢弃会绕过判定，故全部交 judgeKey 检查）。 */
 export function extractDaoKeyConstants(text, source) {
   const keys = [];
   let m;
   JAVA_PRIVATE_CONST_RE.lastIndex = 0;
   while ((m = JAVA_PRIVATE_CONST_RE.exec(text))) {
     const [, name, value] = m;
-    if (DAO_HELPER_NAME_RE.test(name)) continue;
-    if (!value.includes(':') && !value.includes('%s') && !/^(KEY|NONCE|APPID|IDEMPOTENT|RATE|SIGNATURE|LOCK)/.test(name)) continue;
-    if (!/^[a-z][a-z0-9_]*(:[%{}a-z0-9_.:-]*)*$/.test(value)) continue; // 小写键形态防误收
+    if (DAO_HELPER_NAME_RE.test(name)) continue; // 仅排除显然非键的辅助常量（LUA 脚本/Hash 字段/时间桶类型）
     keys.push({ source, field: name, value });
   }
   return keys;
@@ -171,10 +170,10 @@ export function extractWebCacheKeyBlock(text, source) {
   return keys;
 }
 
-/** auth.ts：const XxxKey = 'ACCESS_TOKEN' 等令牌存储键常量与 UPPER_SNAKE 字面量。 */
+/** auth.ts：const XxxKey = 'ACCESS_TOKEN' 等令牌存储键常量与 UPPER_SNAKE 字面量（分号可省，与实际源码一致）。 */
 export function extractWebTokenKeys(text, source) {
   const keys = [];
-  const constRe = /const\s+(\w*[Kk]ey\w*)\s*=\s*'([^']+)'\s*;/g;
+  const constRe = /const\s+(\w*[Kk]ey\w*)\s*=\s*'([^']+)'\s*;?/g;
   let m;
   while ((m = constRe.exec(text))) {
     keys.push({ source, field: m[1], value: m[2] });
@@ -212,16 +211,18 @@ export function extractFrontendStorageKeys() {
     stats.webFiles++;
     keys.push(...extractWebCacheKeyBlock(text, rel), ...extractWebTokenKeys(text, rel));
   }
-  for (const rel of listGitFiles((f) => {
-    const p = f.replaceAll('\\', '/');
-    return p.startsWith('apps/zhongshu-miniapp/src/') && /\.ts$/.test(p) && !/\/constants\//.test(p);
-  })) {
+  for (const rel of listGitFiles((f) => isMiniappSourceFile(f.replaceAll('\\', '/')))) {
     const text = readRepoFile(rel);
     if (text === null) continue;
     stats.miniappFiles++;
     keys.push(...extractMiniappStorageKeys(text, rel.replaceAll('\\', '/')));
   }
   return { keys, stats };
+}
+
+/** miniapp 存储键扫描的文件选择：.ts 与 .vue（SFC 内 script 亦含 uni.*StorageSync 调用），排除纯枚举目录。 */
+export function isMiniappSourceFile(p) {
+  return p.startsWith('apps/zhongshu-miniapp/src/') && (/\.ts$/.test(p) || /\.vue$/.test(p)) && !/\/constants\//.test(p);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +287,26 @@ export function injectionSelfTest() {
       expectField: 'RATE_LIMITER',
     },
     {
+      // 大写/连字符等非小写形态的旧名值也不得因形状过滤被静默丢弃（codex r0 P2）
+      name: 'dao-legacy-mixed-case-key',
+      extract: () => extractDaoKeyConstants('private static final String SIGNATURE_NONCE = "Yudao_api_signature_nonce:%s:%s";', 'injected'),
+      expectField: 'SIGNATURE_NONCE',
+    },
+    {
+      // auth.ts 实际为无分号声明（codex r0 P2）：分号可选后仍须提取并命中旧名
+      name: 'web-token-key-no-semicolon',
+      extract: () => extractWebTokenKeys("const RefreshTokenKey = 'yudao_REFRESH_TOKEN'", 'injected'),
+      expectField: 'RefreshTokenKey',
+    },
+    {
+      // 文件选择：.vue 与 .ts 一并纳入，纯枚举目录排除（codex r0 P2）
+      name: 'miniapp-vue-file-selection',
+      extract: () => [isMiniappSourceFile('apps/zhongshu-miniapp/src/pages-mp/draft/index.vue'),
+        isMiniappSourceFile('apps/zhongshu-miniapp/src/utils/constants/biz-ai-enum.ts') ? true : false],
+      expectField: null, // 布尔断言：vue=true、枚举目录=false
+      boolAssert: [true, false],
+    },
+    {
       name: 'web-cache-key',
       extract: () => extractWebCacheKeyBlock("export const CACHE_KEY = {\n  USER: 'yudao_user',\n  DICT_CACHE: 'dictCache',\n\n}", 'injected'),
       expectField: 'USER',
@@ -305,12 +326,18 @@ export function injectionSelfTest() {
   let failed = false;
   for (const s of samples) {
     const extracted = s.extract();
-    const hit = extracted
-      .filter((k) => k.field === s.expectField)
-      .flatMap((k) => judgeKey(k.source, k.field, k.value));
-    const ok = extracted.length > 0 && hit.length > 0;
+    let ok;
+    if (s.boolAssert) {
+      ok = extracted.length === s.boolAssert.length && s.boolAssert.every((v, i) => extracted[i] === v);
+      results.push({ sample: s.name, extracted: extracted.length, oldNameHits: ok ? s.boolAssert.length : 0, pass: ok });
+    } else {
+      const hit = extracted
+        .filter((k) => k.field === s.expectField)
+        .flatMap((k) => judgeKey(k.source, k.field, k.value));
+      ok = extracted.length > 0 && hit.length > 0;
+      results.push({ sample: s.name, extracted: extracted.length, oldNameHits: hit.length, pass: ok });
+    }
     if (!ok) failed = true;
-    results.push({ sample: s.name, extracted: extracted.length, oldNameHits: hit.length, pass: ok });
   }
   return { results, pass: !failed };
 }
