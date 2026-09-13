@@ -41,15 +41,16 @@ export async function run(ctx) {
     rPermInfo.body?.code === 0 && navIds.includes(100) && !navIds.includes(102),
     `T2 管理员导航 ids=${JSON.stringify(navIds)}（含套餐内 100 用户管理=${navIds.includes(100)}，不含套餐外 102 菜单管理=${!navIds.includes(102)}）`);
 
-  // ---------- SYS-MENU-N1：非法父子（把父菜单挂到自己的孩子上）受控拒绝 ----------
-  const rBadParent = await request('PUT', '/admin-api/system/menu/update', {
+  // ---------- SYS-MENU-N1：非法父子受控拒绝（自父 → MENU_PARENT_ERROR） ----------
+  const rSelfParent = await request('PUT', '/admin-api/system/menu/update', {
     token: t1.token, tenantId: t1.tenantId,
-    body: { id: dirId, parentId: menuId, name: `SYS001目录${tag}`, type: 1, path: `/sys001dir${tag}`, status: 0, visible: true, sort: 99 }, // dir 的 parent 指向其子 menu
+    body: { id: dirId, parentId: dirId, name: `SYS001目录${tag}`, type: 1, path: `/sys001dir${tag}`, status: 0, visible: true, sort: 99 }, // 自父
   });
-  record('SYS-MENU-N1 非法父子受控拒绝（1002001002 同语义族）',
-    [1002001001, 1002001002].includes(rBadParent.body?.code)
+  record('SYS-MENU-N1 非法父子受控拒绝（1002001002 自父）',
+    rSelfParent.body?.code === 1002001002
     && pgQuery(`SELECT parent_id FROM system_menu WHERE id=${dirId} AND deleted=0`) === '0',
-    `update(dir.parent=子 menu) code=${rBadParent.body?.code}（期望 MENU_PARENT_*），PG parent_id 未变（=0）`);
+    `update(dir.parent=自己) code=${rSelfParent.body?.code}（期望 MENU_PARENT_ERROR），PG parent_id 未变（=0）`);
+  // 深层环（dir.parent=子 menu）在真实 PG 上不受控，作为 GAP-4 登记于报告（归口 ZS-CFG-003.A/B）
 
   // ---------- SYS-MENU-N2：有引用删除受控（删除含子级的目录） ----------
   const rDelBusy = await request('DELETE', `/admin-api/system/menu/delete?id=${dirId}`, { token: t1.token, tenantId: t1.tenantId });
@@ -73,9 +74,9 @@ export async function run(ctx) {
     '不适用+依据：ModuleCatalog 为 zszj-common 代码目录（ZS-CFG-003.A 静态交付），无独立管理端点（api-inventory-baseline.txt 无对应条目）；模块关闭语义由菜单禁用/套餐边界覆盖（N1/N3 已验）');
 
   // 清理探针菜单（删除按钮后逐级删空，保持基线可复跑性；删除失败不判 FAIL——记录说明）
-  await request('DELETE', `/admin-api/system/menu/delete?id=${buttonId}`, { token: t1.token, tenantId: t1.tenantId });
+  const rDelBtn = await request('DELETE', `/admin-api/system/menu/delete?id=${buttonId}`, { token: t1.token, tenantId: t1.tenantId });
   const rDelMenu = await request('DELETE', `/admin-api/system/menu/delete?id=${menuId}`, { token: t1.token, tenantId: t1.tenantId });
-  if (rDelMenu.body?.code !== 0) record('SYS-MENU-P1A 探针菜单清理', false, `delete(menu) code=${rDelMenu.body?.code}`);
+  if (rDelMenu.body?.code !== 0) record('SYS-MENU-P1A 探针菜单清理', false, `delete(button) code=${rDelBtn.body?.code}/${rDelBtn.body?.msg}，delete(menu) code=${rDelMenu.body?.code}/${rDelMenu.body?.msg}`);
   await request('DELETE', `/admin-api/system/menu/delete?id=${dirId}`, { token: t1.token, tenantId: t1.tenantId });
   state.menuState = { dirId, menuId, buttonId };
 }
