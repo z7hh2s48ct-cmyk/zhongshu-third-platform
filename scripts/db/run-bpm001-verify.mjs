@@ -128,9 +128,20 @@ const record = (id, ok, note = '') => { results.push({ id, ok, note }); ok ? pas
 // 'close' 事件不会到达，流程将挂死（r2 评审实测复现）
 function killTree(child) {
   try {
-    if (isWin) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000, killSignal: 'SIGKILL' });
-    else process.kill(-child.pid, 'SIGKILL');
-  } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
+    if (isWin) {
+      // 终止命令失败不得静默：重试一次；仍未确认成功则退回 child.kill 并响亮告警
+      // （此时孙辈或残留，由告警指引人工排查；容器清理与失败退出不受影响）
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const r = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000, killSignal: 'SIGKILL' });
+        if (!r.error && r.status === 0) return true;
+      }
+      try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
+      console.error(`[bpm001] 警告：taskkill 整树终止未确认成功（pid=${child.pid}），已退回 child.kill(SIGKILL)，可能残留 Maven/Java 进程`);
+      return false;
+    }
+    process.kill(-child.pid, 'SIGKILL');
+    return true;
+  } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } return false; }
 }
 function runAsync(argv, opts = {}) {
   return new Promise((resolve) => {
