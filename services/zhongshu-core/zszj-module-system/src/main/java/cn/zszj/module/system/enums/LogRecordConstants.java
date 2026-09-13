@@ -18,7 +18,12 @@ public interface LogRecordConstants {
     String SYSTEM_USER_DELETE_SUB_TYPE = "删除用户";
     String SYSTEM_USER_DELETE_SUCCESS = "删除了用户【{{#user.nickname}}】";
     String SYSTEM_USER_UPDATE_PASSWORD_SUB_TYPE = "重置用户密码";
-    String SYSTEM_USER_UPDATE_PASSWORD_SUCCESS = "将用户【{{#user.nickname}}】的密码从【{{#user.password}}】重置为【{{#newPassword}}】";
+    String SYSTEM_USER_UPDATE_PASSWORD_SUCCESS = "将用户【{{#user.nickname}}】的密码从【{{#user.password}}】重置为【{{#newPassword}}】，其全部登录会话已失效";
+    // ZS-LOGIN-003：以下两类生命周期入口同样会触发「全部登录会话失效」，此前无操作日志留痕，故补齐
+    String SYSTEM_USER_UPDATE_STATUS_SUB_TYPE = "更新用户状态";
+    String SYSTEM_USER_UPDATE_STATUS_SUCCESS = "将用户【{{#user.nickname}}】的状态更新为【{{#status}}】；若为禁用则其全部登录会话已失效";
+    String SYSTEM_USER_UPDATE_SELF_PASSWORD_SUB_TYPE = "修改自身密码";
+    String SYSTEM_USER_UPDATE_SELF_PASSWORD_SUCCESS = "用户【{{#user.nickname}}】修改了自己的密码，其全部登录会话已失效";
 
     // ======================= SYSTEM_ROLE 角色 =======================
 

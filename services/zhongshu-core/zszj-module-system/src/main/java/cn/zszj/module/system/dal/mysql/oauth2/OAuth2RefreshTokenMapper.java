@@ -58,6 +58,29 @@ public interface OAuth2RefreshTokenMapper extends BaseMapperX<OAuth2RefreshToken
     }
 
     /**
+     * ZS-LOGIN-003：按「用户 + 用户类型」直查该用户名下的<b>全部</b>刷新令牌。
+     *
+     * <p>背景：此前 {@code OAuth2TokenServiceImpl#removeAccessToken(Long, Integer)} 的刷新凭据集合
+     * 完全由 access-token 记录<b>反推</b>，于是「无 Access 记录但仍有 Refresh」的孤立刷新凭据
+     * 永远不会被撤销 —— 它仍可用于 {@code refreshAccessToken} 换出全新访问令牌（会话复活）。
+     * 本方法提供与 {@code OAuth2AccessTokenMapper#selectListByUserIdAndUserType} 对称的直查能力，
+     * 使撤销可以取「access-token 反推 ∪ refresh-token 直查」的<b>全集</b>。
+     *
+     * <p>租户：撤销是安全操作，可能在无租户上下文（定时任务 / MQ 消费）或跨租户运维场景下发起，
+     * 与 {@link #selectByRefreshToken(String)}、{@link #selectByRefreshTokenForUpdate(String)} 保持一致忽略租户。
+     * 调用方（{@code OAuth2TokenServiceImpl}）另以 {@code TenantUtils#executeIgnore} 包裹整个撤销体作为主保障。
+     *
+     * @param userId   用户编号
+     * @param userType 用户类型
+     * @return 该用户名下的全部刷新令牌；无会话时返回空集合
+     */
+    @TenantIgnore // 与 selectByRefreshToken 保持一致：撤销可能不携带 tenant-id 请求头
+    default List<OAuth2RefreshTokenDO> selectListByUserIdAndUserType(Long userId, Integer userType) {
+        return selectList(OAuth2RefreshTokenDO::getUserId, userId,
+                OAuth2RefreshTokenDO::getUserType, userType);
+    }
+
+    /**
      * 物理删除指定过期时间之前的刷新令牌
      *
      * @param expiresTime 最大时间

@@ -225,16 +225,28 @@ public class AdminUserServiceImpl implements AdminUserService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_SELF_PASSWORD_SUB_TYPE, bizNo = "{{#id}}",
+            success = SYSTEM_USER_UPDATE_SELF_PASSWORD_SUCCESS)
     public void updateUserPassword(Long id, UserProfileUpdatePasswordReqVO reqVO) {
-        // 校验旧密码密码
+        // 1. 校验用户存在、旧密码密码
+        AdminUserDO user = validateUserExists(id);
         validateOldPassword(id, reqVO.getOldPassword());
-        // 执行更新
+
+        // 2. 执行更新
         AdminUserDO updateObj = new AdminUserDO().setId(id);
         updateObj.setPassword(encodePassword(reqVO.getNewPassword())); // 加密密码
         userMapper.updateById(updateObj);
+
+        // 3. ZS-LOGIN-003：改密后全端失效（策略与理由见 invalidateUserSessions）
+        invalidateUserSessions(id, "用户自助修改密码");
+
+        // 4. 记录操作日志上下文
+        LogRecordContext.putVariable("user", user);
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_PASSWORD_SUB_TYPE, bizNo = "{{#id}}",
             success = SYSTEM_USER_UPDATE_PASSWORD_SUCCESS)
     public void updateUserPassword(Long id, String password) {
@@ -247,25 +259,69 @@ public class AdminUserServiceImpl implements AdminUserService {
         updateObj.setPassword(encodePassword(password)); // 加密密码
         userMapper.updateById(updateObj);
 
-        // 3. 记录操作日志上下文
+        // 3. ZS-LOGIN-003：管理员重置他人密码后全端失效（重置通常意味着旧密码已泄露或人员变动）
+        invalidateUserSessions(id, "管理员重置密码");
+
+        // 4. 记录操作日志上下文
         LogRecordContext.putVariable("user", user);
         LogRecordContext.putVariable("newPassword", updateObj.getPassword());
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_STATUS_SUB_TYPE, bizNo = "{{#id}}",
+            success = SYSTEM_USER_UPDATE_STATUS_SUCCESS)
     public void updateUserStatus(Long id, Integer status) {
-        // 校验用户存在
-        validateUserExists(id);
-        // 更新状态
+        // 1. 校验用户存在
+        AdminUserDO user = validateUserExists(id);
+
+        // 2. 更新状态
         AdminUserDO updateObj = new AdminUserDO();
         updateObj.setId(id);
         updateObj.setStatus(status);
         userMapper.updateById(updateObj);
 
-        // 如果是禁用用户，则删除其 Token 信息
+        // 3. ZS-LOGIN-003：如果是禁用用户，则失效其全部登录会话
         if (CommonStatusEnum.isDisable(status)) {
-            oauth2TokenService.removeAccessToken(id, UserTypeEnum.ADMIN.getValue());
+            invalidateUserSessions(id, "禁用用户");
         }
+
+        // 4. 记录操作日志上下文
+        LogRecordContext.putVariable("user", user);
+    }
+
+    /**
+     * ZS-LOGIN-003：失效指定用户的<b>全部</b>登录会话（access / refresh / 已缓存转换凭据 / 会话代际键）。
+     *
+     * <p><b>策略：全端失效，不保留「当前端」。</b>理由：
+     * <ol>
+     *     <li>{@code LoginUser} 与 {@code OAuth2AccessTokenCheckRespDTO} 均<b>不携带</b>访问令牌串，
+     *         {@code TokenAuthenticationFilter} 也不把它写入安全上下文 —— 服务端当前<b>无法识别「当前端」</b>；</li>
+     *     <li>任何由客户端上送（请求体 / 请求头 / URL 参数）的「保留哪一端」提示都<b>可被伪造</b>：
+     *         攻击者持失窃凭据改密后可指定保留自己的会话，使改密彻底失去止损意义；</li>
+     *     <li>{@link #updateUserPassword(Long, String)} 是管理员重置<b>他人</b>密码，
+     *         根本不存在「目标用户的当前端」这个概念；</li>
+     *     <li>改密 / 禁用 / 删除 本身即「怀疑凭据泄露或账号不再可用」的止损动作，全端失效是安全默认。</li>
+     * </ol>
+     * 代价：自助改密后需全端重新登录（下一次请求 401 → 前端跳登录页，属既有契约）。
+     * 若产品后续要「保留当前端」，必须先在 {@code TokenAuthenticationFilter} 把<b>已验证的</b>
+     * 访问令牌串写入 {@code LoginUser}（服务端来源、非客户端断言）—— 本任务<b>不预埋</b>。
+     *
+     * <p>撤销能力完全复用 {@link OAuth2TokenService#removeAccessToken(Long, Integer)}
+     * （ZS-LOGIN-002 的行锁 + 固定锁序 + 会话代际键，ZS-LOGIN-003 的孤立刷新凭据全集 +
+     * 已缓存转换凭据清理 + 忽略租户），<b>不</b>另造锁、<b>不</b>另造审计机制。
+     *
+     * <p>调用方<b>必须</b>处于 {@code @Transactional} 中：撤销失败则回滚状态变更 ——
+     * 宁可显式失败，也不留下「已禁用 / 已删除 / 已改密但仍在线」的窗口。
+     *
+     * @param userId 用户编号
+     * @param reason 失效原因（仅用于审计日志，与 {@code @LogRecord} 操作日志经 trace-id 关联；不入库、不入令牌）
+     */
+    private void invalidateUserSessions(Long userId, String reason) {
+        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+        // ZS-LOGIN-003：事件与审计可追踪。此处只记「哪个用户、因为什么」；
+        // 撤销明细（会话数 / 其中孤立刷新凭据数）由 OAuth2TokenServiceImpl 侧的同 trace 日志给出。
+        log.info("[invalidateUserSessions][ZS-LOGIN-003 用户({}) 的全部登录会话已失效，原因({})]", userId, reason);
     }
 
     @Override
@@ -284,6 +340,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         permissionService.processUserDeleted(id);
         // 2.2 删除用户岗位
         userPostMapper.deleteByUserId(id);
+        // 2.3 ZS-LOGIN-003：删除后失效全部登录会话（此前缺失：被删用户的凭据在自然过期前仍可用，
+        // 因为 checkAccessToken 只校验令牌存在与到期，不校验用户是否仍存在）
+        invalidateUserSessions(id, "删除用户");
 
         // 3. 记录操作日志上下文
         LogRecordContext.putVariable("user", user);
@@ -302,6 +361,8 @@ public class AdminUserServiceImpl implements AdminUserService {
         ids.forEach(id -> {
             permissionService.processUserDeleted(id);
             userPostMapper.deleteByUserId(id);
+            // 2.3 ZS-LOGIN-003：与单条删除对齐，批量删除同样必须失效会话
+            invalidateUserSessions(id, "批量删除用户");
         });
     }
 
