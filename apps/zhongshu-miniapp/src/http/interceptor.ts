@@ -25,19 +25,49 @@ const whiteList: string[] = [
 
 /** 标准 scheme 绝对地址判定（协议相对 // 不在此列，单独失败关闭处理） */
 const ABSOLUTE_URL_RE = /^[a-z][a-z\d+\-.]*:\/\//i
+/** 匹配 scheme://authority 前缀，用于剥离得到路径（替代运行时不一定存在的 new URL） */
+const AUTHORITY_RE = /^[a-z][a-z\d+\-.]*:\/\/[^/?#]+/i
+/** 提取 origin（scheme://host[:port]）；小程序运行时无浏览器 URL 全局，故用正则解析 */
+const ORIGIN_RE = /^([a-z][a-z\d+\-.]*):\/\/([^/?#]+)/i
 
-/** 生成客户端关联标识（trace/correlation id），优先使用运行时 crypto.randomUUID */
+/** 由绝对地址解析 origin（统一小写）；非绝对地址或解析失败返回空串。不依赖 new URL */
+function parseOrigin(url: string): string {
+  const m = ORIGIN_RE.exec(url)
+  if (!m) {
+    return ''
+  }
+  return `${m[1].toLowerCase()}://${m[2].toLowerCase()}`
+}
+
+/**
+ * 生成客户端关联标识（trace/correlation id）。
+ * 后端 TracerUtils.isValidTraceIdFormat 要求恰好 32 位十六进制，否则会被 TraceFilter 替换，
+ * 导致超时/取消后上报的标识无法关联服务端日志；故统一产出 32 位小写十六进制。
+ */
 function generateTraceId(): string {
   const g = globalThis as any
   try {
+    if (g.crypto && typeof g.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16)
+      g.crypto.getRandomValues(bytes)
+      let hex = ''
+      for (let i = 0; i < bytes.length; i++) {
+        hex += bytes[i].toString(16).padStart(2, '0')
+      }
+      return hex
+    }
     if (g.crypto && typeof g.crypto.randomUUID === 'function') {
-      return g.crypto.randomUUID()
+      return String(g.crypto.randomUUID()).replace(/-/g, '')
     }
   }
   catch {
-    // 部分小程序运行时不提供 crypto，回退到时间戳 + 随机数
+    // 部分小程序运行时不提供 crypto，回退到 Math.random
   }
-  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  let hex = ''
+  for (let i = 0; i < 32; i++) {
+    hex += Math.floor(Math.random() * 16).toString(16)
+  }
+  return hex
 }
 
 /** 剥离 query/hash 得到路径；绝对 URL 取其 pathname */
@@ -45,15 +75,9 @@ export function extractPathname(url: string): string {
   if (!url) {
     return ''
   }
-  if (ABSOLUTE_URL_RE.test(url)) {
-    try {
-      return new URL(url).pathname
-    }
-    catch {
-      // 解析失败时退回手动剥离
-    }
-  }
-  return url.split('#')[0].split('?')[0]
+  // 不依赖 new URL（小程序运行时无浏览器 URL 全局）：绝对地址剥离 scheme://authority 前缀
+  const rest = ABSOLUTE_URL_RE.test(url) ? url.replace(AUTHORITY_RE, '') : url
+  return rest.split('#')[0].split('?')[0]
 }
 
 /**
@@ -74,12 +98,8 @@ export function resolveApprovedOrigin(base?: string): string {
   if (!target) {
     return ''
   }
-  try {
-    return new URL(target).origin
-  }
-  catch {
-    return ''
-  }
+  // 不依赖 new URL（小程序运行时无浏览器 URL 全局）
+  return parseOrigin(target)
 }
 
 /**
@@ -98,27 +118,39 @@ export function isApprovedApiOrigin(url: string, approvedOrigin: string): boolea
   if (!approvedOrigin) {
     return false
   }
-  try {
-    return new URL(url).origin.toLowerCase() === approvedOrigin.toLowerCase()
-  }
-  catch {
-    return false
-  }
+  // 不依赖 new URL（小程序运行时无浏览器 URL 全局）
+  const origin = parseOrigin(url)
+  return !!origin && origin === approvedOrigin.toLowerCase()
 }
 
 /** trace/correlation 标识透传：调用方已提供则原样保留，否则生成；返回最终值（ZS-SEC-006） */
 export function ensureTraceId(header: Record<string, any>): string {
   let existing: any
+  const variants: string[] = []
   for (const key of Object.keys(header)) {
-    if (key.toLowerCase() === 'trace-id' && header[key]) {
-      existing = header[key]
-      break
+    if (key.toLowerCase() === 'trace-id') {
+      variants.push(key)
+      if (!existing && header[key]) {
+        existing = header[key]
+      }
     }
   }
   if (!existing && typeof (header as any).get === 'function') {
     existing = (header as any).get('trace-id')
   }
   const value = existing ? String(existing) : generateTraceId()
+  // 移除大小写变体（如调用方传入的 'Trace-Id'），统一规范为单一 'trace-id' 键，
+  // 避免 H5 下对每个属性调 setRequestHeader 时合并成 "id, id" 破坏透传（P2）
+  for (const key of variants) {
+    if (key !== 'trace-id') {
+      if (typeof (header as any).delete === 'function') {
+        (header as any).delete(key)
+      }
+      else {
+        delete header[key]
+      }
+    }
+  }
   header['trace-id'] = value
   return value
 }

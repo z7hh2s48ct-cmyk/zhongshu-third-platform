@@ -157,3 +157,15 @@ describe('http 刷新队列（验收③：至多刷新一次、失败全部 reje
     expect(h.refreshToken).not.toHaveBeenCalled()
   })
 })
+
+describe('http codex r0 回归：trace-id 从派发配置读取（P2）', () => {
+  it('断网/取消时 reject 携带 interceptor 注入到派发配置的 trace-id', async () => {
+    uni.request = vi.fn((cfg: any) => {
+      // 模拟 interceptor 就地改写“派发配置”的 header（替换为新对象），原始 options.header 不变
+      cfg.header = { ...(cfg.header || {}), 'trace-id': 'a1b2c3d4e5f60718293a4b5c6d7e8f90' }
+      cfg.fail({ errMsg: 'request:fail' })
+    })
+    const err: any = await http(approved('/a')).catch((e: any) => e)
+    expect(err.traceId).toBe('a1b2c3d4e5f60718293a4b5c6d7e8f90')
+  })
+})

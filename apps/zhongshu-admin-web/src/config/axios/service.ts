@@ -46,17 +46,34 @@ const whiteList: string[] = ['/login', '/refresh-token']
 /** 标准 scheme 绝对地址判定 */
 const ABSOLUTE_URL_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//
 
-/** 生成客户端关联标识（trace/correlation id） */
+/**
+ * 生成客户端关联标识（trace/correlation id）。
+ * 后端 TracerUtils.isValidTraceIdFormat 要求恰好 32 位十六进制，否则会被 TraceFilter 替换，
+ * 导致超时/取消后上报的标识无法关联服务端日志；故统一产出 32 位小写十六进制。
+ */
 function generateTraceId(): string {
   const g = globalThis as any
   try {
+    if (g.crypto && typeof g.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16)
+      g.crypto.getRandomValues(bytes)
+      let hex = ''
+      for (let i = 0; i < bytes.length; i++) {
+        hex += bytes[i].toString(16).padStart(2, '0')
+      }
+      return hex
+    }
     if (g.crypto && typeof g.crypto.randomUUID === 'function') {
-      return g.crypto.randomUUID()
+      return String(g.crypto.randomUUID()).replace(/-/g, '')
     }
   } catch {
-    // 运行时不提供 crypto 时回退到时间戳 + 随机数
+    // 运行时不提供 crypto 时回退到 Math.random
   }
-  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  let hex = ''
+  for (let i = 0; i < 32; i++) {
+    hex += Math.floor(Math.random() * 16).toString(16)
+  }
+  return hex
 }
 
 /** 剥离 query/hash 得到路径；绝对 URL 取其 pathname */

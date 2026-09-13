@@ -148,3 +148,21 @@ describe('service 响应拦截器：异常收敛与可追踪', () => {
     expect(err.traceId).toBe('srv-dec')
   })
 })
+
+describe('service codex r0 回归：trace-id 合同（P2）', () => {
+  it('批准来源生成的 trace-id 为 32 位小写十六进制（后端 TracerUtils 格式，P2）', async () => {
+    await service.request({ url: '/system/user/profile/get', method: 'GET' })
+    expect(getHeader(captured.headers, 'trace-id')).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  it('调用方大写 Trace-Id 去重为单一 trace-id 键且原值透传（P2）', async () => {
+    await service.request({
+      url: '/system/user/profile/get',
+      method: 'GET',
+      headers: { 'Trace-Id': '0123456789abcdef0123456789abcdef' },
+    })
+    const keys = Object.keys(captured.headers).filter(k => k.toLowerCase() === 'trace-id')
+    expect(keys).toHaveLength(1)
+    expect(getHeader(captured.headers, 'trace-id')).toBe('0123456789abcdef0123456789abcdef')
+  })
+})

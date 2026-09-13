@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ensureTraceId,
   extractPathname,
   httpInterceptor,
   isApprovedApiOrigin,
   isWhitelistedPath,
+  resolveApprovedOrigin,
 } from '@/http/interceptor'
 
 // vi.mock 会被提升到 import 之前执行；用 vi.hoisted 提供可在工厂内安全引用的可变状态
@@ -180,5 +181,46 @@ describe('httpInterceptor.invoke：B03 登录请求合同凭据范围', () => {
       header: { isToken: false },
     })
     expect(options.header.Authorization).toBeUndefined()
+  })
+})
+
+describe('codex r0 回归：小程序运行时兼容与 trace-id 合同（ZS-CLIENT-003）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // P1：微信小程序运行时无浏览器 URL 全局；origin/pathname 解析不得依赖 new URL()，
+  // 否则 approvedOrigin 退化为空 → 所有绝对地址请求丢失 Token 与 tenant-id（登录失效）
+  it('无 URL 全局时 resolveApprovedOrigin 仍解析出批准 origin（P1）', () => {
+    vi.stubGlobal('URL', undefined)
+    expect(resolveApprovedOrigin('https://api.zszj.test/admin-api')).toBe('https://api.zszj.test')
+  })
+  it('无 URL 全局时 isApprovedApiOrigin 对批准来源 true、外部来源 false（P1）', () => {
+    vi.stubGlobal('URL', undefined)
+    expect(isApprovedApiOrigin('https://api.zszj.test/admin-api/x', 'https://api.zszj.test')).toBe(true)
+    expect(isApprovedApiOrigin('https://oss.cdn.example.com/k', 'https://api.zszj.test')).toBe(false)
+  })
+  it('无 URL 全局时 extractPathname 仍剥离 scheme+authority（P1）', () => {
+    vi.stubGlobal('URL', undefined)
+    expect(extractPathname('https://api.zszj.test/admin-api/login?a=1')).toBe('/admin-api/login')
+  })
+
+  // P2：后端 TracerUtils.isValidTraceIdFormat 要求恰好 32 位十六进制，否则被 TraceFilter 替换、无法关联日志
+  it('生成的 trace-id 为 32 位小写十六进制（P2）', () => {
+    expect(ensureTraceId({})).toMatch(/^[0-9a-f]{32}$/)
+  })
+  it('无 crypto 运行时回退仍生成 32 位十六进制（P2）', () => {
+    vi.stubGlobal('crypto', undefined)
+    expect(ensureTraceId({})).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  // P2：调用方提供大写 Trace-Id 时应规范为单一 trace-id 键，避免 H5 上行合并成 "id, id"
+  it('调用方大写 Trace-Id 去重为单一 trace-id 键且原值透传（P2）', () => {
+    const header: Record<string, any> = { 'Trace-Id': '0123456789abcdef0123456789abcdef' }
+    const id = ensureTraceId(header)
+    expect(id).toBe('0123456789abcdef0123456789abcdef')
+    expect(Object.keys(header).filter(k => k.toLowerCase() === 'trace-id')).toHaveLength(1)
+    expect(header['trace-id']).toBe('0123456789abcdef0123456789abcdef')
+    expect(header['Trace-Id']).toBeUndefined()
   })
 })

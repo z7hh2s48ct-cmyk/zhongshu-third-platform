@@ -112,7 +112,9 @@ async function handleLoginExpired(tokenStore: ReturnType<typeof useTokenStore>) 
 export function http<T>(options: CustomRequestOptions) {
   // 1. 返回 Promise 对象
   return new Promise<T>((resolve, reject) => {
-    uni.request({
+    // ZS-CLIENT-003（P2）：拦截器会就地改写“派发配置”的 header（可能整体替换为新对象），
+    // 故 trace/correlation 标识须从派发配置读取，而非原始 options，否则断网/取消时丢失 traceId。
+    const requestConfig = {
       ...options,
       dataType: 'json',
       // #ifndef MP-WEIXIN
@@ -121,7 +123,7 @@ export function http<T>(options: CustomRequestOptions) {
       // 响应成功
       success: async (res) => {
         // ZS-CLIENT-003：读取 trace/correlation 标识（优先响应头，回退请求侧），供各拒绝分支回显
-        const traceId = readTraceId(res, options)
+        const traceId = readTraceId(res, requestConfig)
         let responseData = res.data as IResponse<T>
         // add by panda：检查是否需要解密响应数据
         const encryptHeader = ApiEncrypt.getEncryptHeader()
@@ -252,9 +254,10 @@ export function http<T>(options: CustomRequestOptions) {
           title: '网络错误，换个网络试试',
         })
         // ZS-CLIENT-003（验收⑤）：断网/取消一致 reject 且回显请求侧 trace/correlation 标识
-        reject(withTrace(err, readTraceId(undefined, options)))
+        reject(withTrace(err, readTraceId(undefined, requestConfig)))
       },
-    })
+    } as any
+    uni.request(requestConfig)
   })
 }
 
