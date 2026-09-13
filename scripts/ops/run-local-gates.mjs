@@ -9,7 +9,9 @@
  *   G11 启用模块后端单测（--mvn 显式启用；需 tools/env.sh 工具链，排除已登记的上游基线失败）
  *   G12 安全链联合回归（ZS-SEC-012.B：--mvn 显式启用；真实安全链夹具 + 全面 async/CORS 端到端 + .A 全量，本地与 CI 同入口）
  *   G13 双端请求层合同回归（ZS-SEC-012.B/CLIENT-003：slow，本地 vitest 双端；CI 由 CLIENT-005.A 流水线覆盖）
- * PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入，不在本骨架。
+ * ZS-OPS-001.B/C 已接入：PG 层走 .github/workflows/pg-regression.yml（run-pg-regression.mjs 同规则）、
+ * 安全/基础管理 API 层 = G12 + G14（CI 同入口见 local-baseline-gates.yml security/sys001 job）；
+ * 多端 E2E（.D）/流程（.E）按后续批次接入。
  *
  * 提速（ZS-GOV-001 提效方案 P1）：
  *   - 并发：默认按 CPU 核数并发跑门禁（--jobs N 覆盖），反馈时间从「各门禁耗时之和」降到「最慢门禁」。
@@ -46,6 +48,8 @@ export const GATES = [
     mvnArgs: '-pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest -Dsurefire.failIfNoSpecifiedTests=false test' },
   { id: 'G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）', areas: ['apps/', 'scripts/ops/'], slow: true,
     cmd: ['node', 'scripts/ops/run-client-contract-tests.mjs'] },
+  { id: 'G14 基础管理 API 层回归（ZS-SYS-001.A：七类矩阵 50 用例，Docker PG/Redis + 真实 server）', areas: ['scripts/sys001/', 'services/'], slow: true,
+    cmd: ['node', 'scripts/sys001/run-sys001-regression.mjs'] },
 ];
 
 // 增量模式下视为「良性、不触发全量回退」的未归类路径前缀（生成物/评审原始稿/计划稿）

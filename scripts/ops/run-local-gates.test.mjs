@@ -9,38 +9,38 @@ import { GATES, candidateGates, planGates } from './run-local-gates.mjs';
 
 const ids = (gs) => gs.map((g) => g.id.split(' ')[0]); // 取 G1/G2b/G10 等短标识便于断言
 
-test('GATES 定义稳定：14 项，G3/G5/G9 为安全守卫，G10/G13 慢检查，G11/G12 需 mvn', () => {
-  assert.equal(GATES.length, 14);
+test('GATES 定义稳定：15 项，G3/G5/G9 为安全守卫，G10/G13/G14 慢检查，G11/G12 需 mvn', () => {
+  assert.equal(GATES.length, 15);
   assert.deepEqual(GATES.filter((g) => g.safety).map((g) => g.id.split(' ')[0]), ['G3', 'G5', 'G9']);
-  assert.deepEqual(GATES.filter((g) => g.slow).map((g) => g.id.split(' ')[0]), ['G10', 'G13']);
+  assert.deepEqual(GATES.filter((g) => g.slow).map((g) => g.id.split(' ')[0]), ['G10', 'G13', 'G14']);
   assert.deepEqual(GATES.filter((g) => g.mvn).map((g) => g.id.split(' ')[0]), ['G11', 'G12']);
 });
 
-test('candidateGates 默认（无 fast/mvn）：含 G10/G13、排除 mvn 门禁', () => {
+test('candidateGates 默认（无 fast/mvn）：含 G10/G13/G14、排除 mvn 门禁', () => {
   const c = ids(candidateGates());
-  assert.ok(c.includes('G10') && c.includes('G13'));
+  assert.ok(c.includes('G10') && c.includes('G13') && c.includes('G14'));
   assert.ok(!c.includes('G11') && !c.includes('G12'));
-  assert.equal(c.length, 12);
+  assert.equal(c.length, 13);
 });
 
-test('candidateGates --fast：跳过 G10/G13 与 mvn 门禁，恰为 10 项（与 CI 一致）', () => {
+test('candidateGates --fast：跳过 G10/G13/G14 与 mvn 门禁，恰为 10 项（与 CI 一致）', () => {
   const c = ids(candidateGates({ fast: true }));
   assert.equal(c.length, 10);
-  assert.ok(!c.includes('G10') && !c.includes('G13'));
+  assert.ok(!c.includes('G10') && !c.includes('G13') && !c.includes('G14'));
   assert.ok(!c.includes('G11') && !c.includes('G12'));
   assert.deepEqual(c, ['G1', 'G2', 'G2b', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9']);
 });
 
-test('candidateGates --mvn（非 fast）：G10/G13/G11/G12 均启用，共 14 项', () => {
+test('candidateGates --mvn（非 fast）：G10/G13/G14/G11/G12 均启用，共 15 项', () => {
   const c = ids(candidateGates({ mvn: true }));
-  assert.ok(c.includes('G10') && c.includes('G13'));
+  assert.ok(c.includes('G10') && c.includes('G13') && c.includes('G14'));
   assert.ok(c.includes('G11') && c.includes('G12'));
-  assert.equal(c.length, 14);
+  assert.equal(c.length, 15);
 });
 
-test('candidateGates --fast --mvn：跳过 G10/G13、启用 G11/G12', () => {
+test('candidateGates --fast --mvn：跳过 G10/G13/G14、启用 G11/G12', () => {
   const c = ids(candidateGates({ fast: true, mvn: true }));
-  assert.ok(!c.includes('G10') && !c.includes('G13'));
+  assert.ok(!c.includes('G10') && !c.includes('G13') && !c.includes('G14'));
   assert.ok(c.includes('G11') && c.includes('G12'));
 });
 

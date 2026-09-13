@@ -1,7 +1,8 @@
 name: local-baseline-gates
 
 # ZS-OPS-001.A：基础构建/文档流水线骨架——与本地 `node scripts/ops/run-local-gates.mjs` 同一规则。
-# 仅运行静态/单测门禁；PG/多端 E2E 门禁按 ZS-OPS-001.B~.E 批次接入。
+# fast job 仅静态/单测门禁；PG 层入 pg-regression.yml（ZS-OPS-001.B）；安全/基础管理 API 层入
+# security-chain-regression + sys001-regression job（ZS-OPS-001.C，G12/G14 同规则）；多端 E2E（.D）/流程（.E）按批次接入。
 
 on:
   push:
@@ -35,3 +36,20 @@ jobs:
           mvn -pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am
           -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest
           -Dsurefire.failIfNoSpecifiedTests=false test
+
+  # ZS-OPS-001.C：基础管理 API 层回归入 CI（与本地 G14 同一入口/同一用例集）。
+  # 一次性 Docker PG17+Redis 夹具（ubuntu-latest 自带 Docker），真实 server 进程 + 50 用例矩阵；
+  # 缺 Docker/夹具失败退出非零，不静默回退（ZS-SYS-001.A 同入口）。
+  sys001-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 运行基础管理 API 层回归（七类矩阵，越权/基础功能失败阻止合入）
+        run: node scripts/sys001/run-sys001-regression.mjs
