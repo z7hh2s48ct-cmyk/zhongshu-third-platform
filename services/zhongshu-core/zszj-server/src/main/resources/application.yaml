@@ -207,6 +207,10 @@ spring:
           enabled: false # TODO @芋艿：有 bug https://github.com/spring-projects/spring-ai/issues/4917 需要官方修复
 
 zszj:
+  file: # ZS-FILE-002：上传限额与类型合同
+    max-size: 16777216 # 16MB，与 spring.servlet.multipart.max-file-size 对齐
+    danger-extensions: [exe, dll, bat, cmd, sh, js, vbs, msi, com, scr, ps1]
+    public-allowed-types: [image/, application/pdf, text/plain]
   ai:
     gemini: # 谷歌 Gemini
       enable: true

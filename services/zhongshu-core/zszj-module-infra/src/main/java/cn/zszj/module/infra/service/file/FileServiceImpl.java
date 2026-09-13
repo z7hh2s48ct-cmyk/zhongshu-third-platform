@@ -15,6 +15,7 @@ import cn.zszj.framework.tenant.core.util.TenantUtils;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.infra.enums.file.FileScopeEnum;
+import cn.zszj.module.infra.framework.file.config.FileProperties;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePageReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePresignedUrlRespVO;
@@ -36,6 +37,10 @@ import java.util.Objects;
 import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DANGEROUS_CONTENT;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PUBLIC_TYPE_NOT_ALLOWED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_SIZE_EXCEED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_TYPE_MISMATCH;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_SCOPE_INVALID;
 
 /**
@@ -59,7 +64,7 @@ public class FileServiceImpl implements FileService {
      * 算法：当前时间戳（毫秒）+ 5 位随机数；目的是保证文件的唯一性，避免覆盖
      * 定制：可按需调整成 UUID、或者其他方式
      */
-    static boolean PATH_SUFFIX_TIMESTAMP_ENABLE = false;
+    static boolean PATH_SUFFIX_TIMESTAMP_ENABLE = true; // ZS-FILE-002：服务端唯一对象键（同日同名不覆盖）
     /**
      * 后缀是否作为上级目录
      *
@@ -72,6 +77,8 @@ public class FileServiceImpl implements FileService {
     private FileConfigService fileConfigService;
     @Resource
     private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
+    @Resource
+    private cn.zszj.module.infra.framework.file.config.FileProperties fileProperties;
 
     @Resource
     private FileMapper fileMapper;
@@ -87,10 +94,16 @@ public class FileServiceImpl implements FileService {
         // 1.1 处理 name 的合法性，禁止携带目录路径
         name = FilePathUtils.validateFileName(name);
 
-        // 1.2.1 处理 type 为空的情况
-        if (StrUtil.isEmpty(type)) {
-            type = FileTypeUtils.getMineType(content, name);
+        // 1.2.1 ZS-FILE-002：服务端始终以内容探测类型——调用方声明的 type 不可信（扩展名/MIME 伪装面）；
+        // 声明与探测不一致且可判定时拒绝（FILE_TYPE_MISMATCH），无法判定（octet-stream）以探测为准放行
+        if (content.length > fileProperties.getMaxSize()) {
+            throw exception(FILE_SIZE_EXCEED, content.length, fileProperties.getMaxSize());
         }
+        String declaredType = type;
+        type = FileTypeUtils.getMineType(content, name);
+        // ZS-FILE-002：危险扩展名黑名单优先于一致性校验（否则 text 内容+exe 名会先报类型不符掩盖黑名单）
+        validateDangerExtension(name);
+        validateExtensionConsistency(name, type);
         // 1.2.2 处理 name 为空的情况
         if (StrUtil.isEmpty(name)) {
             name = DigestUtil.sha256Hex(content);
@@ -352,9 +365,47 @@ public class FileServiceImpl implements FileService {
             throw exception(FILE_SCOPE_INVALID);
         }
         FileDO file = validateFileExists(id);
+        // ZS-FILE-002：转 PUBLIC 需类型在公开素材白名单（前缀匹配）
+        if (FileScopeEnum.PUBLIC.getScope().equals(scope)
+                && CollUtil.isNotEmpty(fileProperties.getPublicAllowedTypes())
+                && fileProperties.getPublicAllowedTypes().stream()
+                        .noneMatch(allowed -> file.getType() != null
+                                && file.getType().toLowerCase().startsWith(allowed.toLowerCase()))) {
+            throw exception(FILE_PUBLIC_TYPE_NOT_ALLOWED, file.getType());
+        }
         FileDO updateObj = new FileDO().setId(file.getId()).setScope(scope);
         fileMapper.updateById(updateObj);
     }
 
     // ZS-FILE-001.A 类尾占位
+
+    /**
+     * ZS-FILE-002：扩展名/MIME 伪装校验——探测类型可解析出扩展名、且文件名带扩展名时，
+     * 二者必须一致；无法判定（octet-stream/文件名无扩展名）跳过。
+     */
+    private void validateExtensionConsistency(String name, String detectedType) {
+        if (StrUtil.isEmpty(detectedType) || "application/octet-stream".equals(detectedType)) {
+            return;
+        }
+        // getExtension 返回带点后缀（如 ".txt"），归一去点后比较
+        String detectedExt = StrUtil.removePrefix(FileTypeUtils.getExtension(detectedType), ".");
+        String nameExt = FileUtil.extName(name);
+        if (StrUtil.isNotEmpty(detectedExt) && StrUtil.isNotEmpty(nameExt)
+                && !detectedExt.equalsIgnoreCase(nameExt)) {
+            throw exception(FILE_TYPE_MISMATCH, detectedType, nameExt);
+        }
+    }
+
+    /**
+     * ZS-FILE-002：危险扩展名隔离——按最终扩展名命中黑名单即拒绝上传。
+     */
+    private void validateDangerExtension(String name) {
+        String ext = StrUtil.emptyIfNull(FileUtil.extName(name)).toLowerCase();
+        if (StrUtil.isNotEmpty(ext) && fileProperties.getDangerExtensions().stream()
+                .anyMatch(d -> d.equalsIgnoreCase(ext))) {
+            throw exception(FILE_DANGEROUS_CONTENT, ext);
+        }
+    }
+
+    // ZS-FILE-002 类尾占位
 }
