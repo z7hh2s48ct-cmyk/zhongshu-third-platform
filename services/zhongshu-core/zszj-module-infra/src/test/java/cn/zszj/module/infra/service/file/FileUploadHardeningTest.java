@@ -185,6 +185,38 @@ public class FileUploadHardeningTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void createFile_unknownBinaryWithPngName_notUpgradedToImage() {
+        // codex r0 P1：纯内容探测——未知二进制不得凭 .png 文件名升级为 image/png（自证探测）
+        byte[] unknown = new byte[32];
+        new java.util.Random(42).nextBytes(unknown);
+        String url = fileService.createFile(unknown, "fake.png", null, "image/png");
+        FileDO record = fileMapper.selectList(new cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX<FileDO>()
+                .eq(FileDO::getUrl, url)).get(0);
+        // 类型保持 octet-stream（未升级），因此转 PUBLIC 被白名单拒绝
+        assertEquals("application/octet-stream", record.getType());
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> fileService.updateFileScope(record.getId(), "PUBLIC"));
+        assertEquals(FILE_PUBLIC_TYPE_NOT_ALLOWED.getCode(), ex.getCode());
+    }
+
+    @Test
+    public void createFile_extensionlessShellContent_finalNameDangerRejected() {
+        // codex r0 P1：无扩展名 shell 内容被补成 .sh 后，黑名单须作用于最终名
+        byte[] shell = "#!/bin/sh\nrm -rf /tmp/x".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> fileService.createFile(shell, "payload", null, null));
+        assertEquals(FILE_DANGEROUS_CONTENT.getCode(), ex.getCode());
+    }
+
+    @Test
+    public void createFile_jpegAlias_allowed() {
+        // codex r0 P2：JPEG 别名扩展（jpeg/jfif 同 image/jpeg）不得被首选扩展名 .jpg 误拒
+        byte[] jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 16, 'J', 'F', 'I', 'F'};
+        String url = fileService.createFile(jpeg, "real.jpeg", null, "image/jpeg");
+        assertTrue(url != null && !url.isEmpty(), "合法别名扩展 .jpeg 必须放行");
+    }
+
+    @Test
     public void createFile_doubleExtension_dangerousFinalRejected() {
         // 双扩展名 a.txt.exe → 最终扩展名 exe 命中黑名单
         ServiceException ex = assertThrows(ServiceException.class,

@@ -130,7 +130,8 @@ public class FileServiceImplTest extends BaseDbUnitTest {
         String url = randomString();
         AtomicReference<String> pathRef = new AtomicReference<>();
         when(client.upload(same(content), argThat(path -> {
-            assertTrue(path.matches("\\d{8}/\\d+/6318848e882d8a7e7e82789d87608f684ee52d41966bfc8cad3ce15aad2b970e\\.jpg"));
+            // ZS-FILE-002：唯一键=日期/时间戳+随机数目录（不再依赖内容散列文件名保唯一，同日同名不覆盖）
+            assertTrue(path.matches("\\d{8}/\\d{18}/6318848e882d8a7e7e82789d87608f684ee52d41966bfc8cad3ce15aad2b970e\\.jpg"));
             pathRef.set(path);
             return true;
         }), eq(type))).thenReturn(url);
