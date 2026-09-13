@@ -1,0 +1,228 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< cn.zszj:zszj-module-system >---------------------
+[INFO] Building zszj-module-system 2026.08-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (enforce-jdk17-baseline) @ zszj-module-system ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ zszj-module-system ---
+[INFO] Copying 37 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- flatten:1.7.2:flatten (flatten) @ zszj-module-system ---
+[INFO] Generating flattened POM of project cn.zszj:zszj-module-system:jar:2026.08-SNAPSHOT...
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ zszj-module-system ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ zszj-module-system ---
+[INFO] Copying 4 resources from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.14.0:testCompile (default-testCompile) @ zszj-module-system ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 64 source files with javac [target 17] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.3:test (default-test) @ zszj-module-system ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2CodeServiceImplTest
+18:23:58,687 |-WARN in Logger[org.jboss.logging] - No appenders present in context [default] for logger [org.jboss.logging].
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.501 s -- in cn.zszj.module.system.service.oauth2.OAuth2CodeServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest
+[ERROR] Tests run: 9, Failures: 2, Errors: 1, Skipped: 0, Time elapsed: 0.353 s <<< FAILURE! -- in cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject -- Time elapsed: 0.011 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: Unexpected exception type thrown, expected: <cn.zszj.framework.common.exception.ServiceException> but was: <java.lang.NullPointerException>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertThrows.assertThrows(AssertThrows.java:67)
+	at org.junit.jupiter.api.AssertThrows.assertThrows(AssertThrows.java:35)
+	at org.junit.jupiter.api.Assertions.assertThrows(Assertions.java:3128)
+	at cn.zszj.framework.test.core.util.AssertUtils.assertServiceException(AssertUtils.java:94)
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject(OAuth2GrantServiceImplTest.java:152)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+Caused by: java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.user.AdminUserMapper.selectByIdForUpdate(java.lang.Long)" because "this.adminUserMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImpl.grantAuthorizationCodeForAccessToken(OAuth2GrantServiceImpl.java:84)
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.lambda$testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject$4(OAuth2GrantServiceImplTest.java:152)
+	at org.junit.jupiter.api.AssertThrows.assertThrows(AssertThrows.java:53)
+	... 7 more
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject -- Time elapsed: 0.005 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: Unexpected exception type thrown, expected: <cn.zszj.framework.common.exception.ServiceException> but was: <java.lang.NullPointerException>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertThrows.assertThrows(AssertThrows.java:67)
+	at org.junit.jupiter.api.AssertThrows.assertThrows(AssertThrows.java:35)
+	at org.junit.jupiter.api.Assertions.assertThrows(Assertions.java:3128)
+	at cn.zszj.framework.test.core.util.AssertUtils.assertServiceException(AssertUtils.java:94)
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject(OAuth2GrantServiceImplTest.java:130)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+Caused by: java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.user.AdminUserMapper.selectByIdForUpdate(java.lang.Long)" because "this.adminUserMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImpl.grantAuthorizationCodeForAccessToken(OAuth2GrantServiceImpl.java:84)
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.lambda$testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject$2(OAuth2GrantServiceImplTest.java:130)
+	at org.junit.jupiter.api.AssertThrows.assertThrows(AssertThrows.java:53)
+	... 7 more
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken -- Time elapsed: 0.006 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.user.AdminUserMapper.selectByIdForUpdate(java.lang.Long)" because "this.adminUserMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImpl.grantAuthorizationCodeForAccessToken(OAuth2GrantServiceImpl.java:84)
+	at cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken(OAuth2GrantServiceImplTest.java:107)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.303 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchRevokeLockOrderTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.323 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchRevokeLockOrderTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplCompatTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.332 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplCompatTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest
+[ERROR] Tests run: 12, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 0.551 s <<< FAILURE! -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest.testRemoveAccessTokenByUser_noSessionButUnconsumedCode_codeMustBeRevoked -- Time elapsed: 0.102 s <<< ERROR!
+org.springframework.dao.DataIntegrityViolationException: 
+
+### Error updating database.  Cause: org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+### The error may exist in cn/zszj/module/system/dal/mysql/oauth2/OAuth2CodeMapper.java (best guess)
+### The error may involve cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.insert-Inline
+### The error occurred while setting parameters
+### SQL: INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  )
+### Cause: org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+; NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+	at org.springframework.jdbc.support.SQLErrorCodeSQLExceptionTranslator.doTranslate(SQLErrorCodeSQLExceptionTranslator.java:258)
+	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:107)
+	at org.mybatis.spring.MyBatisExceptionTranslator.translateExceptionIfPossible(MyBatisExceptionTranslator.java:95)
+	at org.mybatis.spring.SqlSessionTemplate$SqlSessionInterceptor.invoke(SqlSessionTemplate.java:347)
+	at jdk.proxy2/jdk.proxy2.$Proxy80.insert(Unknown Source)
+	at org.mybatis.spring.SqlSessionTemplate.insert(SqlSessionTemplate.java:224)
+	at com.baomidou.mybatisplus.core.override.MybatisMapperMethod.execute(MybatisMapperMethod.java:81)
+	at com.baomidou.mybatisplus.core.override.MybatisMapperProxy$PlainMethodInvoker.invoke(MybatisMapperProxy.java:156)
+	at com.baomidou.mybatisplus.core.override.MybatisMapperProxy.invoke(MybatisMapperProxy.java:93)
+	at jdk.proxy2/jdk.proxy2.$Proxy87.insert(Unknown Source)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest.testRemoveAccessTokenByUser_noSessionButUnconsumedCode_codeMustBeRevoked(OAuth2TokenServiceImplOrphanRevokeTest.java:467)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+Caused by: org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+	at org.h2.message.DbException.getJdbcSQLException(DbException.java:520)
+	at org.h2.message.DbException.getJdbcSQLException(DbException.java:489)
+	at org.h2.message.DbException.get(DbException.java:223)
+	at org.h2.message.DbException.get(DbException.java:199)
+	at org.h2.table.Column.validateConvertUpdateSequence(Column.java:402)
+	at org.h2.table.Table.convertInsertRow(Table.java:963)
+	at org.h2.command.dml.Insert.insertRows(Insert.java:167)
+	at org.h2.command.dml.Insert.update(Insert.java:135)
+	at org.h2.command.dml.DataChangeStatement.update(DataChangeStatement.java:74)
+	at org.h2.command.CommandContainer.update(CommandContainer.java:139)
+	at org.h2.command.Command.executeUpdate(Command.java:304)
+	at org.h2.command.Command.executeUpdate(Command.java:248)
+	at org.h2.jdbc.JdbcPreparedStatement.execute(JdbcPreparedStatement.java:262)
+	at com.zaxxer.hikari.pool.ProxyPreparedStatement.execute(ProxyPreparedStatement.java:44)
+	at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.execute(HikariProxyPreparedStatement.java)
+	at jdk.internal.reflect.GeneratedMethodAccessor55.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.apache.ibatis.logging.jdbc.PreparedStatementLogger.invoke(PreparedStatementLogger.java:58)
+	at jdk.proxy3/jdk.proxy3.$Proxy136.execute(Unknown Source)
+	at org.apache.ibatis.executor.statement.PreparedStatementHandler.update(PreparedStatementHandler.java:48)
+	at org.apache.ibatis.executor.statement.RoutingStatementHandler.update(RoutingStatementHandler.java:75)
+	at jdk.internal.reflect.GeneratedMethodAccessor79.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.apache.ibatis.plugin.Plugin.invoke(Plugin.java:61)
+	at jdk.proxy2/jdk.proxy2.$Proxy135.update(Unknown Source)
+	at org.apache.ibatis.executor.SimpleExecutor.doUpdate(SimpleExecutor.java:50)
+	at org.apache.ibatis.executor.BaseExecutor.update(BaseExecutor.java:117)
+	at org.apache.ibatis.executor.CachingExecutor.update(CachingExecutor.java:76)
+	at jdk.internal.reflect.GeneratedMethodAccessor72.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.apache.ibatis.plugin.Invocation.proceed(Invocation.java:61)
+	at com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor.intercept(MybatisPlusInterceptor.java:106)
+	at org.apache.ibatis.plugin.Plugin.invoke(Plugin.java:59)
+	at jdk.proxy2/jdk.proxy2.$Proxy134.update(Unknown Source)
+	at org.apache.ibatis.session.defaults.DefaultSqlSession.update(DefaultSqlSession.java:197)
+	at org.apache.ibatis.session.defaults.DefaultSqlSession.insert(DefaultSqlSession.java:184)
+	at jdk.internal.reflect.GeneratedMethodAccessor137.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.mybatis.spring.SqlSessionTemplate$SqlSessionInterceptor.invoke(SqlSessionTemplate.java:333)
+	... 10 more
+
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplRefreshConcurrencyTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.806 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplRefreshConcurrencyTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplSyntheticCredentialRevokeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.064 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplSyntheticCredentialRevokeTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.266 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest
+[INFO] Running cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.728 s -- in cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject:152 Unexpected exception type thrown, expected: <cn.zszj.framework.common.exception.ServiceException> but was: <java.lang.NullPointerException>
+[ERROR]   OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject:130 Unexpected exception type thrown, expected: <cn.zszj.framework.common.exception.ServiceException> but was: <java.lang.NullPointerException>
+[ERROR] Errors: 
+[ERROR]   OAuth2GrantServiceImplTest.testGrantAuthorizationCodeForAccessToken:107 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.user.AdminUserMapper.selectByIdForUpdate(java.lang.Long)" because "this.adminUserMapper" is null
+[ERROR]   OAuth2TokenServiceImplOrphanRevokeTest.testRemoveAccessTokenByUser_noSessionButUnconsumedCode_codeMustBeRevoked:467 ? DataIntegrityViolation 
+### Error updating database.  Cause: org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+### The error may exist in cn/zszj/module/system/dal/mysql/oauth2/OAuth2CodeMapper.java (best guess)
+### The error may involve cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.insert-Inline
+### The error occurred while setting parameters
+### SQL: INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  )
+### Cause: org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+; NULL not allowed for column "scopes"; SQL statement:
+INSERT INTO system_oauth2_code  ( id, code, user_id, user_type, client_id,    expires_time, create_time, update_time, creator, updater )  VALUES (  ?, ?, ?, ?, ?,    ?, ?, ?, ?, ?  ) [23502-232]
+[INFO] 
+[ERROR] Tests run: 81, Failures: 2, Errors: 2, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  13.730 s
+[INFO] Finished at: 2026-09-13T18:24:06+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project zszj-module-system: There are test failures.
+[ERROR] 
+[ERROR] See E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\target\surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

@@ -1,0 +1,607 @@
+Reading additional input from stdin...
+OpenAI Codex v0.154.0
+--------
+workdir: E:\zszj-wt-perm-004-a
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a09af4-1ca0-70f0-bbbe-32c11cdf3d39
+--------
+user
+ZS-PERM-004.A 第 2 轮评审：r0 的 3×P1+2×P2 已处置（git log fix commit）：①ignore-caches 的 role/menu_role_ids 增项已完全回滚（你指出 RoleMenuDO/RoleDO 租户过滤成立，本方假设错误）；②TenantServiceImpl updateTenant/updateTenantRoleMenu、TenantPackageServiceImpl updateTenantPackage 外层 @DSTransactional 改 @Transactional(rollbackFor)——单库调用链统一 Spring 事务生命周期；③新增 RetryCacheErrorHandler（CachingConfigurer.errorHandler 注册）：evict/clear 失败同步重试 2 次 + ERROR 结构化证据，get/put 失败按回源无风险处理；④并发用例注释如实登记「晚到旧值写回」残余窗口并指明归 ZS-LOGIN-005.B/版本机制。请 git diff f9e4a6a0..HEAD 审查处置正确性（含 TenantPackageServiceImpl import 位置、RetryCacheErrorHandler 实现与注册、@Transactional 转换对 DS 路由的影响），输出 JSON：{"verdict":"PASS|FAIL","findings":[{"severity":"P1|P2|P3","file":"...","issue":"...","suggestion":"..."}]}。
+codex
+我会先核对这轮 diff 和仓库评审约束，再沿事务、DS 路由与缓存异常处理调用链检查处置是否完整。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "git status --short; git diff --stat f9e4a6a0..HEAD; rg --files -g AGENTS.md -g '*RetryCacheErrorHandler*' -g '*TenantPackageServiceImpl*' -g '*TenantServiceImpl*' -g '*Cache*Config*'" in E:\zszj-wt-perm-004-a
+ succeeded in 51ms:
+ .../redis/config/ZszjCacheAutoConfiguration.java   | 12 ++-
+ .../redis/core/RetryCacheErrorHandler.java         | 87 ++++++++++++++++++++++
+ .../service/tenant/TenantPackageServiceImpl.java   |  4 +-
+ .../system/service/tenant/TenantServiceImpl.java   | 13 +++-
+ .../permission/PermissionCacheConsistencyTest.java | 11 ++-
+ .../src/main/resources/application.yaml            |  2 -
+ 6 files changed, 119 insertions(+), 10 deletions(-)
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\tenant\TenantServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\tenant\TenantPackageServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantPackageServiceImpl.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-redis\src\main\java\cn\zszj\framework\redis\core\RetryCacheErrorHandler.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-redis\src\main\java\cn\zszj\framework\redis\config\ZszjCacheAutoConfiguration.java
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git diff f9e4a6a0..HEAD; git log -5 --oneline' in E:\zszj-wt-perm-004-a
+ succeeded in 0ms:
+diff --git a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java
+index e49b2a75..abc21632 100644
+--- a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java
++++ b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java
+@@ -5,6 +5,8 @@ import cn.zszj.framework.redis.core.TimeoutRedisCacheManager;
+ import org.springframework.boot.autoconfigure.AutoConfiguration;
+ import org.springframework.boot.autoconfigure.cache.CacheProperties;
+ import org.springframework.boot.context.properties.EnableConfigurationProperties;
++import org.springframework.cache.interceptor.CacheErrorHandler;
++import org.springframework.cache.annotation.CachingConfigurer;
+ import org.springframework.cache.annotation.EnableCaching;
+ import org.springframework.context.annotation.Bean;
+ import org.springframework.context.annotation.Primary;
+@@ -27,7 +29,15 @@ import static cn.zszj.framework.redis.config.ZszjRedisAutoConfiguration.buildRed
+ @AutoConfiguration
+ @EnableConfigurationProperties({CacheProperties.class, ZszjCacheProperties.class})
+ @EnableCaching
+-public class ZszjCacheAutoConfiguration {
++public class ZszjCacheAutoConfiguration implements CachingConfigurer {
++
++    /**
++     * ZS-PERM-004.A codex r0 P1：驱逐/清空失败同步重试 + ERROR 证据（撤权一致性加固）。
++     */
++    @Override
++    public CacheErrorHandler errorHandler() {
++        return new cn.zszj.framework.redis.core.RetryCacheErrorHandler();
++    }
+ 
+     /**
+      * RedisCacheConfiguration Bean
+diff --git a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java
+new file mode 100644
+index 00000000..a3b9056a
+--- /dev/null
++++ b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java
+@@ -0,0 +1,87 @@
++package cn.zszj.framework.redis.core;
++
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.cache.Cache;
++import org.springframework.cache.annotation.CachingConfigurer;
++import org.springframework.lang.NonNull;
++import org.springframework.lang.Nullable;
++
++/**
++ * ZS-PERM-004.A codex r0 P1 加固：缓存操作失败的「重试 + 显式证据」处理器。
++ *
++ * <p>背景：撤权/停用依赖「事务提交后驱逐缓存」；驱逐瞬时失败（Redis 抖动）会让旧授权条目残留。
++ * 本处理器对 evict/clear 失败<b>同步重试 2 次</b>（覆盖瞬时抖动，权限链路宁可多等也不留旧授权）；
++ * 仍失败则 ERROR 结构化日志显式登记【缓存名 + 键 + 风险 + 修复动作】——这是可重放修复证据，
++ * 彻底的可靠补偿（失败键清单持久化 + 定时重放）归 ZS-LOGIN-005.B（B05 JOB-002）。
++ *
++ * <p>读/写失败不重试：get 异常等价未命中（回源 DB）、put 异常同理，均无安全风险。
++ *
++ * <p>实现 {@link org.springframework.cache.CacheErrorHandler}；经 {@code CachingConfigurer#errorHandler()}
++ * 注册后对全项目 @Cacheable/@CacheEvict 生效。
++ *
++ * @author ZS-PERM-004.A
++ */
++@Slf4j
++public class RetryCacheErrorHandler implements org.springframework.cache.interceptor.CacheErrorHandler {
++
++    private static final int MAX_RETRIES = 2;
++    private static final long RETRY_INTERVAL_MS = 100L;
++
++    @Override
++    public void handleCacheGetError(@NonNull RuntimeException exception, @NonNull Cache cache, @Nullable Object key) {
++        log.warn("[handleCacheGetError][cache({}) key({}) 读取失败按未命中回源处理]", cache.getName(), key, exception);
++    }
++
++    @Override
++    public void handleCachePutError(@NonNull RuntimeException exception, @NonNull Cache cache, @Nullable Object key, @Nullable Object value) {
++        log.warn("[handleCachePutError][cache({}) key({}) 写入失败（缓存 miss 仍可回源，无安全风险）]", cache.getName(), key, exception);
++    }
++
++    @Override
++    public void handleCacheEvictError(@NonNull RuntimeException exception, @NonNull Cache cache, @Nullable Object key) {
++        retryEvict(cache, key, 1);
++    }
++
++    @Override
++    public void handleCacheClearError(@NonNull RuntimeException exception, @NonNull Cache cache) {
++        retryClear(cache, 1);
++    }
++
++    private void retryEvict(Cache cache, Object key, int attempt) {
++        try {
++            cache.evict(key);
++            log.warn("[retryEvict][cache({}) key({}) 第 {} 次重试驱逐成功]", cache.getName(), key, attempt);
++        } catch (RuntimeException ex) {
++            if (attempt <= MAX_RETRIES) {
++                sleep();
++                retryEvict(cache, key, attempt + 1);
++                return;
++            }
++            log.error("[retryEvict][cache({}) key({}) 驱逐重试 {} 次仍失败——旧授权条目残留，鉴权可能继续放行！"
++                    + "修复动作：人工 DEL 该键或等待 TTL 过期；可靠重放补偿归 ZS-LOGIN-005.B]", cache.getName(), key, attempt, ex);
++        }
++    }
++
++    private void retryClear(Cache cache, int attempt) {
++        try {
++            cache.clear();
++            log.warn("[retryClear][cache({}) 第 {} 次重试清空成功]", cache.getName(), attempt);
++        } catch (RuntimeException ex) {
++            if (attempt <= MAX_RETRIES) {
++                sleep();
++                retryClear(cache, attempt + 1);
++                return;
++            }
++            log.error("[retryClear][cache({}) 清空重试 {} 次仍失败——陈旧授权条目残留！"
++                    + "修复动作：人工清空该 cache 前缀键或等待 TTL；可靠重放补偿归 ZS-LOGIN-005.B]", cache.getName(), attempt, ex);
++        }
++    }
++
++    private void sleep() {
++        try {
++            Thread.sleep(RETRY_INTERVAL_MS);
++        } catch (InterruptedException ex) {
++            Thread.currentThread().interrupt();
++        }
++    }
++}
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java
+index fe924202..35ad7154 100755
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java
+@@ -2,6 +2,7 @@ package cn.zszj.module.system.service.tenant;
+ 
+ import cn.hutool.core.collection.CollUtil;
+ import cn.hutool.core.util.StrUtil;
++import org.springframework.transaction.annotation.Transactional;
+ import cn.zszj.framework.common.enums.CommonStatusEnum;
+ import cn.zszj.framework.common.pojo.PageResult;
+ import cn.zszj.framework.common.catalog.ModuleCatalog;
+@@ -60,7 +61,8 @@ public class TenantPackageServiceImpl implements TenantPackageService {
+     }
+ 
+     @Override
+-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
++    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional（同 TenantServiceImpl——统一事务生命周期，驱逐与提交同序）
++    @Transactional(rollbackFor = Exception.class)
+     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
+         // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
+         validateTenantPackageMenus(updateReqVO.getMenuIds());
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java
+index 00bd43c0..6d4fdbe8 100755
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java
+@@ -35,6 +35,7 @@ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.context.annotation.Lazy;
+ import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
+ import org.springframework.validation.annotation.Validated;
+ 
+ import java.util.List;
+@@ -95,7 +96,9 @@ public class TenantServiceImpl implements TenantService {
+     }
+ 
+     @Override
+-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
++    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
++    // 为空操作，内层 Spring 事务提交驱逐缓存而 DB 要等外层 DS 结束才提交，留有「他连接回填旧授权、外层提交后无最终驱逐」窗口；
++    // system 模块单库，统一 Spring 事务生命周期
+     @DataPermission(enable = false) // 参见 https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1154 说明
+     public Long createTenant(TenantSaveReqVO createReqVO) {
+         // 校验租户名称是否重复
+@@ -140,7 +143,10 @@ public class TenantServiceImpl implements TenantService {
+     }
+ 
+     @Override
+-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
++    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
++    // 为空操作，内层 Spring 事务提交驱逐缓存而 DB 要等外层 DS 结束才提交，留有「他连接回填旧授权、外层提交后无最终驱逐」窗口；
++    // system 模块单库，统一 Spring 事务生命周期
++    @Transactional(rollbackFor = Exception.class)
+     public void updateTenant(TenantSaveReqVO updateReqVO) {
+         // 校验存在
+         TenantDO tenant = validateUpdateTenant(updateReqVO.getId());
+@@ -190,7 +196,8 @@ public class TenantServiceImpl implements TenantService {
+     }
+ 
+     @Override
+-    @DSTransactional
++    // ZS-PERM-004.A codex r0 P1：同上——统一 Spring 事务生命周期（本方法由套餐/租户更新链调用，驱逐须与提交同序）
++    @Transactional(rollbackFor = Exception.class)
+     public void updateTenantRoleMenu(Long tenantId, Set<Long> menuIds) {
+         TenantUtils.execute(tenantId, () -> {
+             // 获得所有角色
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/permission/PermissionCacheConsistencyTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/permission/PermissionCacheConsistencyTest.java
+index 0ffd76c0..d8bbc26c 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/permission/PermissionCacheConsistencyTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/permission/PermissionCacheConsistencyTest.java
+@@ -104,11 +104,16 @@ public class PermissionCacheConsistencyTest extends BaseDbAndRedisUnitTest {
+ 
+     private static final String TEST_PERMISSION = "zs:perm-004:consistency";
+ 
+-    // ========== ① 并发回填：驱逐早于提交的窗口被另一连接回填旧值 ==========
++    // ========== ① 并发回填：提交后驱逐使「他连接回填旧授权」最终自愈 ==========
+ 
+     /**
+-     * RED：修复前 @CacheEvict 在事务提交前执行——「已驱逐、未提交」窗口内，另一连接（模拟其他节点）
+-     * 回读库中旧值重新入缓存；提交后陈旧条目存活，停用角色继续取权。
++     * 契约验证（codex r0 P2 改良）：本用例实证本仓库当前装配下（cache advisor 在 tx advisor 外层）
++     * 驱逐发生在提交后——「已驱逐、未提交」窗口不存在，他连接回填的旧值在提交后被驱逐清除。
++     *
++     * <p><b>已知残余窗口（登记延后）</b>：若他连接在「DB 读完成、缓存写入」间被屏障暂停，且写事务提交
++     * 并完成驱逐后该读线程才把旧值写回缓存——晚到旧值一次驱逐无法清除。彻底闭环需「权限版本校验 /
++     * 防旧值写回」机制，与驱逐失败的可靠补偿（RetryCacheErrorHandler 的 ERROR 证据消费）一并归
++     * ZS-LOGIN-005.B（B05）或独立小卡处置。
+      */
+     @Test
+     public void testUpdateRoleStatus_committedTx_staleBackfillFromOtherConnection_selfHeals() throws Exception {
+diff --git a/services/zhongshu-core/zszj-server/src/main/resources/application.yaml b/services/zhongshu-core/zszj-server/src/main/resources/application.yaml
+index 809f5b47..2bf570d5 100644
+--- a/services/zhongshu-core/zszj-server/src/main/resources/application.yaml
++++ b/services/zhongshu-core/zszj-server/src/main/resources/application.yaml
+@@ -345,8 +345,6 @@ zszj:
+     ignore-caches:
+       - user_role_ids
+       - permission_menu_ids
+-      - role # ZS-PERM-004.A：role 以全局主键 id 为键，与 user_role_ids/permission_menu_ids 同为跨技术租户单键空间，避免「租户后缀键/裸键」双键空间驱逐错位
+-      - menu_role_ids # 同上：以全局主键 menuId 为键
+       - oauth_client
+       - notify_template
+       - mail_account
+3c9eb759 fix(perm-004-a): codex r0 3×P1+2×P2（回滚 ignore-caches 误增项——role/menu_role_ids 底层 SQL 有租户过滤裸键共享会跨租户串数据 + 租户/套餐三方法 @DSTransactional 统一 @Transactional 消除 DS 空提交窗口 + RetryCacheErrorHandler 驱逐失败重试与 ERROR 证据 + 并发用例残余窗口如实登记）
+f9e4a6a0 fix(perm-004-a): 角色缓存一致性三修复（deleteRoleList 补 ROLE 缓存驱逐 [RED 实证] + assign 两方法 @DSTransactional 改 @Transactional 统一 Spring 事务同步 + role/menu_role_ids 入 ignore-caches 消除双键空间驱逐错位）+ 5 缓存一致性契约测试 [ZS-PERM-004.A]
+65d6bd8c docs(login-005-a): ZS-LOGIN-005.A 收口文档同步（三层闭环 + codex r0→r3 四弧处置入库）+ 主卡转开发中 + docs/05 V1.32
+10552888 Merge branch 'feat/login-005-a' (ZS-LOGIN-005.A 权威撤销校验与提交后缓存失效，codex r0→r3 四弧评审收敛：DB 权威核验 flushCache 绕一级缓存/afterCompletion 单次失效与发布/回滚与 UNKNOWN 保守清理)
+4df6993c fix(login-005-a): codex r2 P2——长事务重核验测试改 T2 仅撤 DB 行保留缓存条目（否则缓存未命中早退 401 测不到 flushCache 权威 count），补缓存仍在/自愈 evict 断言
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Path E:\\AGENTS.md,E:\\zszj-wt-perm-004-a\\AGENTS.md -ErrorAction SilentlyContinue | ForEach-Object { "'$_.FullName; Get-Content -LiteralPath $_.FullName }; rg -n '"'CachingConfigurer|CacheErrorHandler|@DS\\(|@DSTransactional|DynamicDataSource|transactionAware|TransactionAware' services/zhongshu-core/zszj-framework services/zhongshu-core/zszj-module-system services/zhongshu-core/zszj-server" in E:\zszj-wt-perm-004-a
+ succeeded in 9ms:
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java; Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/TimeoutRedisCacheManager.java; Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/redis/TenantRedisCacheManager.java; rg -n '@DS|DSTransactional|DataSourceTransactionManager|TransactionManager|dynamic-datasource|spring-boot.version|spring.version' services/zhongshu-core --glob '*.java' --glob '*pom.xml' --glob '*yaml'" in E:\zszj-wt-perm-004-a
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Content services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java; Get-Content services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java' in E:\zszj-wt-perm-004-a
+ succeeded in 7ms:
+ succeeded in 135ms:
+services/zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\permission\PermissionCacheConsistencyTest.java:24:import org.springframework.transaction.PlatformTransactionManager;
+services/zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\permission\PermissionCacheConsistencyTest.java:66:    private PlatformTransactionManager transactionManager;
+services/zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplCacheConsistencyTest.java:16:import org.springframework.transaction.PlatformTransactionManager;
+services/zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplCacheConsistencyTest.java:65:    private PlatformTransactionManager transactionManager;
+services/zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantServiceImpl.java:32:import com.baomidou.dynamic.datasource.annotation.DSTransactional;
+services/zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantServiceImpl.java:99:    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
+services/zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantServiceImpl.java:146:    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
+services/zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantPackageServiceImpl.java:17:import com.baomidou.dynamic.datasource.annotation.DSTransactional;
+services/zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\permission\PermissionServiceImpl.java:141:    // ZS-PERM-004.A：改用 Spring @Transactional——@DSTransactional（dynamic-datasource 本地事务）
+services/zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\permission\PermissionServiceImpl.java:217:    // ZS-PERM-004.A：改用 Spring @Transactional——@DSTransactional（dynamic-datasource 本地事务）
+services/zhongshu-core\zszj-module-iot\zszj-module-iot-biz\src\main\java\cn\zszj\module\iot\framework\tdengine\core\annotation\TDengineDS.java:15:@DS("tdengine")
+services/zhongshu-core\zszj-module-iot\zszj-module-iot-biz\src\main\java\cn\zszj\module\iot\service\product\IotProductServiceImpl.java:16:import com.baomidou.dynamic.datasource.annotation.DSTransactional;
+services/zhongshu-core\zszj-module-iot\zszj-module-iot-biz\src\main\java\cn\zszj\module\iot\service\product\IotProductServiceImpl.java:146:    @DSTransactional(rollbackFor = Exception.class)
+services/zhongshu-core\zszj-module-hrm\src\test\java\cn\zszj\module\hrm\service\employee\info\HrmEmployeeServiceImplTest.java:66:import org.springframework.transaction.PlatformTransactionManager;
+services/zhongshu-core\zszj-module-hrm\src\test\java\cn\zszj\module\hrm\service\employee\info\HrmEmployeeServiceImplTest.java:131:        TransactionTemplate transactionTemplate(PlatformTransactionManager transactionManager) {
+
+codex
+已发现 `createTenant` 也被改动：原事务注解被删除，但没有补上 `@Transactional`。另外，缓存管理器启用了事务感知，我正在核对提交后驱逐的异常是否能进入新注册的错误处理器。
+web search: 
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -Encoding UTF8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/PermissionServiceImpl.java; Get-Content -Encoding UTF8 services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/util/TenantUtils.java; rg -n 'spring-boot|checkstyle|javadoc|maven.compiler|java.version' services/zhongshu-core/pom.xml services/zhongshu-core/zszj-dependencies/pom.xml; rg -n 'dynamic:|primary:|datasource:|@DS|DynamicDataSourceContextHolder|setDataSource|push\\(' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant services/zhongshu-core/zszj-server/src/main/resources --glob '*.java' --glob '*.yaml'; Get-ChildItem -LiteralPath C:\\Users\\Administrator\\.m2\\repository\\org\\springframework\\spring-context-support -ErrorAction SilentlyContinue" in E:\zszj-wt-perm-004-a
+ succeeded in 30ms:
+
+
+    Ŀ¼: C:\Users\Administrator\.m2\repository\org\springframework\spring-context-support
+
+
+Mode                 LastWriteTime         Length Name                                                                 
+----                 -------------         ------ ----                                                                 
+d-----          2026/9/8     20:59                6.2.19                                                               
+
+
+
+web search: https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.7/spring-context-support/src/main/java/org/springframework/cache/transaction/TransactionAwareCacheDecorator.java
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Command java,javap,jshell -ErrorAction SilentlyContinue | Select-Object Name,Source; Get-ChildItem -LiteralPath C:\\Users\\Administrator\\.m2\\repository\\org\\springframework\\spring-context-support\\6.2.19; rg -n 'class TenantController|createTenant\\(|@Transactional|createUser\\(|createRole\\(' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/tenant/TenantController.java services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/RoleServiceImpl.java; rg -n 'RetryCache|fail|throw|ZszjCacheAutoConfiguration' services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/permission/PermissionCacheConsistencyTest.java; git diff --check f9e4a6a0..HEAD" in E:\zszj-wt-perm-004-a
+ succeeded in 79ms:
+
+
+    Ŀ¼: C:\Users\Administrator\.m2\repository\org\springframework\spring-context-support\6.2.19
+
+
+Mode                 LastWriteTime         Length Name                                                                 
+----                 -------------         ------ ----                                                                 
+-a----          2026/9/8     20:59         175412 spring-context-support-6.2.19.jar                                    
+-a----          2026/9/8     20:59             40 spring-context-support-6.2.19.jar.sha1                               
+-a----          2026/9/8     20:59           2436 spring-context-support-6.2.19.pom                                    
+-a----          2026/9/8     20:59             40 spring-context-support-6.2.19.pom.sha1                               
+-a----          2026/9/8     20:59            238 _remote.repositories                                                 
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/RoleServiceImpl.java:55:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/RoleServiceImpl.java:58:    public Long createRole(RoleSaveReqVO createReqVO, Integer type) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/RoleServiceImpl.java:108:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/RoleServiceImpl.java:126:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:100:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:103:    public Long createUser(UserSaveReqVO createReqVO) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:155:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:228:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:249:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:271:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:314:     * <p>调用方<b>必须</b>处于 {@code @Transactional} 中：撤销失败则回滚状态变更 ——
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:328:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:352:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:626:    @Transactional(rollbackFor = Exception.class) // 添加事务，异常则回滚所有导入
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/tenant/TenantController.java:39:public class TenantController {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/tenant/TenantController.java:81:    public CommonResult<Long> createTenant(@Valid @RequestBody TenantSaveReqVO createReqVO) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/tenant/TenantController.java:82:        return success(tenantService.createTenant(createReqVO));
+6:import cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration;
+53:@Import({ZszjCacheAutoConfiguration.class, RoleServiceImpl.class, PermissionServiceImpl.class})
+115:     * 防旧值写回」机制，与驱逐失败的可靠补偿（RetryCacheErrorHandler 的 ERROR 证据消费）一并归
+119:    public void testUpdateRoleStatus_committedTx_staleBackfillFromOtherConnection_selfHeals() throws Exception {
+154:                throw new RuntimeException(ex);
+160:            throw new RuntimeException("其他节点读取失败", readerError.get());
+175:    public void testUpdateRoleStatus_rolledBackTx_cacheKeptConsistent() throws Exception {
+185:                throw new RuntimeException("强制回滚");
+
+
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Path C:\\,E:\\ -Directory -ErrorAction SilentlyContinue | Select-Object FullName; Get-ChildItem -Path 'C:\\Program Files\\Java','C:\\Program Files\\Microsoft','C:\\tools','E:\\tools' -Directory -ErrorAction SilentlyContinue | Select-Object FullName; rg -n 'JAVA_HOME|jdk-17|jdk-21' --glob '*.ps1' --glob '*.cmd' --glob '*.md' .github scripts services/zhongshu-core 2>"'$null' in E:\zszj-wt-perm-004-a
+ exited 1 in 18ms:
+FullName                                
+--------                                
+C:\inetpub                              
+C:\Program Files                        
+C:\Program Files (x86)                  
+C:\Users                                
+C:\Windows                              
+E:\.pnpm-store                          
+E:\migprobe                             
+E:\migshield                            
+E:\other?                               
+E:\tmp                                  
+E:\zszj-base-check                      
+E:\zszj-wt-cfg-001-b                    
+E:\zszj-wt-cfg-004                      
+E:\zszj-wt-client-003                   
+E:\zszj-wt-db-019-b                     
+E:\zszj-wt-login-001                    
+E:\zszj-wt-login-002                    
+E:\zszj-wt-login-003                    
+E:\zszj-wt-perm-004-a                   
+E:\zszj-wt-sec-004                      
+E:\zszj-wt-sec-006                      
+E:\zszj-wt-sec-010                      
+E:\zszj-wt-sec-011-a                    
+E:\����֮��AI����ƽ̨����               
+E:\����֮�ұ����������                 
+E:\����֮�ұ������Ƶ����               
+E:\����֮�����ƽ̨                     
+E:\����֮����Ӫƽ̨                     
+E:\众墅之家设计平台                
+E:\众墅之家爆款短视频创作\.dev-env
+C:\Program Files\Microsoft\Edge         
+
+
+
+web search: 
+web search: https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/cache/transaction/TransactionAwareCacheDecorator.html
+web search: 
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg --files -g '*java*' -g '*env*' -g '*mvn*' -g 'AGENTS.md' -g '*review*' -g '*PERM-004*' -g '*perm-004*'; Get-ChildItem -Path C:\\Users\\Administrator\\.jdks,C:\\Users\\Administrator\\scoop\\apps,'E:\\众墅之家爆款短视频创作\\.dev-env' -Directory -ErrorAction SilentlyContinue | Select-Object FullName; "'$reviewFiles = @('"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java','services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java'); foreach ("'$reviewFile in $reviewFiles) { $reviewLines = Get-Content -LiteralPath $reviewFile -Encoding UTF8; for ($reviewIndex=0; $reviewIndex -lt $reviewLines.Length; $reviewIndex++) { if (($reviewFile -like '"'*Retry*') -or ("'$reviewIndex -ge 96 -and $reviewIndex -le 127)) { '"'{0}:{1}: {2}' -f "'$reviewFile,($reviewIndex+1),$reviewLines[$reviewIndex] } } }' in E:\zszj-wt-perm-004-a
+ succeeded in 74ms:
+
+FullName                                                
+--------                                                
+E:\����֮�ұ������Ƶ����\.dev-env\cw055-worktree-backup
+E:\����֮�ұ������Ƶ����\.dev-env\cw062-branch-client  
+E:\����֮�ұ������Ƶ����\.dev-env\cw062_shard_logs     
+E:\����֮�ұ������Ƶ����\.dev-env\cw062_shard_runners  
+E:\����֮�ұ������Ƶ����\.dev-env\local-joint          
+E:\����֮�ұ������Ƶ����\.dev-env\pyshim               
+E:\����֮�ұ������Ƶ����\.dev-env\storage              
+E:\����֮�ұ������Ƶ����\.dev-env\__pycache__          
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:97: 
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:98:     @Override
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:99:     // ZS-PERM-004.A codex r0 P1������ Spring @Transactional������� @DSTransactional �� DS ConnectionProxy.commit()
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:100:     // Ϊ�ղ������ڲ� Spring �����ύ���𻺴�� DB Ҫ����� DS �������ύ�����С������ӻ������Ȩ������ύ�����������𡹴��ڣ�
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:101:     // system ģ�鵥�⣬ͳһ Spring ������������
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:102:     @DataPermission(enable = false) // �μ� https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1154 ˵��
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:103:     public Long createTenant(TenantSaveReqVO createReqVO) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:104:         // У���⻧�����Ƿ��ظ�
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:105:         validTenantNameDuplicate(createReqVO.getName(), null);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:106:         // У���⻧�����Ƿ��ظ�
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:107:         validTenantWebsiteDuplicate(createReqVO.getWebsites(), null);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:108:         // У���ײͱ�����
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:109:         TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(createReqVO.getPackageId());
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:110: 
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:111:         // �����⻧
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:112:         TenantDO tenant = BeanUtils.toBean(createReqVO, TenantDO.class);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:113:         tenantMapper.insert(tenant);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:114:         // �����⻧�Ĺ���Ա
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:115:         TenantUtils.execute(tenant.getId(), () -> {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:116:             // ������ɫ
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:117:             Long roleId = createRole(tenantPackage);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:118:             // �����û����������ɫ
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:119:             Long userId = createUser(roleId, createReqVO);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:120:             // �޸��⻧�Ĺ���Ա
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:121:             tenantMapper.updateById(new TenantDO().setId(tenant.getId()).setContactUserId(userId));
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:122:         });
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:123:         return tenant.getId();
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:124:     }
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:125: 
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:126:     private Long createUser(Long roleId, TenantSaveReqVO createReqVO) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:127:         // �����û�
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:128:         Long userId = userService.createUser(TenantConvert.INSTANCE.convert02(createReqVO));
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:1: package cn.zszj.framework.redis.core;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:2: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:3: import lombok.extern.slf4j.Slf4j;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:4: import org.springframework.cache.Cache;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:5: import org.springframework.cache.annotation.CachingConfigurer;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:6: import org.springframework.lang.NonNull;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:7: import org.springframework.lang.Nullable;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:8: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:9: /**
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:10:  * ZS-PERM-004.A codex r0 P1 �ӹ̣��������ʧ�ܵġ����� + ��ʽ֤�ݡ���������
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:11:  *
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:12:  * <p>��������Ȩ/ͣ�������������ύ�����𻺴桹������˲ʱʧ�ܣ�Redis ���������þ���Ȩ��Ŀ������
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:13:  * ���������� evict/clear ʧ��<b>ͬ������ 2 ��</b>������˲ʱ������Ȩ����·���ɶ��Ҳ��������Ȩ����
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:14:  * ��ʧ���� ERROR �ṹ����־��ʽ�Ǽǡ������� + �� + ���� + �޸��������������ǿ��ط��޸�֤�ݣ�
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:15:  * ���׵Ŀɿ�������ʧ�ܼ��嵥�־û� + ��ʱ�طţ��� ZS-LOGIN-005.B��B05 JOB-002����
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:16:  *
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:17:  * <p>��/дʧ�ܲ����ԣ�get �쳣�ȼ�δ���У���Դ DB����put �쳣ͬ�������ް�ȫ���ա�
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:18:  *
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:19:  * <p>ʵ�� {@link org.springframework.cache.CacheErrorHandler}���� {@code CachingConfigurer#errorHandler()}
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:20:  * ע����ȫ��Ŀ @Cacheable/@CacheEvict ��Ч��
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:21:  *
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:22:  * @author ZS-PERM-004.A
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:23:  */
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:24: @Slf4j
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:25: public class RetryCacheErrorHandler implements org.springframework.cache.interceptor.CacheErrorHandler {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:26: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:27:     private static final int MAX_RETRIES = 2;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:28:     private static final long RETRY_INTERVAL_MS = 100L;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:29: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:30:     @Override
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:31:     public void handleCacheGetError(@NonNull RuntimeException exception, @NonNull Cache cache, @Nullable Object key) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:32:         log.warn("[handleCacheGetError][cache({}) key({}) ��ȡʧ�ܰ�δ���л�Դ����]", cache.getName(), key, exception);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:33:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:34: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:35:     @Override
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:36:     public void handleCachePutError(@NonNull RuntimeException exception, @NonNull Cache cache, @Nullable Object key, @Nullable Object value) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:37:         log.warn("[handleCachePutError][cache({}) key({}) д��ʧ�ܣ����� miss �Կɻ�Դ���ް�ȫ���գ�]", cache.getName(), key, exception);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:38:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:39: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:40:     @Override
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:41:     public void handleCacheEvictError(@NonNull RuntimeException exception, @NonNull Cache cache, @Nullable Object key) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:42:         retryEvict(cache, key, 1);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:43:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:44: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:45:     @Override
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:46:     public void handleCacheClearError(@NonNull RuntimeException exception, @NonNull Cache cache) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:47:         retryClear(cache, 1);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:48:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:49: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:50:     private void retryEvict(Cache cache, Object key, int attempt) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:51:         try {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:52:             cache.evict(key);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:53:             log.warn("[retryEvict][cache({}) key({}) �� {} ����������ɹ�]", cache.getName(), key, attempt);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:54:         } catch (RuntimeException ex) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:55:             if (attempt <= MAX_RETRIES) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:56:                 sleep();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:57:                 retryEvict(cache, key, attempt + 1);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:58:                 return;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:59:             }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:60:             log.error("[retryEvict][cache({}) key({}) �������� {} ����ʧ�ܡ�������Ȩ��Ŀ��������Ȩ���ܼ������У�"
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:61:                     + "�޸��������˹� DEL �ü���ȴ� TTL ���ڣ��ɿ��طŲ����� ZS-LOGIN-005.B]", cache.getName(), key, attempt, ex);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:62:         }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:63:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:64: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:65:     private void retryClear(Cache cache, int attempt) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:66:         try {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:67:             cache.clear();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:68:             log.warn("[retryClear][cache({}) �� {} ��������ճɹ�]", cache.getName(), attempt);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:69:         } catch (RuntimeException ex) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:70:             if (attempt <= MAX_RETRIES) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:71:                 sleep();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:72:                 retryClear(cache, attempt + 1);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:73:                 return;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:74:             }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:75:             log.error("[retryClear][cache({}) ������� {} ����ʧ�ܡ����¾���Ȩ��Ŀ������"
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:76:                     + "�޸��������˹���ո� cache ǰ׺����ȴ� TTL���ɿ��طŲ����� ZS-LOGIN-005.B]", cache.getName(), attempt, ex);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:77:         }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:78:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:79: 
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:80:     private void sleep() {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:81:         try {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:82:             Thread.sleep(RETRY_INTERVAL_MS);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:83:         } catch (InterruptedException ex) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:84:             Thread.currentThread().interrupt();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:85:         }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:86:     }
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:87: }
+
+
+
+web search: https://github.com/spring-projects/spring-framework/blob/v6.2.19/spring-context-support/src/main/java/org/springframework/cache/transaction/TransactionAwareCacheDecorator.java
+web search: 
+web search: 'public void evict'
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Path C:\\Users\\Administrator\\.jdks,C:\\Users\\Administrator\\scoop\\apps,'E:\\众墅之家爆款短视频创作\\.dev-env' -Directory -ErrorAction SilentlyContinue | Select-Object FullName; rg -n 'Conditional|Primary|redisCacheManager|setTransactionAware' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/config/ZszjTenantAutoConfiguration.java; rg -n 'ZszjCacheAutoConfiguration' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/resources; rg -n '@CachePut|beforeInvocation\\s*=\\s*true' services/zhongshu-core/zszj-module-system/src/main/java; git status --short" in E:\zszj-wt-perm-004-a
+ succeeded in 57ms:
+warning: unable to access 'C:\Users\Administrator/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\Administrator/.config/git/ignore': Permission denied
+FullName                                                
+--------                                                
+E:\����֮�ұ������Ƶ����\.dev-env\cw055-worktree-backup
+E:\����֮�ұ������Ƶ����\.dev-env\cw062-branch-client  
+E:\����֮�ұ������Ƶ����\.dev-env\cw062_shard_logs     
+E:\����֮�ұ������Ƶ����\.dev-env\cw062_shard_runners  
+E:\����֮�ұ������Ƶ����\.dev-env\local-joint          
+E:\����֮�ұ������Ƶ����\.dev-env\pyshim               
+E:\����֮�ұ������Ƶ����\.dev-env\storage              
+E:\����֮�ұ������Ƶ����\.dev-env\__pycache__          
+
+
+
+codex
+已确认：当前调用链没有 DS 切换，三个更新方法改用 Spring 事务成立；`TenantPackageServiceImpl` 的 import 位置合法；ignore-caches 回滚和残余窗口注释也符合处置说明。
+
+仍有两个 P1：`createTenant` 丢失外层事务，以及提交后缓存驱逐异常绕过 `CachingConfigurer.errorHandler()`，导致重试和 ERROR 证据均不执行。另外，重试边界实际执行了 3 次重试。此次为静态审查，未运行测试。
+codex
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:99",
+      "issue": "createTenant 删除了 @DSTransactional，却未补上 @Transactional。租户插入及内部角色、授权操作会分别提交；后续创建管理员或绑定角色失败时，无法整体回滚，留下不完整租户。",
+      "suggestion": "为 createTenant 补上 @Transactional(rollbackFor = Exception.class)，并验证管理员创建失败时租户、角色及授权记录全部回滚。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java:38",
+      "issue": "errorHandler 注册方式有效，但无法覆盖本轮关键路径：外层租户/套餐事务调用 assignRoleMenu 时，transactionAware 缓存只登记回调，实际 clear/evict 在 afterCommit 直接调用底层 Cache。此时异常绕过缓存拦截器，RetryCacheErrorHandler 不会执行，既无重试也无约定的 ERROR 证据，并可能中断后续缓存清理。依据：[Spring 6.2.19 源码](https://github.com/spring-projects/spring-framework/blob/v6.2.19/spring-context-support/src/main/java/org/springframework/cache/transaction/TransactionAwareCacheDecorator.java)。",
+      "suggestion": "在事务装饰器内部的实际 Cache 操作层，或自定义 afterCommit 回调内实现重试与最终失败记录；确保单项失败不阻断其余清理。补充外层事务提交时注入 clear/evict 故障的测试，验证重试次数、日志及后续清理。"
+    },
+    {
+      "severity": "P3",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:55",
+      "issue": "retryEvict/retryClear 从 attempt=1 开始，失败后以 attempt <= MAX_RETRIES 递归，因此实际重试 3 次，加上首次操作共 4 次，与声明的重试 2 次不符。",
+      "suggestion": "将递归条件改为 attempt < MAX_RETRIES，或使用明确执行两次的循环，并验证持续失败时底层操作总计调用 3 次。"
+    }
+  ]
+}
+tokens used
+57,939
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java:99",
+      "issue": "createTenant 删除了 @DSTransactional，却未补上 @Transactional。租户插入及内部角色、授权操作会分别提交；后续创建管理员或绑定角色失败时，无法整体回滚，留下不完整租户。",
+      "suggestion": "为 createTenant 补上 @Transactional(rollbackFor = Exception.class)，并验证管理员创建失败时租户、角色及授权记录全部回滚。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjCacheAutoConfiguration.java:38",
+      "issue": "errorHandler 注册方式有效，但无法覆盖本轮关键路径：外层租户/套餐事务调用 assignRoleMenu 时，transactionAware 缓存只登记回调，实际 clear/evict 在 afterCommit 直接调用底层 Cache。此时异常绕过缓存拦截器，RetryCacheErrorHandler 不会执行，既无重试也无约定的 ERROR 证据，并可能中断后续缓存清理。依据：[Spring 6.2.19 源码](https://github.com/spring-projects/spring-framework/blob/v6.2.19/spring-context-support/src/main/java/org/springframework/cache/transaction/TransactionAwareCacheDecorator.java)。",
+      "suggestion": "在事务装饰器内部的实际 Cache 操作层，或自定义 afterCommit 回调内实现重试与最终失败记录；确保单项失败不阻断其余清理。补充外层事务提交时注入 clear/evict 故障的测试，验证重试次数、日志及后续清理。"
+    },
+    {
+      "severity": "P3",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/core/RetryCacheErrorHandler.java:55",
+      "issue": "retryEvict/retryClear 从 attempt=1 开始，失败后以 attempt <= MAX_RETRIES 递归，因此实际重试 3 次，加上首次操作共 4 次，与声明的重试 2 次不符。",
+      "suggestion": "将递归条件改为 attempt < MAX_RETRIES，或使用明确执行两次的循环，并验证持续失败时底层操作总计调用 3 次。"
+    }
+  ]
+}

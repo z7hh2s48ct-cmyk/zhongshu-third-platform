@@ -1,0 +1,36 @@
+﻿[ERROR] COMPILATION ERROR : 
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/dept/DeptServiceImplTest.java:[164,66] 找不到符号
+  符号:   变量 DEPT_EXITS_USERS
+  位置: 类 cn.zszj.module.system.service.dept.DeptServiceImplTest
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/dept/DeptServiceImplTest.java:[186,71] 找不到符号
+  符号:   变量 DEPT_EXITS_USERS
+  位置: 类 cn.zszj.module.system.service.dept.DeptServiceImplTest
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplTest.java:[323,70] 找不到符号
+  符号:   变量 USER_IS_DEPT_LEADER
+  位置: 类 cn.zszj.module.system.service.user.AdminUserServiceImplTest
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplTest.java:[363,71] 找不到符号
+  符号:   变量 USER_IS_DEPT_LEADER
+  位置: 类 cn.zszj.module.system.service.user.AdminUserServiceImplTest
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.14.0:testCompile (default-testCompile) on project zszj-module-system: Compilation failure: Compilation failure: 
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/dept/DeptServiceImplTest.java:[164,66] 找不到符号
+[ERROR]   符号:   变量 DEPT_EXITS_USERS
+[ERROR]   位置: 类 cn.zszj.module.system.service.dept.DeptServiceImplTest
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/dept/DeptServiceImplTest.java:[186,71] 找不到符号
+[ERROR]   符号:   变量 DEPT_EXITS_USERS
+[ERROR]   位置: 类 cn.zszj.module.system.service.dept.DeptServiceImplTest
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplTest.java:[323,70] 找不到符号
+[ERROR]   符号:   变量 USER_IS_DEPT_LEADER
+[ERROR]   位置: 类 cn.zszj.module.system.service.user.AdminUserServiceImplTest
+[ERROR] /E:/zszj-wt-login-001/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplTest.java:[363,71] 找不到符号
+[ERROR]   符号:   变量 USER_IS_DEPT_LEADER
+[ERROR]   位置: 类 cn.zszj.module.system.service.user.AdminUserServiceImplTest
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :zszj-module-system

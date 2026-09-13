@@ -1,0 +1,1537 @@
+Reading additional input from stdin...
+OpenAI Codex v0.154.0
+--------
+workdir: E:\zszj-wt-sec-012-b
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a09b95-13ba-7aa3-a468-7e237b9600c3
+--------
+user
+ZS-SEC-012.B 第 3 轮评审（收敛验证）：r1 的 2×P1+3×P2 已处置：①弃用 AsyncListener 回调，改在 ASYNC 派发内记录访问日志（shouldNotFilterAsyncDispatch=false 使过滤器参与派发；TenantContextWebFilter 在派发期已重建上下文，租户归属正确；无 CommonResult 且状态>=400 记 500 防伪报成功；请求属性幂等护栏防重复）；②run-client-contract-tests.mjs 注释闭合修正 + node 直启本地 vitest 入口跨平台；③夹具放开 ZszjAsyncAutoConfiguration 排除（TTL BPP 生效）+ 池化 bean 改名 applicationTaskExecutor（Boot MVC 异步接线名）；④CI/G12 测试列表补 ApiAccessLogFilterAsyncTest 并加 web 模块。请 git diff 5b3dc38b..HEAD 验证处置正确无新问题，输出 JSON：{"verdict":"PASS|FAIL","findings":[]}。
+codex
+我会检查这段 diff 及相关实现和测试，重点验证异步派发的上下文、日志幂等性和 CI 接线，最后按指定 JSON 输出。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git status --short; git diff --stat 5b3dc38b..HEAD; rg --files -g AGENTS.md' in E:\zszj-wt-sec-012-b
+ exited 1 in 123ms:
+warning: unable to access 'C:\Users\Administrator/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\Administrator/.config/git/ignore': Permission denied
+ .github/workflows/local-baseline-gates.yml         |   4 +-
+ scripts/ops/run-client-contract-tests.mjs          |   6 +-
+ scripts/ops/run-local-gates.mjs                    |   2 +-
+ .../SecurityChainJointRegressionTestBase.java      |  10 +-
+ .../src/test/resources/application-fixture.yaml    |   3 +-
+ .../apilog/core/filter/ApiAccessLogFilter.java     |  54 +++++-----
+ .../core/filter/ApiAccessLogFilterAsyncTest.java   | 112 ++++++++++-----------
+ 7 files changed, 90 insertions(+), 101 deletions(-)
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git diff 5b3dc38b..HEAD' in E:\zszj-wt-sec-012-b
+ succeeded in 0ms:
+diff --git a/.github/workflows/local-baseline-gates.yml b/.github/workflows/local-baseline-gates.yml
+index 86acd6f4..dcc620ba 100644
+--- a/.github/workflows/local-baseline-gates.yml
++++ b/.github/workflows/local-baseline-gates.yml
+@@ -32,6 +32,6 @@ jobs:
+       - name: 运行安全链联合回归（.A 31 + .B 9 + visit 夹具，未授权/失败不伪报成功）
+         working-directory: services/zhongshu-core
+         run: >-
+-          mvn -pl zszj-framework/zszj-spring-boot-starter-biz-tenant -am
+-          -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest
++          mvn -pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am
++          -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest
+           -Dsurefire.failIfNoSpecifiedTests=false test
+diff --git a/scripts/ops/run-client-contract-tests.mjs b/scripts/ops/run-client-contract-tests.mjs
+index 47b65676..93e0f13a 100644
+--- a/scripts/ops/run-client-contract-tests.mjs
++++ b/scripts/ops/run-client-contract-tests.mjs
+@@ -5,7 +5,7 @@
+  * admin-web service 12 用例 + miniapp http/interceptor 36 用例），任一失败即非零退出。
+  * 与 run-local-gates 的 G13 门禁配合：本地与 CI 同一入口。
+  *
+- * 依赖：apps/*/node_modules 已由 pnpm install 安装（CI 由 ZS-CLIENT-005.A 流水线负责）。
++ * 依赖：各 app 的 node_modules 已由 pnpm install 安装（CI 由 ZS-CLIENT-005.A 流水线负责）。
+  */
+ import { spawnSync } from 'node:child_process';
+ import { fileURLToPath } from 'node:url';
+@@ -20,7 +20,9 @@ const apps = [
+ let failed = false;
+ for (const app of apps) {
+   console.log(`[client-contract] 运行 ${app.name} vitest …`);
+-  const r = spawnSync('npx', ['vitest', 'run'], { cwd: join(root, app.dir), encoding: 'utf8', stdio: 'inherit' });
++  // codex r1 P2：跨平台——Windows 下 npx 是 npx.cmd，spawnSync 不经 shell 无法运行；改为 node 直启本地 vitest 入口
++  const vitestEntry = join(root, app.dir, 'node_modules', 'vitest', 'vitest.mjs');
++  const r = spawnSync(process.execPath, [vitestEntry, 'run'], { cwd: join(root, app.dir), encoding: 'utf8', stdio: 'inherit' });
+   if (r.error || r.status !== 0) {
+     console.error(`[client-contract] ${app.name} 失败（exit=${r.status ?? r.error?.code}）`);
+     failed = true;
+diff --git a/scripts/ops/run-local-gates.mjs b/scripts/ops/run-local-gates.mjs
+index 2fc249d8..c639c698 100644
+--- a/scripts/ops/run-local-gates.mjs
++++ b/scripts/ops/run-local-gates.mjs
+@@ -43,7 +43,7 @@ export const GATES = [
+   { id: 'G11 启用模块后端单测（common/infra，排除上游基线失败）', areas: ['services/'], mvn: true,
+     mvnArgs: '-pl zszj-framework/zszj-common,zszj-module-infra -am -Dtest=!CodegenEngineUniappTest#testExecute_treeSearch -Dsurefire.failIfNoSpecifiedTests=false test' },
+   { id: 'G12 安全链联合回归（ZS-SEC-012.A/.B：真实安全链+全面async+CORS 端到端）', areas: ['services/'], mvn: true,
+-    mvnArgs: '-pl zszj-framework/zszj-spring-boot-starter-biz-tenant -am -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest -Dsurefire.failIfNoSpecifiedTests=false test' },
++    mvnArgs: '-pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest -Dsurefire.failIfNoSpecifiedTests=false test' },
+   { id: 'G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）', areas: ['apps/', 'scripts/ops/'], slow: true,
+     cmd: ['node', 'scripts/ops/run-client-contract-tests.mjs'] },
+ ];
+diff --git a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security/SecurityChainJointRegressionTestBase.java b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security/SecurityChainJointRegressionTestBase.java
+index 3f4e83d7..147e1a72 100644
+--- a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security/SecurityChainJointRegressionTestBase.java
++++ b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security/SecurityChainJointRegressionTestBase.java
+@@ -35,15 +35,15 @@ public abstract class SecurityChainJointRegressionTestBase {
+     }
+ 
+     /**
+-     * ZS-SEC-012.B codex r0 P2：提供与生产同名的【池化】taskExecutor——Spring MVC 异步（Callable）
+-     * 优先取名为 taskExecutor 的 bean；池化使工作线程跨请求复用，配合 job starter 的
+-     * ZszjAsyncAutoConfiguration（TtlRunnable 装饰 BPP）构成真实的「跨线程上下文传播」路径，
+-     * 池不传播则交替租户用例必现串号（SimpleAsyncTaskExecutor 每请求新线程会掩盖缺陷）。
++     * ZS-SEC-012.B codex r0/r1 P2：提供【池化】applicationTaskExecutor——Spring Boot MVC 异步
++     * （Callable）接线查找名为 applicationTaskExecutor 的 TaskExecutor bean；池化使工作线程跨请求
++     * 复用，配合 job starter 的 ZszjAsyncAutoConfiguration（TtlRunnable 装饰 BPP，夹具已放开排除）
++     * 构成真实的「跨线程上下文传播」路径；池不传播则交替租户用例必现串号。
+      */
+     @org.springframework.context.annotation.Configuration
+     public static class AsyncExecutorConfiguration {
+ 
+-        @org.springframework.context.annotation.Bean("taskExecutor")
++        @org.springframework.context.annotation.Bean("applicationTaskExecutor")
+         public org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor taskExecutor() {
+             org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
+                     new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+diff --git a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/resources/application-fixture.yaml b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/resources/application-fixture.yaml
+index 467fbc94..6e61c9b9 100644
+--- a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/resources/application-fixture.yaml
++++ b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/resources/application-fixture.yaml
+@@ -28,7 +28,8 @@ spring:
+       - cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration
+       # job starter
+       - cn.zszj.framework.quartz.config.ZszjQuartzAutoConfiguration
+-      - cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration
++      # cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration 保留（ZS-SEC-012.B codex r1 P2）：
++      # 其 TtlRunnable BPP 是异步跨线程租户上下文传播的生产机制，交替租户用例依赖它
+       # web starter 中与本夹具无关的自动配置
+       - cn.zszj.framework.apilog.config.ZszjApiLogAutoConfiguration
+       - cn.zszj.framework.swagger.config.ZszjSwaggerAutoConfiguration
+diff --git a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java
+index 67a4dfb3..a497eae2 100644
+--- a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java
++++ b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java
+@@ -55,6 +55,16 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
+         this.apiAccessLogApi = apiAccessLogApi;
+     }
+ 
++    /**
++     * ZS-SEC-012.B codex r0/r1 P1：必须参与 ASYNC 派发——OncePerRequestFilter 默认跳过异步派发，
++     * 导致异步请求的访问日志只能挂在首次派发（结果未定，伪报成功）。参与后可在 ASYNC 派发内
++     * 以最终结果记录（租户上下文由派发期过滤器重建，归属正确）。
++     */
++    @Override
++    protected boolean shouldNotFilterAsyncDispatch() {
++        return false;
++    }
++
+     @Override
+     @SuppressWarnings("NullableProblems")
+     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+@@ -69,38 +79,24 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
+             // 继续过滤器
+             filterChain.doFilter(request, response);
+             // ZS-SEC-012.B codex r0 P1：异步请求（Callable / StreamingResponseBody / SSE）在首次 REQUEST
+-            // 派发返回时尚未完成响应——此时 CommonResult 未写入，立即记录必然 result=null 误记成功
+-            //（异步异常也伪报成功）。改为注册 AsyncListener，在完成/错误/超时回调中以【最终结果】记录；
+-            // 非异步请求维持立即记录（原有行为）。
++            // 派发返回时尚未完成响应——此时 CommonResult 未写入，立即记录必然 result=null 伪报成功
++            //（异步异常也伪报成功）。处理：首次派发直接返回【不记录】，等容器 ASYNC 派发完成后，
++            // 过滤器链会再次执行（TenantContextWebFilter 等同步重建上下文），在派发内以最终结果记录——
++            // codex r1 P1：AsyncListener 回调方案会在租户上下文清理后执行，导致日志归属 tenant_id=0，故弃用。
+             if (request.isAsyncStarted()) {
+-                request.getAsyncContext().addListener(new jakarta.servlet.AsyncListener() {
+-
+-                    @Override
+-                    public void onComplete(jakarta.servlet.AsyncEvent event) {
+-                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody, null);
+-                    }
+-
+-                    @Override
+-                    public void onError(jakarta.servlet.AsyncEvent event) {
+-                        // getThrowable() 为 Throwable，统一包装为 Exception 记录
+-                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody,
+-                                new IllegalStateException("async error", event.getThrowable()));
+-                    }
+-
+-                    @Override
+-                    public void onTimeout(jakarta.servlet.AsyncEvent event) {
+-                        createApiAccessLog((jakarta.servlet.http.HttpServletRequest) event.getSuppliedRequest(), beginTime, queryString, requestBody,
+-                                new IllegalStateException("async timeout"));
+-                    }
+-
+-                    @Override
+-                    public void onStartAsync(jakarta.servlet.AsyncEvent event) {
+-                    }
+-                });
+                 return;
+             }
+-            // 正常执行，记录日志
+-            createApiAccessLog(request, beginTime, queryString, requestBody, null);
++            boolean asyncDispatch = request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC;
++            Exception asyncFailure = null;
++            if (asyncDispatch) {
++                // codex r1 P1：异步派发若未写 CommonResult 且响应已失败（超时/错误），不得伪报成功
++                CommonResult<?> dispatched = WebFrameworkUtils.getCommonResult(request);
++                if (dispatched == null && response.getStatus() >= 400) {
++                    asyncFailure = new IllegalStateException("async dispatch failed with status " + response.getStatus());
++                }
++            }
++            // 记录日志（同步请求原行为；异步请求在 ASYNC 派发内以最终结果记录，幂等护栏防重复）
++            createApiAccessLog(request, beginTime, queryString, requestBody, asyncFailure);
+         } catch (Exception ex) {
+             // 异常执行，记录日志
+             createApiAccessLog(request, beginTime, queryString, requestBody, ex);
+diff --git a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/test/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilterAsyncTest.java b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/test/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilterAsyncTest.java
+index fe1940e2..eabfdf3a 100644
+--- a/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/test/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilterAsyncTest.java
++++ b/services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/test/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilterAsyncTest.java
+@@ -4,20 +4,14 @@ import cn.zszj.framework.common.biz.infra.logger.ApiAccessLogCommonApi;
+ import cn.zszj.framework.common.biz.infra.logger.dto.ApiAccessLogCreateReqDTO;
+ import cn.zszj.framework.common.pojo.CommonResult;
+ import cn.zszj.framework.web.config.WebProperties;
++import jakarta.servlet.DispatcherType;
++import jakarta.servlet.FilterChain;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
+ import org.mockito.ArgumentCaptor;
+-import org.springframework.mock.web.MockAsyncContext;
+ import org.springframework.mock.web.MockHttpServletRequest;
+ import org.springframework.mock.web.MockHttpServletResponse;
+ 
+-import jakarta.servlet.AsyncEvent;
+-import jakarta.servlet.AsyncListener;
+-import jakarta.servlet.FilterChain;
+-import jakarta.servlet.ServletException;
+-import java.io.IOException;
+-import java.util.List;
+-
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ import static org.mockito.ArgumentMatchers.any;
+@@ -26,11 +20,15 @@ import static org.mockito.Mockito.times;
+ import static org.mockito.Mockito.verify;
+ 
+ /**
+- * {@link ApiAccessLogFilter} 异步请求日志行为的单元测试（ZS-SEC-012.B codex r0 P1）。
++ * {@link ApiAccessLogFilter} 异步请求日志行为的单元测试（ZS-SEC-012.B codex r0/r1 P1）。
++ *
++ * <p>合同：①异步请求首次派发返回时【不得】记录（结果未定，必然伪报成功）；②ASYNC 派发内
++ * 以最终结果记录，且全程恰好一条（幂等护栏防二次派发重复）；③异步派发失败（无 CommonResult
++ * 且状态 >= 400）不得伪报成功；④同步请求立即记录的行为不变。
+  *
+- * <p>合同：①异步请求在首次派发返回时【不得】记录（此时结果未定，必然伪报成功）；
+- * ②完成回调以最终结果记录，且全程恰好一条；③ASYNC 二次派发（过滤器再次执行）不产生重复记录；
+- * ④错误回调以异常记录。修复前：异步成功/失败都被记为 SUCCESS（result=null 分支）。
++ * <p>设计说明（codex r1 P1）：记录发生在【ASYNC 派发内】而非 AsyncListener 回调——
++ * 回调在租户上下文清理后执行会使日志归属 tenant_id=0；ASYNC 派发内 TenantContextWebFilter
++ * 已从 tenant-id 头重建上下文，租户归属正确。
+  *
+  * @author ZS-SEC-012.B
+  */
+@@ -49,87 +47,79 @@ public class ApiAccessLogFilterAsyncTest {
+                 cn.zszj.framework.web.core.util.WebFrameworkUtils.class, "properties", webProperties);
+     }
+ 
+-    private MockHttpServletRequest asyncRequest() {
+-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/admin-api/fixture/async/profile");
++    private MockHttpServletRequest request(String uri, DispatcherType type) {
++        MockHttpServletRequest request = new MockHttpServletRequest("GET", uri);
+         request.addHeader("tenant-id", 1L);
+-        request.setAsyncSupported(true); // MockHttpServletRequest 默认不支持 async，需显式开启
++        request.setAsyncSupported(true);
++        request.setDispatcherType(type);
+         return request;
+     }
+ 
+-    @Test
+-    public void asyncSuccess_logOnlyOnceAfterComplete_withFinalResult() throws Exception {
+-        MockHttpServletRequest request = asyncRequest();
+-        MockHttpServletResponse response = new MockHttpServletResponse();
+-        boolean[] chainReturned = {false};
+-        FilterChain chain = (req, res) -> {
+-            req.setAttribute("common_result", CommonResult.success("ok")); // 与 WebFrameworkUtils.REQUEST_ATTRIBUTE_COMMON_RESULT 一致（模拟异步阶段写入结果）
++    /** 模拟异步处理器：写入结果属性并启动异步（首次派发返回后仍未完成） */
++    private static FilterChain startAsyncChain() {
++        return (req, res) -> {
++            req.setAttribute("common_result", CommonResult.success("ok"));
+             req.startAsync(req, res);
+-            chainReturned[0] = true;
+-            // 注意：此处不 complete——真实世界完成发生在首次派发返回之后
+         };
++    }
++
++    @Test
++    public void asyncInitialDispatch_notLogged() throws Exception {
++        MockHttpServletRequest request = request("/admin-api/fixture/async/profile", DispatcherType.REQUEST);
++        MockHttpServletResponse response = new MockHttpServletResponse();
+ 
+-        filter.doFilter(request, response, chain);
++        filter.doFilter(request, response, startAsyncChain());
+ 
+-        // ① 首次派发返回（未完成）时不得记录——伪报成功回归点
+         verify(apiAccessLogApi, times(0)).createApiAccessLogAsync(any());
+-        assertTrue(chainReturned[0], "前置：异步已启动");
++    }
++
++    @Test
++    public void asyncDispatch_loggedOnceWithFinalResult() throws Exception {
++        MockHttpServletRequest initial = request("/admin-api/fixture/async/profile", DispatcherType.REQUEST);
++        filter.doFilter(initial, new MockHttpServletResponse(), startAsyncChain());
++        verify(apiAccessLogApi, times(0)).createApiAccessLogAsync(any());
++
++        MockHttpServletRequest asyncReq = request("/admin-api/fixture/async/profile", DispatcherType.ASYNC);
++        asyncReq.setAttribute("common_result", CommonResult.success("ok"));
++        filter.doFilter(asyncReq, new MockHttpServletResponse(), (req, res) -> { });
+ 
+-        // 异步完成 → 恰好一条成功日志（最终结果）
+-        MockAsyncContext asyncContext = (MockAsyncContext) request.getAsyncContext();
+-        asyncContext.complete();
+         ArgumentCaptor<ApiAccessLogCreateReqDTO> captor = ArgumentCaptor.forClass(ApiAccessLogCreateReqDTO.class);
+         verify(apiAccessLogApi, times(1)).createApiAccessLogAsync(captor.capture());
+-        assertEquals(0L, captor.getValue().getResultCode().longValue(), "完成回调必须以最终成功码记录");
++        assertEquals(0L, captor.getValue().getResultCode().longValue(), "ASYNC 派发必须以最终成功码记录");
+     }
+ 
+     @Test
+-    public void asyncError_loggedWithFailure_notSuccess() throws Exception {
+-        MockHttpServletRequest request = asyncRequest();
++    public void asyncDispatchFailure_notReportedAsSuccess() throws Exception {
++        MockHttpServletRequest asyncReq = request("/admin-api/fixture/async/error", DispatcherType.ASYNC);
+         MockHttpServletResponse response = new MockHttpServletResponse();
+-        FilterChain chain = (req, res) -> req.startAsync(req, res);
+-
+-        filter.doFilter(request, response, chain);
+-        verify(apiAccessLogApi, times(0)).createApiAccessLogAsync(any());
++        response.setStatus(500);
+ 
+-        // 异步错误回调（模拟异步阶段异常经 AsyncListener.onError 上报）
+-        MockAsyncContext asyncContext = (MockAsyncContext) request.getAsyncContext();
+-        for (AsyncListener listener : asyncContext.getListeners()) {
+-            listener.onError(new AsyncEvent(asyncContext, request, response,
+-                    new IllegalStateException("async-boom")));
+-        }
++        filter.doFilter(asyncReq, response, (req, res) -> { });
+ 
+         ArgumentCaptor<ApiAccessLogCreateReqDTO> captor = ArgumentCaptor.forClass(ApiAccessLogCreateReqDTO.class);
+         verify(apiAccessLogApi, times(1)).createApiAccessLogAsync(captor.capture());
+-        List<ApiAccessLogCreateReqDTO> logged = captor.getAllValues();
+-        assertEquals(1, logged.size());
+-        assertTrue(logged.get(0).getResultCode() == null || logged.get(0).getResultCode() != 0L,
+-                "异步错误不得伪报成功");
++        assertTrue(captor.getValue().getResultCode() == null || captor.getValue().getResultCode() != 0L,
++                "异步派发失败不得伪报成功，实际: " + captor.getValue().getResultCode());
+     }
+ 
+     @Test
+     public void asyncRedispatch_logStillExactlyOnce() throws Exception {
+-        MockHttpServletRequest request = asyncRequest();
+-        MockHttpServletResponse response = new MockHttpServletResponse();
+-        FilterChain chain = (req, res) -> {
+-            req.setAttribute("common_result", CommonResult.success("ok"));
+-            req.startAsync(req, res);
+-        };
+-        filter.doFilter(request, response, chain);
++        MockHttpServletRequest initial = request("/admin-api/fixture/async/profile", DispatcherType.REQUEST);
++        filter.doFilter(initial, new MockHttpServletResponse(), startAsyncChain());
+ 
+-        // 模拟 ASYNC 二次派发：complete 后过滤器再次执行（真实容器行为）
+-        MockAsyncContext asyncContext = (MockAsyncContext) request.getAsyncContext();
+-        asyncContext.complete();
+-        filter.doFilter(request, response, chain);
++        MockHttpServletRequest asyncReq = request("/admin-api/fixture/async/profile", DispatcherType.ASYNC);
++        asyncReq.setAttribute("common_result", CommonResult.success("ok"));
++        filter.doFilter(asyncReq, new MockHttpServletResponse(), (req, res) -> { });
++        filter.doFilter(asyncReq, new MockHttpServletResponse(), (req, res) -> { });
+ 
+         ArgumentCaptor<ApiAccessLogCreateReqDTO> captor = ArgumentCaptor.forClass(ApiAccessLogCreateReqDTO.class);
+         verify(apiAccessLogApi, times(1)).createApiAccessLogAsync(captor.capture());
+-        assertEquals(0L, captor.getValue().getResultCode().longValue(), "全程恰好一条最终结果日志");
++        assertEquals(0L, captor.getValue().getResultCode().longValue());
+     }
+ 
+     @Test
+     public void syncRequest_logImmediately_unchanged() throws Exception {
+-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/admin-api/fixture/public/hello");
+-        request.setAsyncSupported(true);
++        MockHttpServletRequest request = request("/admin-api/fixture/public/hello", DispatcherType.REQUEST);
+         MockHttpServletResponse response = new MockHttpServletResponse();
+         request.setAttribute("common_result", CommonResult.success("ok"));
+ 
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -LiteralPath E:\\ -Filter AGENTS.md -Force; Get-ChildItem -LiteralPath E:\\zszj-wt-sec-012-b -Filter AGENTS.md -Force; rg --files -g '*TenantContextWebFilter*' -g '*ApiAccessLogFilter*' -g '*Async*Configuration*' -g '*SecurityChain*' -g '*WebConfiguration*' -g 'pom.xml'" in E:\zszj-wt-sec-012-b
+ succeeded in 0ms:
+services\zhongshu-core\zszj-server\pom.xml
+reference\donors\zhongshu-design\yudao-server\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-websocket\pom.xml
+services\zhongshu-core\zszj-module-bpm\src\main\java\cn\zszj\module\bpm\framework\web\config\BpmWebConfiguration.java
+services\zhongshu-core\zszj-module-wms\src\main\java\cn\zszj\module\wms\framework\web\config\WmsWebConfiguration.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\src\test\java\cn\zszj\framework\apilog\core\filter\ApiAccessLogFilterTest.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\src\test\java\cn\zszj\framework\apilog\core\filter\ApiAccessLogFilterAsyncTest.java
+reference\donors\zhongshu-design\yudao-module-identity\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-protection\pom.xml
+services\zhongshu-core\zszj-module-bpm\pom.xml
+services\zhongshu-core\zszj-module-wms\pom.xml
+reference\donors\zhongshu-design\yudao-module-design\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\src\main\java\cn\zszj\framework\apilog\core\filter\ApiAccessLogFilter.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-mybatis\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-test\pom.xml
+services\zhongshu-core\zszj-module-ai\src\main\java\cn\zszj\module\ai\framework\web\config\AiWebConfiguration.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\framework\web\config\SystemWebConfiguration.java
+reference\donors\zhongshu-design\yudao-module-commerce\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-mq\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-security\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-monitor\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-redis\pom.xml
+reference\donors\zhongshu-design\yudao-module-ai-orchestration\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-job\src\main\java\cn\zszj\framework\quartz\config\ZszjAsyncAutoConfiguration.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-job\pom.xml
+reference\donors\zhongshu-design\pom.xml
+services\zhongshu-core\zszj-module-infra\src\main\java\cn\zszj\module\infra\framework\web\config\InfraWebConfiguration.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-excel\pom.xml
+services\zhongshu-core\zszj-module-pms\src\main\java\cn\zszj\module\pms\framework\web\config\PmsWebConfiguration.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-data-permission\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\test\java\cn\zszj\framework\security\SecurityChainJointRegressionTestBase.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\test\java\cn\zszj\framework\security\SecurityChainJointRegressionTest.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\test\java\cn\zszj\framework\security\SecurityChainEmbeddedCorsTest.java
+services\zhongshu-core\zszj-module-pay\pom.xml
+services\zhongshu-core\zszj-module-pay\src\main\java\cn\zszj\module\pay\framework\web\config\PayWebConfiguration.java
+services\zhongshu-core\zszj-module-ai\pom.xml
+services\zhongshu-core\zszj-module-infra\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\main\java\cn\zszj\framework\tenant\core\web\TenantContextWebFilter.java
+services\zhongshu-core\zszj-module-mp\src\main\java\cn\zszj\module\mp\framework\web\config\MpWebConfiguration.java
+services\zhongshu-core\zszj-module-mp\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-ip\pom.xml
+services\zhongshu-core\zszj-module-im\src\main\java\cn\zszj\module\im\framework\web\config\ImWebConfiguration.java
+services\zhongshu-core\zszj-framework\zszj-common\pom.xml
+services\zhongshu-core\zszj-framework\pom.xml
+services\zhongshu-core\zszj-dependencies\pom.xml
+services\zhongshu-core\zszj-module-pms\pom.xml
+services\zhongshu-core\zszj-module-system\pom.xml
+services\zhongshu-core\zszj-module-member\src\main\java\cn\zszj\module\member\framework\web\config\MemberWebConfiguration.java
+services\zhongshu-core\zszj-module-report\pom.xml
+services\zhongshu-core\pom.xml
+services\zhongshu-core\zszj-module-im\pom.xml
+services\zhongshu-core\zszj-module-member\pom.xml
+services\zhongshu-core\zszj-module-mes\src\main\java\cn\zszj\module\mes\framework\web\config\MesWebConfiguration.java
+services\zhongshu-core\zszj-module-mall\zszj-module-trade-api\pom.xml
+services\zhongshu-core\zszj-module-hrm\src\main\java\cn\zszj\module\hrm\framework\web\config\HrmWebConfiguration.java
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\src\main\java\cn\zszj\module\trade\framework\web\config\TradeWebConfiguration.java
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\pom.xml
+services\zhongshu-core\zszj-module-hrm\pom.xml
+services\zhongshu-core\zszj-module-fms\src\main\java\cn\zszj\module\fms\framework\web\config\FmsWebConfiguration.java
+services\zhongshu-core\zszj-module-mall\zszj-module-statistics\pom.xml
+services\zhongshu-core\zszj-module-mall\pom.xml
+services\zhongshu-core\zszj-module-fms\pom.xml
+services\zhongshu-core\zszj-module-erp\src\main\java\cn\zszj\module\erp\framework\web\config\ErpWebConfiguration.java
+services\zhongshu-core\zszj-module-iot\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-product\src\main\java\cn\zszj\module\product\framework\web\config\ProductWebConfiguration.java
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-gateway\pom.xml
+services\zhongshu-core\zszj-module-erp\pom.xml
+services\zhongshu-core\zszj-module-crm\pom.xml
+services\zhongshu-core\zszj-module-mes\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-promotion\src\main\java\cn\zszj\module\promotion\framework\web\config\PromotionWebConfiguration.java
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-core\pom.xml
+services\zhongshu-core\zszj-module-crm\src\main\java\cn\zszj\module\crm\framework\web\config\CrmWebConfiguration.java
+services\zhongshu-core\zszj-module-mall\zszj-module-product\pom.xml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-biz\pom.xml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-biz\src\main\java\cn\zszj\module\iot\framework\web\config\IotWebConfiguration.java
+services\zhongshu-core\zszj-module-mall\zszj-module-promotion\pom.xml
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -LiteralPath 'services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java'
+Get-Content -LiteralPath 'services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/config/ZszjApiLogAutoConfiguration.java'
+Get-Content -LiteralPath 'services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/web/TenantContextWebFilter.java'
+Get-Content -LiteralPath 'services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/config/ZszjTenantAutoConfiguration.java'
+Get-Content -LiteralPath 'services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-job/src/main/java/cn/zszj/framework/quartz/config/ZszjAsyncAutoConfiguration.java'" in E:\zszj-wt-sec-012-b
+ succeeded in 0ms:
+package cn.zszj.framework.apilog.core.filter;
+
+import cn.hutool.core.date.LocalDateTimeUtil;
+import cn.hutool.core.exceptions.ExceptionUtil;
+import cn.hutool.core.map.MapUtil;
+import cn.hutool.core.util.BooleanUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.apilog.core.annotation.ApiAccessLog;
+import cn.zszj.framework.apilog.core.enums.OperateTypeEnum;
+import cn.zszj.framework.common.biz.infra.logger.ApiAccessLogCommonApi;
+import cn.zszj.framework.common.biz.infra.logger.dto.ApiAccessLogCreateReqDTO;
+import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
+import cn.zszj.framework.common.pojo.CommonResult;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
+import cn.zszj.framework.common.util.monitor.TracerUtils;
+import cn.zszj.framework.common.util.servlet.ServletUtils;
+import cn.zszj.framework.web.config.WebProperties;
+import cn.zszj.framework.web.core.filter.ApiRequestFilter;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.method.HandlerMethod;
+
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Map;
+
+import static cn.zszj.framework.apilog.core.interceptor.ApiAccessLogInterceptor.ATTRIBUTE_HANDLER_METHOD;
+import static cn.zszj.framework.common.util.json.JsonUtils.toJsonString;
+
+/**
+ * API 访问日志 Filter
+ *
+ * 目的：记�?API 访问日志到数据库�? *
+ * @author 芋道源码
+ */
+@Slf4j
+public class ApiAccessLogFilter extends ApiRequestFilter {
+
+    private final String applicationName;
+
+    private final ApiAccessLogCommonApi apiAccessLogApi;
+
+    public ApiAccessLogFilter(WebProperties webProperties, String applicationName, ApiAccessLogCommonApi apiAccessLogApi) {
+        super(webProperties);
+        this.applicationName = applicationName;
+        this.apiAccessLogApi = apiAccessLogApi;
+    }
+
+    /**
+     * ZS-SEC-012.B codex r0/r1 P1：必须参�?ASYNC 派发——OncePerRequestFilter 默认跳过异步派发�?     * 导致异步请求的访问日志只能挂在首次派发（结果未定，伪报成功）。参与后可在 ASYNC 派发�?     * 以最终结果记录（租户上下文由派发期过滤器重建，归属正确）�?     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
+    @Override
+    @SuppressWarnings("NullableProblems")
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        // 获得开始时�?        LocalDateTime beginTime = LocalDateTime.now();
+        // 提前获得参数，避�?XssFilter 过滤处理
+        Map<String, String> queryString = ServletUtils.getParamMap(request);
+        String requestBody = ServletUtils.getBody(request);
+
+        try {
+            // 继续过滤�?            filterChain.doFilter(request, response);
+            // ZS-SEC-012.B codex r0 P1：异步请求（Callable / StreamingResponseBody / SSE）在首次 REQUEST
+            // 派发返回时尚未完成响应——此�?CommonResult 未写入，立即记录必然 result=null 伪报成功
+            //（异步异常也伪报成功）。处理：首次派发直接返回【不记录】，等容�?ASYNC 派发完成后，
+            // 过滤器链会再次执行（TenantContextWebFilter 等同步重建上下文），在派发内以最终结果记录—�?            // codex r1 P1：AsyncListener 回调方案会在租户上下文清理后执行，导致日志归�?tenant_id=0，故弃用�?            if (request.isAsyncStarted()) {
+                return;
+            }
+            boolean asyncDispatch = request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC;
+            Exception asyncFailure = null;
+            if (asyncDispatch) {
+                // codex r1 P1：异步派发若未写 CommonResult 且响应已失败（超�?错误），不得伪报成功
+                CommonResult<?> dispatched = WebFrameworkUtils.getCommonResult(request);
+                if (dispatched == null && response.getStatus() >= 400) {
+                    asyncFailure = new IllegalStateException("async dispatch failed with status " + response.getStatus());
+                }
+            }
+            // 记录日志（同步请求原行为；异步请求在 ASYNC 派发内以最终结果记录，幂等护栏防重复）
+            createApiAccessLog(request, beginTime, queryString, requestBody, asyncFailure);
+        } catch (Exception ex) {
+            // 异常执行，记录日�?            createApiAccessLog(request, beginTime, queryString, requestBody, ex);
+            throw ex;
+        }
+    }
+
+    private void createApiAccessLog(HttpServletRequest request, LocalDateTime beginTime,
+                                    Map<String, String> queryString, String requestBody, Exception ex) {
+        // ZS-SEC-012.B codex r0 P1：同一请求只记录一条访问日志——ASYNC 二次派发时本 Filter 会再次执行，
+        // �?complete 回调已记录过；以请求属性做幂等护栏
+        if (request.getAttribute(getClass().getName() + ".RECORDED") != null) {
+            return;
+        }
+        request.setAttribute(getClass().getName() + ".RECORDED", Boolean.TRUE);
+        ApiAccessLogCreateReqDTO accessLog = new ApiAccessLogCreateReqDTO();
+        try {
+            boolean enable = buildApiAccessLog(accessLog, request, beginTime, queryString, requestBody, ex);
+            if (!enable) {
+                return;
+            }
+            apiAccessLogApi.createApiAccessLogAsync(accessLog);
+        } catch (Throwable th) {
+            log.error("[createApiAccessLog][url({}) traceId({}) 写入访问日志失败]", request.getRequestURI(), TracerUtils.getCorrelationId(request), th);
+        }
+    }
+
+    private boolean buildApiAccessLog(ApiAccessLogCreateReqDTO accessLog, HttpServletRequest request, LocalDateTime beginTime,
+                                      Map<String, String> queryString, String requestBody, Exception ex) {
+        // 判断：是否要记录操作日志
+        HandlerMethod handlerMethod = (HandlerMethod) request.getAttribute(ATTRIBUTE_HANDLER_METHOD);
+        ApiAccessLog accessLogAnnotation = null;
+        if (handlerMethod != null) {
+            accessLogAnnotation = handlerMethod.getMethodAnnotation(ApiAccessLog.class);
+            if (accessLogAnnotation != null && BooleanUtil.isFalse(accessLogAnnotation.enable())) {
+                return false;
+            }
+        }
+
+        // 处理用户信息
+        accessLog.setUserId(WebFrameworkUtils.getLoginUserId(request))
+                .setUserType(WebFrameworkUtils.getLoginUserType(request));
+        // 设置访问结果
+        CommonResult<?> result = WebFrameworkUtils.getCommonResult(request);
+        if (result != null) {
+            accessLog.setResultCode(result.getCode()).setResultMsg(result.getMsg());
+        } else if (ex != null) {
+            accessLog.setResultCode(GlobalErrorCodeConstants.INTERNAL_SERVER_ERROR.getCode())
+                    .setResultMsg(ExceptionUtil.getRootCauseMessage(ex));
+        } else {
+            accessLog.setResultCode(GlobalErrorCodeConstants.SUCCESS.getCode()).setResultMsg("");
+        }
+        // 设置请求字段
+        accessLog.setTraceId(TracerUtils.getCorrelationId(request)).setApplicationName(applicationName)
+                .setRequestUrl(request.getRequestURI()).setRequestMethod(request.getMethod())
+                .setUserAgent(ServletUtils.getUserAgent(request)).setUserIp(ServletUtils.getClientIP(request));
+        String[] sanitizeKeys = accessLogAnnotation != null ? accessLogAnnotation.sanitizeKeys() : null;
+        Boolean requestEnable = accessLogAnnotation != null ? accessLogAnnotation.requestEnable() : Boolean.TRUE;
+        if (!BooleanUtil.isFalse(requestEnable)) { // 默认记录，所以判�?!false
+            Map<String, Object> requestParams = MapUtil.<String, Object>builder()
+                    .put("query", LogSanitizeUtils.sanitizeMap(queryString, sanitizeKeys))
+                    .put("body", LogSanitizeUtils.sanitizeJson(requestBody, sanitizeKeys)).build();
+            accessLog.setRequestParams(toJsonString(requestParams));
+        }
+        Boolean responseEnable = accessLogAnnotation != null ? accessLogAnnotation.responseEnable() : Boolean.FALSE;
+        if (BooleanUtil.isTrue(responseEnable)) { // 默认不记录，默认强制要求 true
+            accessLog.setResponseBody(LogSanitizeUtils.sanitizeResponseBody(result, sanitizeKeys));
+        }
+        // 持续时间
+        accessLog.setBeginTime(beginTime).setEndTime(LocalDateTime.now())
+                .setDuration((int) LocalDateTimeUtil.between(accessLog.getBeginTime(), accessLog.getEndTime(), ChronoUnit.MILLIS));
+
+        // 操作模块
+        if (handlerMethod != null) {
+            Tag tagAnnotation = handlerMethod.getBeanType().getAnnotation(Tag.class);
+            Operation operationAnnotation = handlerMethod.getMethodAnnotation(Operation.class);
+            String operateModule = accessLogAnnotation != null && StrUtil.isNotBlank(accessLogAnnotation.operateModule()) ?
+                    accessLogAnnotation.operateModule() :
+                    tagAnnotation != null ? StrUtil.nullToDefault(tagAnnotation.name(), tagAnnotation.description()) : null;
+            String operateName = accessLogAnnotation != null && StrUtil.isNotBlank(accessLogAnnotation.operateName()) ?
+                    accessLogAnnotation.operateName() :
+                    operationAnnotation != null ? operationAnnotation.summary() : null;
+            OperateTypeEnum operateType = accessLogAnnotation != null && accessLogAnnotation.operateType().length > 0 ?
+                    accessLogAnnotation.operateType()[0] : parseOperateLogType(request);
+            accessLog.setOperateModule(operateModule).setOperateName(operateName).setOperateType(operateType.getType());
+        }
+        return true;
+    }
+
+    // ========== 解析 @ApiAccessLog、@Swagger 注解  ==========
+
+    private static OperateTypeEnum parseOperateLogType(HttpServletRequest request) {
+        RequestMethod requestMethod = RequestMethod.resolve(request.getMethod());
+        if (requestMethod == null) {
+            return OperateTypeEnum.OTHER;
+        }
+        switch (requestMethod) {
+            case GET:
+                return OperateTypeEnum.GET;
+            case POST:
+                return OperateTypeEnum.CREATE;
+            case PUT:
+                return OperateTypeEnum.UPDATE;
+            case DELETE:
+                return OperateTypeEnum.DELETE;
+            default:
+                return OperateTypeEnum.OTHER;
+        }
+    }
+
+}
+package cn.zszj.framework.apilog.config;
+
+import cn.zszj.framework.apilog.core.filter.ApiAccessLogFilter;
+import cn.zszj.framework.apilog.core.interceptor.ApiAccessLogInterceptor;
+import cn.zszj.framework.common.biz.infra.logger.ApiAccessLogCommonApi;
+import cn.zszj.framework.common.enums.WebFilterOrderEnum;
+import cn.zszj.framework.web.config.WebProperties;
+import cn.zszj.framework.web.config.ZszjWebAutoConfiguration;
+import jakarta.servlet.Filter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@AutoConfiguration(after = ZszjWebAutoConfiguration.class)
+public class ZszjApiLogAutoConfiguration implements WebMvcConfigurer {
+
+    /**
+     * 创建 ApiAccessLogFilter Bean，记�?API 请求日志
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "zszj.access-log", value = "enable", matchIfMissing = true) // 允许使用 zszj.access-log.enable=false 禁用访问日志
+    public FilterRegistrationBean<ApiAccessLogFilter> apiAccessLogFilter(WebProperties webProperties,
+                                                                         @Value("${spring.application.name}") String applicationName,
+                                                                         ApiAccessLogCommonApi apiAccessLogApi) {
+        ApiAccessLogFilter filter = new ApiAccessLogFilter(webProperties, applicationName, apiAccessLogApi);
+        return createFilterBean(filter, WebFilterOrderEnum.API_ACCESS_LOG_FILTER);
+    }
+
+    private static <T extends Filter> FilterRegistrationBean<T> createFilterBean(T filter, Integer order) {
+        FilterRegistrationBean<T> bean = new FilterRegistrationBean<>(filter);
+        bean.setOrder(order);
+        return bean;
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(new ApiAccessLogInterceptor());
+    }
+
+}
+package cn.zszj.framework.tenant.core.web;
+
+import cn.zszj.framework.common.exception.ServiceException;
+import cn.zszj.framework.common.pojo.CommonResult;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+/**
+ * 多租�?Context Web 过滤�? * 将请�?Header 中的 tenant-id 解析出来，添加到 {@link TenantContextHolder} 中，这样后续�?DB 等操作，可以获得到租户编号�? *
+ * @author 芋道源码
+ */
+public class TenantContextWebFilter extends OncePerRequestFilter {
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+        // 设置。ZS-SEC-008：上下文头严格解析——畸�?溢出 tenant-id 会抛受控 ServiceException（业务码 400）�?        // 本过滤器位于 MVC 之外，GlobalExceptionHandler（@RestControllerAdvice）无法捕获，需就地转统一出口 writeJSON�?        // 避免 NumberFormatException / ServiceException 逃逸为容器 500 + 栈泄露�?        Long tenantId;
+        try {
+            tenantId = WebFrameworkUtils.getTenantId(request);
+        } catch (ServiceException ex) {
+            WebFrameworkUtils.writeJSON(request, response, CommonResult.error(ex.getCode(), ex.getMessage()));
+            return;
+        }
+        if (tenantId != null) {
+            TenantContextHolder.setTenantId(tenantId);
+        }
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            // 清理
+            TenantContextHolder.clear();
+        }
+    }
+
+}
+package cn.zszj.framework.tenant.config;
+
+import cn.zszj.framework.common.biz.system.tenant.TenantCommonApi;
+import cn.zszj.framework.common.enums.WebFilterOrderEnum;
+import cn.zszj.framework.mybatis.core.util.MyBatisUtils;
+import cn.zszj.framework.redis.config.ZszjCacheProperties;
+import cn.zszj.framework.security.core.service.SecurityFrameworkService;
+import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.framework.tenant.core.aop.TenantIgnoreAspect;
+import cn.zszj.framework.tenant.core.db.TenantDatabaseInterceptor;
+import cn.zszj.framework.tenant.core.job.TenantJobAspect;
+import cn.zszj.framework.tenant.core.mq.rabbitmq.TenantRabbitMQInitializer;
+import cn.zszj.framework.tenant.core.mq.redis.TenantRedisMessageInterceptor;
+import cn.zszj.framework.tenant.core.mq.rocketmq.TenantRocketMQInitializer;
+import cn.zszj.framework.tenant.core.redis.TenantRedisCacheManager;
+import cn.zszj.framework.tenant.core.security.TenantSecurityWebFilter;
+import cn.zszj.framework.tenant.core.service.TenantFrameworkService;
+import cn.zszj.framework.tenant.core.service.TenantFrameworkServiceImpl;
+import cn.zszj.framework.tenant.core.web.TenantContextWebFilter;
+import cn.zszj.framework.tenant.core.web.TenantVisitContextInterceptor;
+import cn.zszj.framework.web.config.WebProperties;
+import cn.zszj.framework.web.core.handler.GlobalExceptionHandler;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
+import jakarta.annotation.Resource;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.cache.BatchStrategies;
+import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.util.pattern.PathPattern;
+
+import java.util.*;
+
+import static cn.zszj.framework.common.util.collection.CollectionUtils.convertList;
+
+@AutoConfiguration
+@ConditionalOnProperty(prefix = "zszj.tenant", value = "enable", matchIfMissing = true) // 允许使用 zszj.tenant.enable=false 禁用多租�?@EnableConfigurationProperties(TenantProperties.class)
+public class ZszjTenantAutoConfiguration {
+
+    @Resource
+    private ApplicationContext applicationContext;
+
+    @Bean
+    public TenantFrameworkService tenantFrameworkService(TenantCommonApi tenantApi) {
+        return new TenantFrameworkServiceImpl(tenantApi);
+    }
+
+    // ========== AOP ==========
+
+    @Bean
+    public TenantIgnoreAspect tenantIgnoreAspect() {
+        return new TenantIgnoreAspect();
+    }
+
+    // ========== DB ==========
+
+    @Bean
+    public TenantLineInnerInterceptor tenantLineInnerInterceptor(TenantProperties properties,
+                                                                 MybatisPlusInterceptor interceptor) {
+        TenantLineInnerInterceptor inner = new TenantLineInnerInterceptor(new TenantDatabaseInterceptor(properties));
+        // 添加�?interceptor �?        // 需要加在首个，主要是为了在分页插件前面。这个是 MyBatis Plus 的规�?        MyBatisUtils.addInterceptor(interceptor, inner, 0);
+        return inner;
+    }
+
+    // ========== WEB ==========
+
+    @Bean
+    public FilterRegistrationBean<TenantContextWebFilter> tenantContextWebFilter() {
+        FilterRegistrationBean<TenantContextWebFilter> registrationBean = new FilterRegistrationBean<>();
+        registrationBean.setFilter(new TenantContextWebFilter());
+        registrationBean.setOrder(WebFilterOrderEnum.TENANT_CONTEXT_FILTER);
+        return registrationBean;
+    }
+
+    @Bean
+    public TenantVisitContextInterceptor tenantVisitContextInterceptor(TenantProperties tenantProperties,
+                                                                       SecurityFrameworkService securityFrameworkService) {
+        return new TenantVisitContextInterceptor(tenantProperties, securityFrameworkService);
+    }
+
+    @Bean
+    public WebMvcConfigurer tenantWebMvcConfigurer(TenantProperties tenantProperties,
+                                                   TenantVisitContextInterceptor tenantVisitContextInterceptor) {
+        return new WebMvcConfigurer() {
+
+            @Override
+            public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(tenantVisitContextInterceptor)
+                        .excludePathPatterns(tenantProperties.getIgnoreVisitUrls().toArray(new String[0]));
+            }
+        };
+    }
+
+    // ========== Security ==========
+
+    @Bean
+    public FilterRegistrationBean<TenantSecurityWebFilter> tenantSecurityWebFilter(TenantProperties tenantProperties,
+                                                                                   WebProperties webProperties,
+                                                                                   GlobalExceptionHandler globalExceptionHandler,
+                                                                                   TenantFrameworkService tenantFrameworkService) {
+        FilterRegistrationBean<TenantSecurityWebFilter> registrationBean = new FilterRegistrationBean<>();
+        registrationBean.setFilter(new TenantSecurityWebFilter(webProperties, tenantProperties, getTenantIgnoreUrls(),
+                globalExceptionHandler, tenantFrameworkService));
+        registrationBean.setOrder(WebFilterOrderEnum.TENANT_SECURITY_FILTER);
+        return registrationBean;
+    }
+
+    /**
+     * 如果 Controller 接口上，�?{@link TenantIgnore} 注解，则添加到忽略租户的 URL 集合�?     *
+     * @return 忽略租户�?URL 集合
+     */
+    private Set<String> getTenantIgnoreUrls() {
+        Set<String> ignoreUrls = new HashSet<>();
+        // 获得接口对应�?HandlerMethod 集合
+        RequestMappingHandlerMapping requestMappingHandlerMapping = (RequestMappingHandlerMapping)
+                applicationContext.getBean("requestMappingHandlerMapping");
+        Map<RequestMappingInfo, HandlerMethod> handlerMethodMap = requestMappingHandlerMapping.getHandlerMethods();
+        // 获得�?@TenantIgnore 注解的接�?        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMethodMap.entrySet()) {
+            HandlerMethod handlerMethod = entry.getValue();
+            if (!handlerMethod.hasMethodAnnotation(TenantIgnore.class) // 方法�?                && !handlerMethod.getBeanType().isAnnotationPresent(TenantIgnore.class)) { // 接口�?                continue;
+            }
+            // 添加到忽略的 URL �?            if (entry.getKey().getPatternsCondition() != null) {
+                ignoreUrls.addAll(entry.getKey().getPatternsCondition().getPatterns());
+            }
+            if (entry.getKey().getPathPatternsCondition() != null) {
+                ignoreUrls.addAll(
+                        convertList(entry.getKey().getPathPatternsCondition().getPatterns(), PathPattern::getPatternString));
+            }
+        }
+        return ignoreUrls;
+    }
+
+    // ========== MQ ==========
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "cn.zszj.framework.mq.redis.core.interceptor.RedisMessageInterceptor")
+    public static class TenantRedisMQConfiguration {
+
+        @Bean
+        public TenantRedisMessageInterceptor tenantRedisMessageInterceptor() {
+            return new TenantRedisMessageInterceptor();
+        }
+
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.amqp.rabbit.core.RabbitTemplate")
+    public static class TenantRabbitMQConfiguration {
+
+        @Bean
+        public TenantRabbitMQInitializer tenantRabbitMQInitializer() {
+            return new TenantRabbitMQInitializer();
+        }
+
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.apache.rocketmq.spring.core.RocketMQTemplate")
+    public static class TenantRocketMQConfiguration {
+
+        @Bean
+        public TenantRocketMQInitializer tenantRocketMQInitializer() {
+            return new TenantRocketMQInitializer();
+        }
+
+    }
+
+    // ========== Redis ==========
+
+    @Bean
+    @Primary // 引入租户时，tenantRedisCacheManager 为主 Bean
+    public RedisCacheManager tenantRedisCacheManager(RedisTemplate<String, Object> redisTemplate,
+                                                     RedisCacheConfiguration redisCacheConfiguration,
+                                                     ZszjCacheProperties zszjCacheProperties,
+                                                     TenantProperties tenantProperties) {
+        // 创建 RedisCacheWriter 对象
+        RedisConnectionFactory connectionFactory = Objects.requireNonNull(redisTemplate.getConnectionFactory());
+        RedisCacheWriter cacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(connectionFactory,
+                BatchStrategies.scan(zszjCacheProperties.getRedisScanBatchSize()));
+        // 创建 TenantRedisCacheManager 对象
+        TenantRedisCacheManager cacheManager = new TenantRedisCacheManager(cacheWriter, redisCacheConfiguration,
+                tenantProperties.getIgnoreCaches());
+        // 开启事务感知：@Transactional 方法内的 @CacheEvict / @CachePut 自动延迟�?afterCommit�?        //             避免事务未提交就清缓存被并发读穿写脏值；无事务时立即生效，行为不�?        cacheManager.setTransactionAware(true);
+        return cacheManager;
+    }
+
+    // ========== Job ==========
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "cn.zszj.framework.quartz.core.handler.JobHandler")
+    public static class TenantJobConfiguration {
+
+        @Bean
+        public TenantJobAspect tenantJobAspect(TenantFrameworkService tenantFrameworkService) {
+            return new TenantJobAspect(tenantFrameworkService);
+        }
+
+    }
+
+}
+package cn.zszj.framework.quartz.config;
+
+import com.alibaba.ttl.TtlRunnable;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+
+/**
+ * 异步任务 Configuration
+ */
+@AutoConfiguration
+@EnableAsync
+public class ZszjAsyncAutoConfiguration {
+
+    @Bean
+    public BeanPostProcessor threadPoolTaskExecutorBeanPostProcessor() {
+        return new BeanPostProcessor() {
+
+            @Override
+            @SuppressWarnings("PatternVariableCanBeUsed")
+            public Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+                // 处理 ThreadPoolTaskExecutor
+                if (bean instanceof ThreadPoolTaskExecutor) {
+                    ThreadPoolTaskExecutor executor = (ThreadPoolTaskExecutor) bean;
+                    executor.setTaskDecorator(TtlRunnable::get);
+                    return executor;
+                }
+                // 处理 SimpleAsyncTaskExecutor
+                // 参�?https://t.zsxq.com/CBoks 增加
+                if (bean instanceof SimpleAsyncTaskExecutor) {
+                    SimpleAsyncTaskExecutor executor = (SimpleAsyncTaskExecutor) bean;
+                    executor.setTaskDecorator(TtlRunnable::get);
+                    return executor;
+                }
+                return bean;
+            }
+
+        };
+    }
+
+}
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -Encoding utf8 services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/web/TenantVisitContextInterceptor.java
+Get-Content -Encoding utf8 services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/web/core/filter/ApiRequestFilter.java
+Get-Content -Encoding utf8 services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security/SecurityChainJointRegressionTestBase.java
+rg -n 'async|accessLog|AccessLog|TaskExecutor|Import' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security
+rg -n 'getBody|BodyCache' services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/util/servlet/ServletUtils.java services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main" in E:\zszj-wt-sec-012-b
+ succeeded in 0ms:
+package cn.zszj.framework.tenant.core.web;
+
+import cn.hutool.core.util.ObjUtil;
+import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
+import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.security.core.service.SecurityFrameworkService;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
+import cn.zszj.framework.tenant.config.TenantProperties;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.web.core.util.WebFrameworkUtils;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
+
+@RequiredArgsConstructor
+@Slf4j
+public class TenantVisitContextInterceptor implements HandlerInterceptor {
+
+    private static final String PERMISSION = "system:tenant:visit";
+
+    private final TenantProperties tenantProperties;
+
+    private final SecurityFrameworkService securityFrameworkService;
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        // ����͵�ǰ�⻧���һ�£���ֱ������
+        Long visitTenantId = WebFrameworkUtils.getVisitTenantId(request);
+        if (visitTenantId == null) {
+            return true;
+        }
+        if (ObjUtil.equal(visitTenantId, TenantContextHolder.getTenantId())) {
+            return true;
+        }
+        // ZS-SEC-001.A������Ĭ�Ϲر�δ����׼�Ŀ��⻧���������δ��ʽ������zszj.tenant.visit-enable=false��Ĭ�ϣ�ʱ��
+        // �κ��л�����ͬĿ���⻧�����󣨺�α��ͷ�������о� system:tenant:visit Ȩ���ߣ�һ�ɾܾ����Ҳ����� visitTenantId��
+        // ���л� TenantContextHolder��ʹ SecurityFrameworkUtils#skipPermissionCheck() ��Ϊ false������Ȩ�������ݷ�Χ
+        // ������¼�⻧����У�飬�ž�ԽȨ�Ŵ󡣻������ܿؿ���֯������ ZS-SEC-001.B������ D-09��ʵ�֡�
+        if (!Boolean.TRUE.equals(tenantProperties.getVisitEnable())) {
+            log.warn("[preHandle][���⻧��������δ���ã��ܾ��л��� visitTenantId({})����ǰ�⻧({})]",
+                    visitTenantId, TenantContextHolder.getTenantId());
+            throw exception0(GlobalErrorCodeConstants.FORBIDDEN.getCode(), "���⻧��������δ���ã���ֹ�л��⻧");
+        }
+        // �����ǵ�¼�û�
+        LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
+        if (loginUser == null) {
+            return true;
+        }
+
+        // У���û��Ƿ���л��⻧
+        if (!securityFrameworkService.hasAnyPermissions(PERMISSION)) {
+            throw exception0(GlobalErrorCodeConstants.FORBIDDEN.getCode(), "����Ȩ�л��⻧");
+        }
+
+        // ���ص㡿�л��⻧���
+        loginUser.setVisitTenantId(visitTenantId);
+        TenantContextHolder.setTenantId(visitTenantId);
+        return true;
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
+        // ���ص㡿�����л�������ԭ�⻧���
+        LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
+        if (loginUser != null && loginUser.getTenantId() != null) {
+            TenantContextHolder.setTenantId(loginUser.getTenantId());
+        }
+    }
+
+}
+package cn.zszj.framework.web.core.filter;
+
+import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.web.config.WebProperties;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import jakarta.servlet.http.HttpServletRequest;
+
+/**
+ * ���� /admin-api��/app-api �� API ����Ĺ�����
+ *
+ * @author ���Դ��
+ */
+@RequiredArgsConstructor
+public abstract class ApiRequestFilter extends OncePerRequestFilter {
+
+    protected final WebProperties webProperties;
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        // ֻ���� API ����ĵ�ַ
+        String apiUri = request.getRequestURI().substring(request.getContextPath().length());
+        return !StrUtil.startWithAny(apiUri, webProperties.getAdminApi().getPrefix(), webProperties.getAppApi().getPrefix());
+    }
+
+}
+package cn.zszj.framework.security;
+
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import cn.zszj.framework.security.fixture.SecurityFixtureApplication;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+
+/**
+ * ZS-SEC-012.B ���ϻع���Ի��ࣺ���� ZS-SEC-012.A ��ʵ��ȫ���о�
+ * ��{@link SecurityFixtureApplication} ȫ��װ����ʵ Filter/Security ��/����Ȩ��/�쳣���ڣ�
+ * {@code mock-enable=false} δ�����κΰ�ȫ����������
+ *
+ * @author ZS-SEC-012.B
+ */
+@org.springframework.boot.test.context.SpringBootTest(classes = {SecurityFixtureApplication.class,
+        SecurityChainJointRegressionTestBase.AsyncExecutorConfiguration.class},
+        webEnvironment = org.springframework.boot.test.context.SpringBootTest.WebEnvironment.MOCK)
+@org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
+@ActiveProfiles("fixture")
+public abstract class SecurityChainJointRegressionTestBase {
+
+    @Autowired
+    protected MockMvc mockMvc;
+
+    @Autowired
+    protected org.springframework.context.ApplicationContext applicationContext;
+
+    @AfterEach
+    public void tearDownTenantContext() {
+        // ���� ThreadLocal�����������й©
+        TenantContextHolder.clear();
+    }
+
+    /**
+     * ZS-SEC-012.B codex r0/r1 P2���ṩ���ػ���applicationTaskExecutor����Spring Boot MVC �첽
+     * ��Callable�����߲�����Ϊ applicationTaskExecutor �� TaskExecutor bean���ػ�ʹ�����߳̿�����
+     * ���ã���� job starter �� ZszjAsyncAutoConfiguration��TtlRunnable װ�� BPP���о��ѷſ��ų���
+     * ������ʵ�ġ����߳������Ĵ�����·�����ز����������⻧�������ִ��š�
+     */
+    @org.springframework.context.annotation.Configuration
+    public static class AsyncExecutorConfiguration {
+
+        @org.springframework.context.annotation.Bean("applicationTaskExecutor")
+        public org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor taskExecutor() {
+            org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
+                    new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+            executor.setCorePoolSize(2);
+            executor.setMaxPoolSize(2);
+            executor.setThreadNamePrefix("fixture-async-");
+            executor.initialize();
+            return executor;
+        }
+    }
+}
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:47: *    注：全面 async/SSE 运行时合同（流式、异步异常出口、跨线程租户上下文、[Web]/[移动端]同步）仍归 ZS-SEC-012.B（见 05 文档 ZS-SEC-012 卡）。
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:471:        void asyncEndpointWithoutTokenStillAuthenticated() throws Exception {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:475:            mockMvc.perform(get("/admin-api/fixture/async/profile")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:484:        void asyncEndpointWithValidTokenStartsAsync() throws Exception {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:485:            // 有效 token 通过首次 REQUEST 派发认证 → 进入 handler 返回 Callable → asyncStarted=true，
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:487:            mockMvc.perform(get("/admin-api/fixture/async/profile")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:490:                    .andExpect(request().asyncStarted());
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:533:            // ApiAccessLogFilter 读到 null 且 ex==null → 误记为 SUCCESS(code=0)。
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityFilterChainFixtureTest.java:615:         * ApiAccessLogFilter.buildApiAccessLog 读取的正是 {@link WebFrameworkUtils#getCommonResult}；
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:38:     * ZS-SEC-012.B codex r0/r1 P2：提供【池化】applicationTaskExecutor——Spring Boot MVC 异步
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:39:     * （Callable）接线查找名为 applicationTaskExecutor 的 TaskExecutor bean；池化使工作线程跨请求
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:46:        @org.springframework.context.annotation.Bean("applicationTaskExecutor")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:47:        public org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor taskExecutor() {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:48:            org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:49:                    new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTestBase.java:52:            executor.setThreadNamePrefix("fixture-async-");
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:18:import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:28: * ZS-SEC-012.B：安全与双端请求【联合回归】——全面 async 运行时合同 + CORS 端到端。
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:33: *     <li><b>全面 async 运行时合同</b>：有效 token 异步端点成功、跨线程租户/用户上下文传播、
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:44:@DisplayName("ZS-SEC-012.B：安全链联合回归（全面 async 合同 + CORS 端到端）")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:47:    // ========== 1. 全面 async 运行时合同 ==========
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:50:    @DisplayName("1. 全面 async 运行时合同")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:55:        void asyncTenantContextPropagated() throws Exception {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:56:            MvcResult mvcResult = mockMvc.perform(get("/admin-api/fixture/async/tenant-context")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:59:                    .andExpect(request().asyncStarted())
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:62:            String body = mockMvc.perform(asyncDispatch(mvcResult))
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:75:        void asyncExceptionUnifiedExit() throws Exception {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:76:            MvcResult mvcResult = mockMvc.perform(get("/admin-api/fixture/async/error")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:79:                    .andExpect(request().asyncStarted())
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:82:            mockMvc.perform(asyncDispatch(mvcResult))
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:90:                                        && !body.contains("async-boom")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:99:            MvcResult mvcResult = mockMvc.perform(get("/admin-api/fixture/async/stream")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:102:                    .andExpect(request().asyncStarted())
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:105:            mockMvc.perform(asyncDispatch(mvcResult))
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:113:            mockMvc.perform(get("/admin-api/fixture/async/stream")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:232:    void asyncContextAlternatingTenants_noCrossTalk() throws Exception {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:241:            MvcResult mvcResult = mockMvc.perform(get("/admin-api/fixture/async/tenant-context")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:244:                    .andExpect(request().asyncStarted())
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\SecurityChainJointRegressionTest.java:246:            String body = mockMvc.perform(asyncDispatch(mvcResult))
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:29: * 6. 异步端点（ZS-SEC-002）：/fixture/async/**，验证 ASYNC permitAll 不使首次 REQUEST 派发免认证
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:198:     * 有效 token → 首次派发通过认证并进入异步。全面 async/SSE 合同（流式、异步异常出口、跨线程租户上下文）归 ZS-SEC-012.B。
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:200:    @GetMapping("/async/profile")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:201:    public Callable<CommonResult<String>> asyncProfile() {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:202:        return () -> CommonResult.success("async-profile");
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:205:    // ========== 7. 异步端点扩展（ZS-SEC-012.B：全面 async 运行时合同） ==========
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:211:    @GetMapping("/async/tenant-context")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:212:    public Callable<CommonResult<String>> asyncTenantContext() {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:221:    @GetMapping("/async/error")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:222:    public Callable<CommonResult<String>> asyncError() {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:224:            throw new IllegalStateException("async-boom");
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:232:    @GetMapping("/async/stream")
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security\fixture\TestControllers.java:233:    public StreamingResponseBody asyncStream() {
+services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/util/servlet/ServletUtils.java:79:    public static String getBody(HttpServletRequest request) {
+services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/util/servlet/ServletUtils.java:82:            return JakartaServletUtil.getBody(request);
+services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/util/servlet/ServletUtils.java:87:    public static byte[] getBodyBytes(HttpServletRequest request) {
+services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/util/servlet/ServletUtils.java:90:            return JakartaServletUtil.getBodyBytes(request);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\web\config\ZszjWebAutoConfiguration.java:128:     * 创建 RequestBodyCacheFilter Bean，可重复读取请求内容
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\web\config\ZszjWebAutoConfiguration.java:131:    public FilterRegistrationBean<CacheRequestBodyFilter> requestBodyCacheFilter(WebProperties webProperties) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\web\core\handler\GlobalExceptionHandler.java:388:                .put("body", LogSanitizeUtils.sanitizeJson(ServletUtils.getBody(request))).build();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\web\core\filter\CacheRequestBodyWrapper.java:43:     * 读取请求体字节，与 {@link ServletUtils#getBodyBytes} 语义一致（仅 JSON 请求缓存 body）。
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\web\core\filter\CacheRequestBodyWrapper.java:52:            return ServletUtils.getBodyBytes(request);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\apilog\core\interceptor\ApiAccessLogInterceptor.java:47:            String requestBody = ServletUtils.getBody(request);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main\java\cn\zszj\framework\apilog\core\filter\ApiAccessLogFilter.java:76:        String requestBody = ServletUtils.getBody(request);
+
+codex
+日志方案有两个需要核实的点：`TenantContextWebFilter` 没有覆写异步派发开关，而日志过滤器会在每次派发时重新取开始时间。我会继续检查上下文恢复路径和测试覆盖。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/enums/WebFilterOrderEnum.java
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-security/src/main/java/cn/zszj/framework/security/core/filter/TokenAuthenticationFilter.java
+rg -n 'SecurityContext|requireExplicitSave|sessionCreation|ASYNC' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-security/src/main
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/web/core/filter/CacheRequestBodyWrapper.java
+Get-Content scripts/ops/run-client-contract-tests.mjs
+Get-Content .github/workflows/local-baseline-gates.yml
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/pom.xml
+rg --files -g '*surefire*' -g '*AsyncTest*' -g '*spring-web*.jar' -g 'vitest.mjs' -g '*review*' | Select-Object -First 40
+node --check scripts/ops/run-client-contract-tests.mjs
+node --check scripts/ops/run-local-gates.mjs" in E:\zszj-wt-sec-012-b
+ succeeded in 87ms:
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\src\test\java\cn\zszj\framework\apilog\core\filter\ApiAccessLogFilterAsyncTest.java
+reference\donors\zhongshu-design\yudao-module-design\src\main\resources\db\migration-undo\design\V20260905.205__undo_p7a_submission_review.sql
+reference\donors\zhongshu-design\yudao-module-design\src\main\resources\db\migration\design\V20260905.205__p7a_submission_review.sql
+apps\zhongshu-miniapp\src\pages-mp\components\media-preview.vue
+services\zhongshu-core\zszj-module-hrm\src\main\java\cn\zszj\module\hrm\controller\admin\portal\performance\vo\review\HrmPortalPerformanceScorePreviewRespVO.java
+apps\zhongshu-miniapp\src\pages-mes\wm\stocktaking\task\components\task-result-preview.vue
+apps\zhongshu-miniapp\src\pages-mes\wm\stocktaking\task\components\task-line-preview.vue
+apps\zhongshu-miniapp\src\pages-mes\wm\barcode\components\barcode-preview.vue
+services\zhongshu-core\zszj-module-infra\src\main\java\cn\zszj\module\infra\controller\admin\codegen\vo\CodegenPreviewRespVO.java
+services\zhongshu-core\zszj-module-pms\src\main\java\cn\zszj\module\pms\controller\admin\kb\recycle\vo\PmsKnowledgeRecyclePreviewRespVO.java
+apps\zhongshu-miniapp\docs\fms-mobile-migration-review-handoff.md
+apps\zhongshu-miniapp\src\pages-mes\pro\task\components\task-gantt-preview.vue
+apps\zhongshu-miniapp\src\pages-hrm\performance\plan\components\review-stage-list.vue
+apps\zhongshu-miniapp\src\pages-im\home\conversation\message\components\reply-preview.vue
+apps\zhongshu-miniapp\src\pages-im\home\conversation\message\components\group-card-preview.vue
+apps\zhongshu-admin-web\src\views\mp\menu\components\MenuPreviewer.vue
+apps\zhongshu-admin-web\src\views\fms\components\print\FmsPrintPreview.vue
+apps\zhongshu-admin-web\src\views\im\manager\message\MessageContentPreview.vue
+apps\zhongshu-admin-web\src\views\infra\codegen\PreviewCode.vue
+apps\zhongshu-admin-web\src\views\im\home\pages\conversation\components\message\ReplyPreview.vue
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Force -Name
+Get-Content tools/env.sh -TotalCount 110
+rg -n 'createApiAccessLogAsync|tenantId|TenantId' services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/api/logger services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/db services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-security/src/main/java/cn/zszj/framework/security/core/util/SecurityFrameworkUtils.java
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/java/cn/zszj/framework/security/fixture/SecurityFixtureApplication.java
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/test/resources/application-fixture.yaml" in E:\zszj-wt-sec-012-b
+ succeeded in 11ms:
+  # ZS-SEC-012.A：排除与本安全夹具无关或会拖�?DB/Redis/调度的自动配置�?  # 保留：ZszjWebAutoConfiguration、ZszjJacksonAutoConfiguration、ZszjSecurityAutoConfiguration、ZszjWebSecurityConfigurerAdapter�?  # ZszjTenantAutoConfiguration 被排除后，租�?Web 组件�?TenantFixtureConfiguration 手动装配（真实组件、不改源码）�?  # mybatis/redis/job �?biz-tenant �?compile 依赖（无法用 pom 排除），故在此按类名排除其自动配置�?  autoconfigure:
+    exclude:
+      # 租户自动配置（其无条件创�?MyBatis 拦截�?/ Redis 缓存管理�?/ TenantCommonApi 驱动的重�?Bean�?      - cn.zszj.framework.tenant.config.ZszjTenantAutoConfiguration
+      # mybatis starter
+      - cn.zszj.framework.datasource.config.ZszjDataSourceAutoConfiguration
+      - cn.zszj.framework.mybatis.config.ZszjMybatisAutoConfiguration
+      - cn.zszj.framework.translate.config.ZszjTranslateAutoConfiguration
+      # redis starter
+      - cn.zszj.framework.redis.config.ZszjRedisAutoConfiguration
+      - cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration
+      # job starter
+      - cn.zszj.framework.quartz.config.ZszjQuartzAutoConfiguration
+      # cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration 保留（ZS-SEC-012.B codex r1 P2）：
+      # �?TtlRunnable BPP 是异步跨线程租户上下文传播的生产机制，交替租户用例依赖它
+      # web starter 中与本夹具无关的自动配置
+      - cn.zszj.framework.apilog.config.ZszjApiLogAutoConfiguration
+      - cn.zszj.framework.swagger.config.ZszjSwaggerAutoConfiguration
+      - cn.zszj.framework.encrypt.config.ZszjApiEncryptAutoConfiguration
+      - cn.zszj.framework.operatelog.config.ZszjOperateLogConfiguration
+      - cn.zszj.framework.banner.config.ZszjBannerAutoConfiguration
+      - cn.zszj.framework.xss.config.ZszjXssAutoConfiguration
+
+# Web 配置
+zszj:
+  web:
+    admin-api:
+      prefix: /admin-api
+      controller: "**.controller.admin.**"
+    app-api:
+      prefix: /app-api
+      controller: "**.controller.app.**"
+    admin-ui:
+      url: http://localhost:8080
+
+  # Security 配置
+  security:
+    token-header: Authorization
+    token-parameter: token
+    mock-enable: false  # ZS-ENG-004：默认关闭模拟认�?    mock-secret: fixture-test-secret
+    permit-all-urls:
+      - /actuator/health
+    password-encoder-length: 4
+
+  # Tenant 配置
+  tenant:
+    enable: true
+    ignore-urls:
+      - /admin-api/fixture/public/**
+      - /actuator/health
+    ignore-visit-urls: []
+    ignore-tables: []
+    ignore-caches: []
+
+# 日志配置
+logging:
+  level:
+    root: WARN
+    cn.zszj.framework.security: DEBUG
+    cn.zszj.framework.tenant: DEBUG
+    org.springframework.security: DEBUG
+
+# Actuator 配置（ZS-ENG-005：仅暴露 health�?management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+web search: 
+web search: https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.7/spring-web/src/main/java/org/springframework/web/filter/OncePerRequestFilter.java
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'createApiAccessLogAsync|class ApiAccessLog|setTenantId\\(' services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/api/logger services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/service/logger services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-mybatis/src/main
+Get-Content services/zhongshu-core/zszj-framework/zszj-common/src/main/java/cn/zszj/framework/common/biz/infra/logger/ApiAccessLogCommonApi.java
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-security/src/main/java/cn/zszj/framework/security/core/util/SecurityFrameworkUtils.java | Select-Object -Skip 180 -First 32
+Get-ChildItem services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/target -ErrorAction SilentlyContinue
+Get-Command java,mvn -ErrorAction SilentlyContinue
+rg -n 'spring-boot.version|spring.version' services/zhongshu-core/pom.xml services/zhongshu-core/zszj-dependencies/pom.xml
+Test-Path apps/zhongshu-admin-web/node_modules/vitest/vitest.mjs
+Test-Path apps/zhongshu-miniapp/node_modules/vitest/vitest.mjs" in E:\zszj-wt-sec-012-b
+ succeeded in 52ms:
+
+
+    Ŀ¼: E:\zszj-wt-sec-012-b\services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\target
+
+
+Mode                 LastWriteTime         Length Name                                                                 
+----                 -------------         ------ ----                                                                 
+d-----         2026/9/13     23:41                classes                                                              
+d-----         2026/9/14      0:23                generated-sources                                                    
+d-----         2026/9/14      0:23                generated-test-sources                                               
+d-----         2026/9/13     23:41                maven-archiver                                                       
+d-----         2026/9/13     23:41                maven-status                                                         
+d-----         2026/9/14      0:09                surefire-reports                                                     
+d-----         2026/9/13     23:41                test-classes                                                         
+-a----         2026/9/13     23:41         109156 zszj-spring-boot-starter-web-2026.08-SNAPSHOT.jar                    
+services/zhongshu-core/zszj-dependencies/pom.xml:37:        <rocketmq-spring.version>2.3.6</rocketmq-spring.version>
+services/zhongshu-core/zszj-dependencies/pom.xml:323:                <version>${rocketmq-spring.version}</version>
+False
+False
+
+
+
+web search: 
+web search: https://docs.spring.io/spring-framework/docs/6.2.x/javadoc-api/org/springframework/web/filter/OncePerRequestFilter.html
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'java.home|java.class.path|testsuite' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/target/surefire-reports/TEST-*AsyncTest.xml
+Get-Content services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/service/logger/ApiAccessLogServiceImpl.java -TotalCount 80
+rg -n 'tenant|Tenant' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-mybatis/src/main/java/cn/zszj/framework/mybatis/core/handler/DefaultDBFieldHandler.java
+Get-ChildItem -Name .omx" in E:\zszj-wt-sec-012-b
+ succeeded in 0ms:
+rg: services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/target/surefire-reports/TEST-*AsyncTest.xml: IO error for operation on services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/target/surefire-reports/TEST-*AsyncTest.xml: 文件名、目录名或卷标语法不正确。 (os error 123)
+package cn.zszj.module.infra.service.logger;
+
+import cn.zszj.framework.common.biz.infra.logger.dto.ApiAccessLogCreateReqDTO;
+import cn.zszj.framework.common.pojo.PageResult;
+import cn.zszj.framework.common.util.object.BeanUtils;
+import cn.zszj.framework.common.util.string.StrUtils;
+import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.tenant.core.util.TenantUtils;
+import cn.zszj.module.infra.controller.admin.logger.vo.apiaccesslog.ApiAccessLogPageReqVO;
+import cn.zszj.module.infra.dal.dataobject.logger.ApiAccessLogDO;
+import cn.zszj.module.infra.dal.mysql.logger.ApiAccessLogMapper;
+import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.validation.annotation.Validated;
+
+import java.time.LocalDateTime;
+
+import static cn.zszj.module.infra.dal.dataobject.logger.ApiAccessLogDO.REQUEST_PARAMS_MAX_LENGTH;
+import static cn.zszj.module.infra.dal.dataobject.logger.ApiAccessLogDO.RESULT_MSG_MAX_LENGTH;
+
+/**
+ * API 访问日志 Service 实现�? *
+ * @author 芋道源码
+ */
+@Slf4j
+@Service
+@Validated
+public class ApiAccessLogServiceImpl implements ApiAccessLogService {
+
+    @Resource
+    private ApiAccessLogMapper apiAccessLogMapper;
+
+    @Override
+    public void createApiAccessLog(ApiAccessLogCreateReqDTO createDTO) {
+        ApiAccessLogDO apiAccessLog = BeanUtils.toBean(createDTO, ApiAccessLogDO.class);
+        apiAccessLog.setRequestParams(StrUtils.maxLength(apiAccessLog.getRequestParams(), REQUEST_PARAMS_MAX_LENGTH));
+        apiAccessLog.setResultMsg(StrUtils.maxLength(apiAccessLog.getResultMsg(), RESULT_MSG_MAX_LENGTH));
+        if (TenantContextHolder.getTenantId() != null) {
+            apiAccessLogMapper.insert(apiAccessLog);
+        } else {
+            // 极端情况下，上下文中没有租户时，此时忽略租户上下文，避免插入失败�?            TenantUtils.executeIgnore(() -> apiAccessLogMapper.insert(apiAccessLog));
+        }
+    }
+
+    @Override
+    public ApiAccessLogDO getApiAccessLog(Long id) {
+        return apiAccessLogMapper.selectById(id);
+    }
+
+    @Override
+    public PageResult<ApiAccessLogDO> getApiAccessLogPage(ApiAccessLogPageReqVO pageReqVO) {
+        return apiAccessLogMapper.selectPage(pageReqVO);
+    }
+
+    @Override
+    @SuppressWarnings("DuplicatedCode")
+    public Integer cleanAccessLog(Integer exceedDay, Integer deleteLimit) {
+        int count = 0;
+        LocalDateTime expireDate = LocalDateTime.now().minusDays(exceedDay);
+        // 循环删除，直到没有满足条件的数据
+        for (int i = 0; i < Short.MAX_VALUE; i++) {
+            int deleteCount = apiAccessLogMapper.deleteByCreateTimeLt(expireDate, deleteLimit);
+            count += deleteCount;
+            // 达到删除预期条数，说明到底了
+            if (deleteCount < deleteLimit) {
+                break;
+            }
+        }
+        return count;
+    }
+
+}
+plans
+
+web search: 
+web search: site.docs.spring.io OncePerRequestFilter shouldNotFilterAsyncDispatch default return true
+codex
+已确认租户上下文修复仍不完整：`TenantContextWebFilter` 会跳过 ASYNC 派发，新增日志单测也没有接入租户过滤器。此外，异步日志的耗时会从最终派发重新计时，漏掉实际异步处理时间。脚本语法检查已通过；当前环境只读，未重新运行会写入构建产物的 Maven/Vitest 测试。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'shouldNotFilterAsyncDispatch|LocalDateTime beginTime|isAsyncStarted|createApiAccessLog\\(request, beginTime|TenantContextHolder.clear' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/web/TenantContextWebFilter.java
+Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-job/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+rg -n 'vitest' apps/zhongshu-admin-web/package.json apps/zhongshu-miniapp/package.json
+ git diff --check 5b3dc38b..HEAD" in E:\zszj-wt-sec-012-b
+ succeeded in 0ms:
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:64:    protected boolean shouldNotFilterAsyncDispatch() {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:73:        LocalDateTime beginTime = LocalDateTime.now();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:86:            if (request.isAsyncStarted()) {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:99:            createApiAccessLog(request, beginTime, queryString, requestBody, asyncFailure);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:102:            createApiAccessLog(request, beginTime, queryString, requestBody, ex);
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:107:    private void createApiAccessLog(HttpServletRequest request, LocalDateTime beginTime,
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java:127:    private boolean buildApiAccessLog(ApiAccessLogCreateReqDTO accessLog, HttpServletRequest request, LocalDateTime beginTime,
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-biz-tenant/src/main/java/cn/zszj/framework/tenant/core/web/TenantContextWebFilter.java:43:            TenantContextHolder.clear();
+cn.zszj.framework.quartz.config.ZszjQuartzAutoConfiguration
+cn.zszj.framework.quartz.config.ZszjAsyncAutoConfiguration
+apps/zhongshu-admin-web/package.json:30:    "test:unit": "vitest run"
+apps/zhongshu-admin-web/package.json:138:    "vitest": "4.1.11",
+apps/zhongshu-miniapp/package.json:101:    "test:unit": "vitest run"
+apps/zhongshu-miniapp/package.json:189:    "vitest": "2.1.9",
+
+codex
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "priority": "P1",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java",
+      "line": 64,
+      "title": "ASYNC 派发未重建租户上下文",
+      "body": "仅日志过滤器覆写了 shouldNotFilterAsyncDispatch；TenantContextWebFilter 仍继承默认 true，会跳过 ASYNC 派发，首次 REQUEST 的 finally 又已清空上下文。因此最终派发记录日志时仍可能没有租户，ApiAccessLogServiceImpl 将走 executeIgnore，原租户归属问题未解决。TTL 对业务执行器的传播不能重建容器派发线程上下文。应补齐派发期上下文恢复及清理，并增加真实租户过滤链下的日志归属断言。[Spring 默认行为](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/filter/OncePerRequestFilter.html#shouldNotFilterAsyncDispatch())"
+    },
+    {
+      "priority": "P2",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java",
+      "line": 99,
+      "title": "异步访问日志丢失完整请求耗时",
+      "body": "doFilterInternal 每次进入都会重新生成 beginTime。改到 ASYNC 派发记录后，首次 REQUEST 的开始时间被丢弃，duration 只包含最终派发耗时；耗时数秒的 Callable 或长连接 SSE 可能被记录为几毫秒。应将首次开始时间保存在请求属性中，后续派发复用，并验证日志耗时包含异步执行阶段。"
+    }
+  ]
+}
+tokens used
+49,518
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "priority": "P1",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java",
+      "line": 64,
+      "title": "ASYNC 派发未重建租户上下文",
+      "body": "仅日志过滤器覆写了 shouldNotFilterAsyncDispatch；TenantContextWebFilter 仍继承默认 true，会跳过 ASYNC 派发，首次 REQUEST 的 finally 又已清空上下文。因此最终派发记录日志时仍可能没有租户，ApiAccessLogServiceImpl 将走 executeIgnore，原租户归属问题未解决。TTL 对业务执行器的传播不能重建容器派发线程上下文。应补齐派发期上下文恢复及清理，并增加真实租户过滤链下的日志归属断言。[Spring 默认行为](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/filter/OncePerRequestFilter.html#shouldNotFilterAsyncDispatch())"
+    },
+    {
+      "priority": "P2",
+      "file": "services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-web/src/main/java/cn/zszj/framework/apilog/core/filter/ApiAccessLogFilter.java",
+      "line": 99,
+      "title": "异步访问日志丢失完整请求耗时",
+      "body": "doFilterInternal 每次进入都会重新生成 beginTime。改到 ASYNC 派发记录后，首次 REQUEST 的开始时间被丢弃，duration 只包含最终派发耗时；耗时数秒的 Callable 或长连接 SSE 可能被记录为几毫秒。应将首次开始时间保存在请求属性中，后续派发复用，并验证日志耗时包含异步执行阶段。"
+    }
+  ]
+}

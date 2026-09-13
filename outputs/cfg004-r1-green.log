@@ -1,0 +1,122 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< cn.zszj:zszj-module-infra >----------------------
+[INFO] Building zszj-module-infra 2026.08-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (enforce-jdk17-baseline) @ zszj-module-infra ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ zszj-module-infra ---
+[INFO] Copying 108 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- flatten:1.7.2:flatten (flatten) @ zszj-module-infra ---
+[INFO] Generating flattened POM of project cn.zszj:zszj-module-infra:jar:2026.08-SNAPSHOT...
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ zszj-module-infra ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 208 source files with javac [target 17] to target\classes
+[WARNING] /E:/zszj-wt-cfg-004/services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/convert/file/FileConfigConvert.java:[20,18] Unmapped target property: "master".
+[WARNING] /E:/zszj-wt-cfg-004/services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/convert/codegen/CodegenConvert.java:[34,20] Unmapped target properties: "createTime, updateTime, creator, updater, deleted, id, dataSourceConfigId, scene, remark, moduleName, businessName, className, classComment, author, templateType, frontType, parentMenuId, masterTableId, subJoinColumnId, subJoinMany, treeParentColumnId, treeNameColumnId, transMap".
+[WARNING] /E:/zszj-wt-cfg-004/services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/convert/codegen/CodegenConvert.java:[47,21] Unmapped target properties: "createTime, updateTime, creator, updater, deleted, id, tableId, ordinalPosition, dictType, example, createOperation, updateOperation, listOperation, listOperationCondition, listOperationResult, htmlType, transMap".
+[WARNING] /E:/zszj-wt-cfg-004/services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/convert/config/ConfigConvert.java:[26,14] Unmapped target properties: "createTime, creator, updater, deleted, type, transMap".
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ zszj-module-infra ---
+[INFO] Copying 900 resources from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.14.0:testCompile (default-testCompile) @ zszj-module-infra ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 29 source files with javac [target 17] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.3:test (default-test) @ zszj-module-infra ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running cn.zszj.module.infra.service.config.ConfigServiceImplMaskTest
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+[ERROR] Tests run: 12, Failures: 0, Errors: 2, Skipped: 0, Time elapsed: 1.271 s <<< FAILURE! -- in cn.zszj.module.infra.service.config.ConfigServiceImplMaskTest
+[ERROR] cn.zszj.module.infra.service.config.ConfigServiceImplMaskTest.updateConfig_maskedEchoWithoutKeyChange_shouldNotRevalidate -- Time elapsed: 0.008 s <<< ERROR!
+ServiceException(super=cn.zszj.framework.common.exception.ServiceException: 参数配置更新冲突，请刷新后重试, code=1001000010, message=参数配置更新冲突，请刷新后重试)
+	at cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0(ServiceExceptionUtil.java:31)
+	at cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception(ServiceExceptionUtil.java:22)
+	at cn.zszj.module.infra.service.config.ConfigServiceImpl.updateConfig(ConfigServiceImpl.java:104)
+	at cn.zszj.module.infra.service.config.ConfigServiceImplMaskTest.updateConfig_maskedEchoWithoutKeyChange_shouldNotRevalidate(ConfigServiceImplMaskTest.java:244)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.infra.service.config.ConfigServiceImplMaskTest.updateConfig_maskedEchoWithKeyChange_shouldValidateRetainedValueAgainstTargetKey -- Time elapsed: 0.004 s <<< ERROR!
+ServiceException(super=cn.zszj.framework.common.exception.ServiceException: 参数配置更新冲突，请刷新后重试, code=1001000010, message=参数配置更新冲突，请刷新后重试)
+	at cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0(ServiceExceptionUtil.java:31)
+	at cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception(ServiceExceptionUtil.java:22)
+	at cn.zszj.module.infra.service.config.ConfigServiceImpl.updateConfig(ConfigServiceImpl.java:104)
+	at cn.zszj.module.infra.service.config.ConfigServiceImplMaskTest.updateConfig_maskedEchoWithKeyChange_shouldValidateRetainedValueAgainstTargetKey(ConfigServiceImplMaskTest.java:224)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[INFO] Running cn.zszj.module.infra.service.config.ConfigServiceImplTest
+17:32:56,454 |-WARN in Logger[org.jboss.logging] - No appenders present in context [default] for logger [org.jboss.logging].
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.687 s -- in cn.zszj.module.infra.service.config.ConfigServiceImplTest
+[INFO] Running cn.zszj.module.infra.service.config.ConfigServiceImplValueValidationTest
+[ERROR] Tests run: 24, Failures: 1, Errors: 1, Skipped: 0, Time elapsed: 0.217 s <<< FAILURE! -- in cn.zszj.module.infra.service.config.ConfigServiceImplValueValidationTest
+[ERROR] cn.zszj.module.infra.service.config.ConfigServiceImplValueValidationTest.updateConfig_renameToRegisteredKeyWithMask_retainedValueSatisfiesTargetContract_shouldSucceed -- Time elapsed: 0.008 s <<< ERROR!
+ServiceException(super=cn.zszj.framework.common.exception.ServiceException: 参数配置更新冲突，请刷新后重试, code=1001000010, message=参数配置更新冲突，请刷新后重试)
+	at cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0(ServiceExceptionUtil.java:31)
+	at cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception(ServiceExceptionUtil.java:22)
+	at cn.zszj.module.infra.service.config.ConfigServiceImpl.updateConfig(ConfigServiceImpl.java:104)
+	at cn.zszj.module.infra.service.config.ConfigServiceImplValueValidationTest.updateConfig_renameToRegisteredKeyWithMask_retainedValueSatisfiesTargetContract_shouldSucceed(ConfigServiceImplValueValidationTest.java:401)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.infra.service.config.ConfigServiceImplValueValidationTest.restartRequiredParam_isMarkedCorrectly -- Time elapsed: 0.006 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:31)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:183)
+	at cn.zszj.module.infra.service.config.ConfigServiceImplValueValidationTest.restartRequiredParam_isMarkedCorrectly(ConfigServiceImplValueValidationTest.java:199)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   ConfigServiceImplValueValidationTest.restartRequiredParam_isMarkedCorrectly:199 expected: <true> but was: <false>
+[ERROR] Errors: 
+[ERROR]   ConfigServiceImplMaskTest.updateConfig_maskedEchoWithKeyChange_shouldValidateRetainedValueAgainstTargetKey:224 ? Service 参数配置更新冲突，请刷新后重试
+[ERROR]   ConfigServiceImplMaskTest.updateConfig_maskedEchoWithoutKeyChange_shouldNotRevalidate:244 ? Service 参数配置更新冲突，请刷新后重试
+[ERROR]   ConfigServiceImplValueValidationTest.updateConfig_renameToRegisteredKeyWithMask_retainedValueSatisfiesTargetContract_shouldSucceed:401 ? Service 参数配置更新冲突，请刷新后重试
+[INFO] 
+[ERROR] Tests run: 48, Failures: 1, Errors: 3, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  12.498 s
+[INFO] Finished at: 2026-09-13T17:32:59+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project zszj-module-infra: There are test failures.
+[ERROR] 
+[ERROR] See E:\zszj-wt-cfg-004\services\zhongshu-core\zszj-module-infra\target\surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

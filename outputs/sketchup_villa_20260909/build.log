@@ -1,0 +1,10 @@
+2026-09-09 18:07:14 +0800: Starting model
+2026-09-09 18:07:14 +0800: ERROR NoMethodError: undefined method `empty?' for #<Sketchup::Entities:0x000001ddd7019d50>
+C:/Users/Administrator/AppData/Local/Temp/su_villa_20260909/build_villa.rb:212:in `build'
+C:/Users/Administrator/AppData/Local/Temp/su_villa_20260909/build_villa.rb:444:in `block in <top (required)>'
+2026-09-09 18:07:56 +0800: Starting model
+2026-09-09 18:07:56 +0800: Main walls and floors ready
+2026-09-09 18:07:56 +0800: Doors, windows, carved columns ready
+2026-09-09 18:07:56 +0800: Upper terraces and roofs ready
+2026-09-09 18:07:56 +0800: Landscape ready
+2026-09-09 18:08:01 +0800: DONE saved E:/众墅之家AI赋能平台底座/outputs/sketchup_villa_20260909/众墅之家_效果图复原_14米假定尺寸.skp

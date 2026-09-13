@@ -1,0 +1,58 @@
+[client-contract] 运行 zhongshu-admin-web vitest …
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'E:\众墅之家AI赋能平台底座\apps\zhongshu-admin-web\node_modules\vitest\vitest.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.19.0
+[client-contract] zhongshu-admin-web 失败（exit=1）
+[client-contract] 运行 zhongshu-miniapp vitest …
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mE:/众墅之家AI赋能平台底座/apps/zhongshu-miniapp[39m
+
+ [32m✓[39m tests/unit/interceptor.spec.ts [2m([22m[2m26 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+[90mstderr[2m | tests/unit/http.spec.ts[2m > [22m[2mhttp 异常收敛：解密失败不永久 loading（验收④）[2m > [22m[2m解密失败分支显式 reject，且携带服务端 trace-id
+[22m[39m响应数据解密失败: Error: bad cipher
+    at Object.h.decryptImpl [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:58:13[90m)[39m
+    at Object.decryptResponse [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:26:31[90m)[39m
+    at Object.success [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39msrc\http\http.ts:134:39[90m)[39m
+    at Object.<anonymous> [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:61:11[90m)[39m
+    at Object.mockCall [90m(file:///E:/%E4%BC%97%E5%A2%85%E4%B9%8B%E5%AE%B6AI%E8%B5%8B%E8%83%BD%E5%B9%B3%E5%8F%B0%E5%BA%95%E5%BA%A7/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/@vitest+spy@2.1.9/node_modules/[4m@vitest/spy[24m/dist/index.js:61:17[90m)[39m
+    at Object.spy [as request] [90m(file:///E:/%E4%BC%97%E5%A2%85%E4%B9%8B%E5%AE%B6AI%E8%B5%8B%E8%83%BD%E5%B9%B3%E5%8F%B0%E5%BA%95%E5%BA%A7/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/tinyspy@3.0.2/node_modules/[4mtinyspy[24m/dist/index.js:45:80[90m)[39m
+    at [90mE:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39msrc\http\http.ts:260:9
+    at new Promise (<anonymous>)
+    at http [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39msrc\http\http.ts:114:10[90m)[39m
+    at [90mE:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:67:15
+
+[90mstderr[2m | tests/unit/http.spec.ts[2m > [22m[2mhttp 刷新队列（验收③：至多刷新一次、失败全部 reject、不循环）[2m > [22m[2m刷新失败时排队请求全部 reject，且不进入无限刷新
+[22m[39m刷新 token 失败: Error: refresh failed
+    at Object.<anonymous> [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:141:15[90m)[39m
+    at Object.mockCall [90m(file:///E:/%E4%BC%97%E5%A2%85%E4%B9%8B%E5%AE%B6AI%E8%B5%8B%E8%83%BD%E5%B9%B3%E5%8F%B0%E5%BA%95%E5%BA%A7/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/@vitest+spy@2.1.9/node_modules/[4m@vitest/spy[24m/dist/index.js:61:17[90m)[39m
+    at Object.spy [as refreshToken] [90m(file:///E:/%E4%BC%97%E5%A2%85%E4%B9%8B%E5%AE%B6AI%E8%B5%8B%E8%83%BD%E5%B9%B3%E5%8F%B0%E5%BA%95%E5%BA%A7/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/tinyspy@3.0.2/node_modules/[4mtinyspy[24m/dist/index.js:45:80[90m)[39m
+    at Object.success [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39msrc\http\http.ts:190:32[90m)[39m
+    at Object.<anonymous> [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:143:45[90m)[39m
+    at Object.mockCall [90m(file:///E:/%E4%BC%97%E5%A2%85%E4%B9%8B%E5%AE%B6AI%E8%B5%8B%E8%83%BD%E5%B9%B3%E5%8F%B0%E5%BA%95%E5%BA%A7/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/@vitest+spy@2.1.9/node_modules/[4m@vitest/spy[24m/dist/index.js:61:17[90m)[39m
+    at Object.spy [as request] [90m(file:///E:/%E4%BC%97%E5%A2%85%E4%B9%8B%E5%AE%B6AI%E8%B5%8B%E8%83%BD%E5%B9%B3%E5%8F%B0%E5%BA%95%E5%BA%A7/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/tinyspy@3.0.2/node_modules/[4mtinyspy[24m/dist/index.js:45:80[90m)[39m
+    at [90mE:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39msrc\http\http.ts:260:9
+    at new Promise (<anonymous>)
+    at http [90m(E:\众墅之家AI赋能平台底座\apps\zhongshu-miniapp\[39msrc\http\http.ts:114:10[90m)[39m
+
+ [32m✓[39m tests/unit/http.spec.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 80[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m36 passed[39m[22m[90m (36)[39m
+[2m   Start at [22m 00:39:06
+[2m   Duration [22m 344ms[2m (transform 89ms, setup 29ms, collect 72ms, tests 85ms, environment 0ms, prepare 145ms)[22m
+

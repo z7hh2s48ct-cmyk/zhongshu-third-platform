@@ -1,0 +1,20 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90mE:/zszj-wt-client-003/apps/zhongshu-admin-web[39m
+
+[90mstderr[2m | tests/unit/service.spec.ts[2m > [22m[2mservice 响应拦截器：异常收敛与可追踪[2m > [22m[2m验收④：解密失败显式 reject，且携带 trace-id
+[22m[39m响应数据解密失败: Error: bad cipher
+    at Object.h.decryptImpl (E:/zszj-wt-client-003/apps/zhongshu-admin-web/tests/unit/service.spec.ts:224:13)
+    at Object.decryptResponse (E:/zszj-wt-client-003/apps/zhongshu-admin-web/tests/unit/service.spec.ts:31:36)
+    at E:/zszj-wt-client-003/apps/zhongshu-admin-web/src/config/axios/service.ts:324:27
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+    at Axios.request [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-admin-web/[39mnode_modules/[4m.pnpm[24m/axios@1.16.0/node_modules/[4maxios[24m/lib/core/Axios.js:41:14[90m)[39m
+    at E:/zszj-wt-client-003/apps/zhongshu-admin-web/tests/unit/service.spec.ts:230:22
+    at [90mfile:///E:/zszj-wt-client-003/apps/zhongshu-admin-web/[39mnode_modules/[4m.pnpm[24m/@vitest+runner@4.1.11/node_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:20
+
+ [32m✓[39m tests/unit/service.spec.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m12 passed[39m[22m[90m (12)[39m
+[2m   Start at [22m 18:14:17
+[2m   Duration [22m 238ms[2m (transform 47ms, setup 14ms, import 114ms, tests 10ms, environment 0ms)[22m
+

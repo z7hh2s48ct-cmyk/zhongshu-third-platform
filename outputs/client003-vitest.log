@@ -1,0 +1,47 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90mE:/zszj-wt-client-003/apps/zhongshu-admin-web[39m
+
+[90mstderr[2m | tests/unit/service.spec.ts[2m > [22m[2mservice 响应拦截器：异常收敛与可追踪[2m > [22m[2m验收④：解密失败显式 reject，且携带 trace-id
+[22m[39m响应数据解密失败: Error: bad cipher
+    at Object.h.decryptImpl (E:/zszj-wt-client-003/apps/zhongshu-admin-web/tests/unit/service.spec.ts:222:13)
+    at Object.decryptResponse (E:/zszj-wt-client-003/apps/zhongshu-admin-web/tests/unit/service.spec.ts:31:36)
+    at E:/zszj-wt-client-003/apps/zhongshu-admin-web/src/config/axios/service.ts:324:27
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+    at Axios.request [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-admin-web/[39mnode_modules/[4m.pnpm[24m/axios@1.16.0/node_modules/[4maxios[24m/lib/core/Axios.js:41:14[90m)[39m
+    at E:/zszj-wt-client-003/apps/zhongshu-admin-web/tests/unit/service.spec.ts:228:22
+    at [90mfile:///E:/zszj-wt-client-003/apps/zhongshu-admin-web/[39mnode_modules/[4m.pnpm[24m/@vitest+runner@4.1.11/node_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:20
+
+ [31m❯[39m tests/unit/service.spec.ts [2m([22m[2m12 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 12[2mms[22m[39m
+     [32m✓[39m 验收①：登录白名单路径不携带 Authorization[32m 3[2mms[22m[39m
+     [32m✓[39m 精确路由匹配：/login-history 等非白名单路径应携带 Token（不被 /login 误命中）[32m 0[2mms[22m[39m
+     [32m✓[39m 批准来源的非白名单请求携带 Bearer Token 与 tenant-id[32m 0[2mms[22m[39m
+     [32m✓[39m 验收②：外部预签名存储绝对 URL 不携带 Token / 租户头 / trace-id[32m 0[2mms[22m[39m
+     [32m✓[39m trace-id：批准来源请求生成 trace-id；调用方已提供则透传（ZS-SEC-006）[32m 0[2mms[22m[39m
+     [32m✓[39m 调用方显式 headers.isToken=false 时不携带 Token[32m 0[2mms[22m[39m
+     [32m✓[39m 协议相对 URL（//host/path）不携带平台凭据，且不得拼进 baseURL 误判为批准来源[32m 0[2mms[22m[39m
+     [32m✓[39m 刷新成功后回放：批准来源请求重放 Bearer；外部地址请求显式清除残留 Authorization[32m 1[2mms[22m[39m
+[31m     [31m×[31m 刷新请求的 tenant-id 只随本次请求发送，不写入 axios 全局 defaults（防 useUpload 外部直传泄露）[39m[32m 2[2mms[22m[39m
+     [32m✓[39m 验收④：解密失败显式 reject，且携带 trace-id[32m 2[2mms[22m[39m
+     [32m✓[39m 批准来源生成的 trace-id 为 32 位小写十六进制（后端 TracerUtils 格式，P2）[32m 0[2mms[22m[39m
+     [32m✓[39m 调用方大写 Trace-Id 去重为单一 trace-id 键且原值透传（P2）[32m 0[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/unit/service.spec.ts[2m > [22mservice codex r2 回归：协议相对 URL 与刷新重放泄露（P1）[2m > [22m刷新请求的 tenant-id 只随本次请求发送，不写入 axios 全局 defaults（防 useUpload 外部直传泄露）
+[31m[1mAssertionError[22m: expected "wrap" to be called 1 times, but got 3 times[39m
+[36m [2m❯[22m tests/unit/service.spec.ts:[2m210:21[22m[39m
+    [90m208|[39m
+    [90m209|[39m     await service.request({ url: '/system/user/profile/get', method: '…
+    [90m210|[39m     [34mexpect[39m(postSpy)[33m.[39m[34mtoHaveBeenCalledTimes[39m([34m1[39m)
+    [90m   |[39m                     [31m^[39m
+    [90m211|[39m     [90m// 刷新请求自身携带 tenant-id[39m
+    [90m212|[39m     [35mconst[39m refreshArg[33m:[39m any [33m=[39m postSpy[33m.[39mmock[33m.[39mcalls[[34m0[39m][[34m2[39m]
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m11 passed[39m[22m[90m (12)[39m
+[2m   Start at [22m 18:13:20
+[2m   Duration [22m 407ms[2m (transform 53ms, setup 18ms, import 181ms, tests 12ms, environment 0ms)[22m
+

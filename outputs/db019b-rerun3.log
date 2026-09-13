@@ -1,0 +1,19 @@
+[PASS] ZS-DB-006 序列/批量/续号 
+[PASS] ZS-DB-007 字段映射与逻辑删除 
+[PASS] ZS-DB-008 事务与锁 
+[PASS] ZS-CFG-002.A 字典约束 
+[PASS] ZS-DB-011~015 有界删除 
+[PASS] ZS-DB-018 ORM/手写SQL/租户隔离 
+[PASS] DB-016 Quartz 调度表结构级验证 
+[PASS] DB-017 元数据测试表 
+
+===== PG 技术回归汇总（ZS-DB-019.B 地基）=====
+PASS  ZS-DB-006 序列/批量/续号 
+PASS  ZS-DB-007 字段映射与逻辑删除 
+PASS  ZS-DB-008 事务与锁 
+PASS  ZS-CFG-002.A 字典约束 
+PASS  ZS-DB-011~015 有界删除 
+PASS  ZS-DB-018 ORM/手写SQL/租户隔离 
+PASS  DB-016 Quartz 调度表结构级验证 
+PASS  DB-017 元数据测试表 
+合计 8 套件，失败 0 套件

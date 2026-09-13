@@ -1,0 +1,181 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< cn.zszj:zszj-module-system >---------------------
+[INFO] Building zszj-module-system 2026.08-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (enforce-jdk17-baseline) @ zszj-module-system ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ zszj-module-system ---
+[INFO] Copying 37 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- flatten:1.7.2:flatten (flatten) @ zszj-module-system ---
+[INFO] Generating flattened POM of project cn.zszj:zszj-module-system:jar:2026.08-SNAPSHOT...
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ zszj-module-system ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ zszj-module-system ---
+[INFO] Copying 4 resources from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.14.0:testCompile (default-testCompile) @ zszj-module-system ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 64 source files with javac [target 17] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.3:test (default-test) @ zszj-module-system ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2CodeServiceImplTest
+18:08:48,698 |-WARN in Logger[org.jboss.logging] - No appenders present in context [default] for logger [org.jboss.logging].
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.797 s -- in cn.zszj.module.system.service.oauth2.OAuth2CodeServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.404 s -- in cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest
+[ERROR] Tests run: 3, Failures: 0, Errors: 2, Skipped: 0, Time elapsed: 0.262 s <<< FAILURE! -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest.batchRevoke_deduplicatesRefreshTokens -- Time elapsed: 0.009 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest.batchRevoke_deduplicatesRefreshTokens(OAuth2TokenServiceImplBatchLockOrderUnitTest.java:107)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest.batchRevoke_mustAcquireLocksInSortedRefreshTokenOrder -- Time elapsed: 0.006 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest.batchRevoke_mustAcquireLocksInSortedRefreshTokenOrder(OAuth2TokenServiceImplBatchLockOrderUnitTest.java:79)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchRevokeLockOrderTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.451 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchRevokeLockOrderTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplCompatTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.364 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplCompatTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.527 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplRefreshConcurrencyTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.884 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplRefreshConcurrencyTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplSyntheticCredentialRevokeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.073 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplSyntheticCredentialRevokeTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.310 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest
+[ERROR] Tests run: 6, Failures: 0, Errors: 5, Skipped: 0, Time elapsed: 0.020 s <<< FAILURE! -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_deduplicatesAcrossBothSources -- Time elapsed: 0.004 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_deduplicatesAcrossBothSources(OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java:155)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_mustRunUnderTenantIgnoreAndRestoreContext -- Time elapsed: 0.004 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_mustRunUnderTenantIgnoreAndRestoreContext(OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java:212)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_mixedSources_mustAcquireLocksInSortedRefreshTokenOrder -- Time elapsed: 0.003 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_mixedSources_mustAcquireLocksInSortedRefreshTokenOrder(OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java:133)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_orphanRefreshToken_mustRevokeAliveAccessTokensFoundAfterLock -- Time elapsed: 0.002 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_orphanRefreshToken_mustRevokeAliveAccessTokensFoundAfterLock(OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java:108)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[ERROR] cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_orphanRefreshToken_mustStillLockAndRevoke -- Time elapsed: 0.002 s <<< ERROR!
+java.lang.NullPointerException: Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.doRemoveAccessTokenByUser(OAuth2TokenServiceImpl.java:375)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.lambda$removeAccessToken$0(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.framework.tenant.core.util.TenantUtils.executeIgnore(TenantUtils.java:76)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImpl.removeAccessToken(OAuth2TokenServiceImpl.java:306)
+	at cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_orphanRefreshToken_mustStillLockAndRevoke(OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java:83)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+[INFO] Running cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.903 s -- in cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Errors: 
+[ERROR]   OAuth2TokenServiceImplBatchLockOrderUnitTest.batchRevoke_deduplicatesRefreshTokens:107 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[ERROR]   OAuth2TokenServiceImplBatchLockOrderUnitTest.batchRevoke_mustAcquireLocksInSortedRefreshTokenOrder:79 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[ERROR]   OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_deduplicatesAcrossBothSources:155 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[ERROR]   OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_mixedSources_mustAcquireLocksInSortedRefreshTokenOrder:133 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[ERROR]   OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_mustRunUnderTenantIgnoreAndRestoreContext:212 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[ERROR]   OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_orphanRefreshToken_mustRevokeAliveAccessTokensFoundAfterLock:108 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[ERROR]   OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.batchRevoke_orphanRefreshToken_mustStillLockAndRevoke:83 ? NullPointer Cannot invoke "cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper.deleteByUserIdAndUserType(java.lang.Long, java.lang.Integer)" because "this.oauth2CodeMapper" is null
+[INFO] 
+[ERROR] Tests run: 78, Failures: 0, Errors: 7, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  15.797 s
+[INFO] Finished at: 2026-09-13T18:08:56+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project zszj-module-system: 
+[ERROR] 
+[ERROR] See E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\target\surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

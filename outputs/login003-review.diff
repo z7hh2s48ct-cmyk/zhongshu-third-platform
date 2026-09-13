@@ -1,0 +1,1878 @@
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2RefreshTokenMapper.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2RefreshTokenMapper.java
+index 29065e61..27a9ec62 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2RefreshTokenMapper.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2RefreshTokenMapper.java
+@@ -57,6 +57,29 @@ public interface OAuth2RefreshTokenMapper extends BaseMapperX<OAuth2RefreshToken
+         return CollUtil.isEmpty(list) ? null : list.get(0);
+     }
+ 
++    /**
++     * ZS-LOGIN-003：按「用户 + 用户类型」直查该用户名下的<b>全部</b>刷新令牌。
++     *
++     * <p>背景：此前 {@code OAuth2TokenServiceImpl#removeAccessToken(Long, Integer)} 的刷新凭据集合
++     * 完全由 access-token 记录<b>反推</b>，于是「无 Access 记录但仍有 Refresh」的孤立刷新凭据
++     * 永远不会被撤销 —— 它仍可用于 {@code refreshAccessToken} 换出全新访问令牌（会话复活）。
++     * 本方法提供与 {@code OAuth2AccessTokenMapper#selectListByUserIdAndUserType} 对称的直查能力，
++     * 使撤销可以取「access-token 反推 ∪ refresh-token 直查」的<b>全集</b>。
++     *
++     * <p>租户：撤销是安全操作，可能在无租户上下文（定时任务 / MQ 消费）或跨租户运维场景下发起，
++     * 与 {@link #selectByRefreshToken(String)}、{@link #selectByRefreshTokenForUpdate(String)} 保持一致忽略租户。
++     * 调用方（{@code OAuth2TokenServiceImpl}）另以 {@code TenantUtils#executeIgnore} 包裹整个撤销体作为主保障。
++     *
++     * @param userId   用户编号
++     * @param userType 用户类型
++     * @return 该用户名下的全部刷新令牌；无会话时返回空集合
++     */
++    @TenantIgnore // 与 selectByRefreshToken 保持一致：撤销可能不携带 tenant-id 请求头
++    default List<OAuth2RefreshTokenDO> selectListByUserIdAndUserType(Long userId, Integer userType) {
++        return selectList(OAuth2RefreshTokenDO::getUserId, userId,
++                OAuth2RefreshTokenDO::getUserType, userType);
++    }
++
+     /**
+      * 物理删除指定过期时间之前的刷新令牌
+      *
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/LogRecordConstants.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/LogRecordConstants.java
+index 83593ce3..b3191e28 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/LogRecordConstants.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/LogRecordConstants.java
+@@ -18,7 +18,12 @@ public interface LogRecordConstants {
+     String SYSTEM_USER_DELETE_SUB_TYPE = "删除用户";
+     String SYSTEM_USER_DELETE_SUCCESS = "删除了用户【{{#user.nickname}}】";
+     String SYSTEM_USER_UPDATE_PASSWORD_SUB_TYPE = "重置用户密码";
+-    String SYSTEM_USER_UPDATE_PASSWORD_SUCCESS = "将用户【{{#user.nickname}}】的密码从【{{#user.password}}】重置为【{{#newPassword}}】";
++    String SYSTEM_USER_UPDATE_PASSWORD_SUCCESS = "将用户【{{#user.nickname}}】的密码从【{{#user.password}}】重置为【{{#newPassword}}】，其全部登录会话已失效";
++    // ZS-LOGIN-003：以下两类生命周期入口同样会触发「全部登录会话失效」，此前无操作日志留痕，故补齐
++    String SYSTEM_USER_UPDATE_STATUS_SUB_TYPE = "更新用户状态";
++    String SYSTEM_USER_UPDATE_STATUS_SUCCESS = "将用户【{{#user.nickname}}】的状态更新为【{{#status}}】；若为禁用则其全部登录会话已失效";
++    String SYSTEM_USER_UPDATE_SELF_PASSWORD_SUB_TYPE = "修改自身密码";
++    String SYSTEM_USER_UPDATE_SELF_PASSWORD_SUCCESS = "用户【{{#user.nickname}}】修改了自己的密码，其全部登录会话已失效";
+ 
+     // ======================= SYSTEM_ROLE 角色 =======================
+ 
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
+index 0d87a78d..9b56e35d 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
+@@ -258,7 +258,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+     }
+ 
+     /**
+-     * ZS-LOGIN-002：按用户维度批量撤销令牌（用户被禁用/删除等）。
++     * ZS-LOGIN-002：按用户维度批量撤销令牌（用户被禁用/删除/改密等）。
+      *
+      * <p>与 {@link #removeAccessToken(String)} 同样遵循「先锁刷新令牌行，再撤销访问令牌」的锁序，
+      * 并在获锁后重读，避免与并发刷新互相复活。
+@@ -270,14 +270,48 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+      *
+      * <p>本方法此前<b>无 {@code @Transactional}</b>：加上事务既是原子性要求（批量撤销不应半途而废），
+      * 也是行锁生效的前提（无事务则每条语句自动提交、锁立即释放）。
++     *
++     * <p><b>ZS-LOGIN-003 补齐（孤立刷新凭据）</b>：此前待撤销的 refresh-token 集合<b>完全由 access-token
++     * 记录反推</b>，且 access-token 为空时首句即 early-return。于是「无 Access 记录但仍有 Refresh」的
++     * 孤立刷新凭据<b>永远不会被撤销</b>——它仍可用于 {@link #refreshAccessToken} 换出全新访问令牌
++     * （会话复活），在 ZS-LOGIN-001 兼容门控开启时更可直接当作访问令牌通过鉴权；同时该门控下
++     * {@code convertToAccessToken} 写入 Redis 的「已缓存转换凭据」（key = refreshToken 串）也无人清理，
++     * 会一直存活到刷新令牌 TTL（default client 达 30 天）。现在改为取
++     * 「<b>access-token 反推 ∪ refresh-token 直查</b>」的<b>全集</b>，逐个撤销访问令牌、刷新令牌、
++     * Redis 缓存凭据（含合成条目）与会话代际键。
++     *
++     * <p><b>ZS-LOGIN-003 补齐（租户上下文）</b>：撤销是安全操作，必须覆盖该用户名下的<b>全部</b>会话，
++     * 不能被调用方的 ThreadLocal 租户上下文静默收窄——无租户上下文（定时任务 / MQ 消费）时租户拦截器会因
++     * {@code getRequiredTenantId()} 抛 NPE，跨租户运维调用时则查不到目标用户凭据 → 撤销静默 no-op，
++     * 被禁用/被删除用户的会话继续存活。故整个撤销体在 {@link TenantUtils#executeIgnore(Runnable)} 内执行，
++     * 退出后自动恢复调用方上下文（不污染）。
++     *
++     * <p><b>ZS-LOGIN-003 补齐（审计）</b>：大批会话被静默撤销此前无任何日志，事件不可追踪；
++     * 现在撤销完成后输出结构化 INFO 日志（用户编号 / 用户类型 / 会话数 / 其中孤立刷新凭据数），
++     * 与调用方（{@code AdminUserServiceImpl}）的「失效原因」日志经 trace-id 关联。
++     *
++     * <p><b>范围边界</b>：仅技术账号闭环（B03）。任职撤销 / 业务组织语义归 B07（D-09 后），本方法不预埋。
+      */
+     @Override
+     @Transactional(rollbackFor = Exception.class)
+     public void removeAccessToken(Long userId, Integer userType) {
+-        List<OAuth2AccessTokenDO> accessTokens = oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType);
+-        if (CollUtil.isEmpty(accessTokens)) {
+-            return;
+-        }
++        TenantUtils.executeIgnore(() -> doRemoveAccessTokenByUser(userId, userType));
++    }
++
++    /**
++     * ZS-LOGIN-003：用户维度撤销的实际执行体，<b>必须</b>在「忽略租户」作用域内被调用。
++     *
++     * @param userId   用户编号
++     * @param userType 用户类型
++     */
++    private void doRemoveAccessTokenByUser(Long userId, Integer userType) {
++        // 1. 汇总待撤销的 refresh-token 全集：access-token 反推 ∪ refresh-token 直查
++        List<OAuth2AccessTokenDO> accessTokens =
++                ObjectUtil.defaultIfNull(oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType),
++                        Collections.emptyList());
++        List<OAuth2RefreshTokenDO> refreshTokens =
++                ObjectUtil.defaultIfNull(oauth2RefreshTokenMapper.selectListByUserIdAndUserType(userId, userType),
++                        Collections.emptyList());
+         // ZS-LOGIN-002 P2-A：去重 + 自然序排序 refresh-token，确保并发批量撤销以稳定顺序获取行锁
+         Set<String> sortedRefreshTokens = new TreeSet<>();
+         for (OAuth2AccessTokenDO accessToken : accessTokens) {
+@@ -285,11 +319,25 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+                 sortedRefreshTokens.add(accessToken.getRefreshToken());
+             }
+         }
+-        // 按稳定顺序逐个锁定并撤销
++        // ZS-LOGIN-003：refresh-token 直查补齐「孤立刷新凭据」（无 access-token 记录，反推发现不了）
++        int orphanCount = 0;
++        for (OAuth2RefreshTokenDO refreshTokenDO : refreshTokens) {
++            String refreshToken = refreshTokenDO.getRefreshToken();
++            if (StrUtil.isEmpty(refreshToken)) {
++                continue;
++            }
++            if (sortedRefreshTokens.add(refreshToken)) {
++                orphanCount++;
++            }
++        }
++        if (sortedRefreshTokens.isEmpty()) {
++            return; // 该用户无任何会话，无害空操作（不加锁、不写日志）
++        }
++        // 2. 按稳定顺序逐个锁定并撤销
+         for (String refreshToken : sortedRefreshTokens) {
+             // ZS-LOGIN-002：行锁 + 获锁后重读
+             oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+-            // 找到该 refresh-token 对应的任一 access-token 作为 fallback
++            // 找到该 refresh-token 对应的任一 access-token 作为 fallback；孤立刷新凭据没有 fallback（为 null）
+             OAuth2AccessTokenDO fallback = null;
+             for (OAuth2AccessTokenDO at : accessTokens) {
+                 if (refreshToken.equals(at.getRefreshToken())) {
+@@ -297,19 +345,24 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+                     break;
+                 }
+             }
+-            if (fallback == null) {
+-                continue;
+-            }
++            // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
+             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
+                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+                 oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
+             }
+             // 删除刷新令牌
+             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
++            // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
++            // key 即 refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时机
+             oauth2AccessTokenRedisDAO.delete(refreshToken);
+             // ZS-LOGIN-002：会话终结，清理代际键
+             deleteSessionGenerationQuietly(refreshToken);
+         }
++        // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识）
++        if (log.isInfoEnabled()) {
++            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的全部会话已撤销：会话数({})，其中孤立刷新凭据({})]",
++                    userType, userId, sortedRefreshTokens.size(), orphanCount);
++        }
+     }
+ 
+     @Override
+@@ -367,10 +420,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+     /**
+      * ZS-LOGIN-002：读取某刷新令牌下当前存活的访问令牌；若一条都读不到（例如已被并发路径删除），
+      * 退化为仅包含入参 {@code fallback} 自身，保证「至少撤销调用方所持的那一张」。
++     *
++     * <p>ZS-LOGIN-003：{@code fallback} 允许为 {@code null}——用户维度撤销时，
++     * 「无 Access 记录但仍有 Refresh」的孤立刷新凭据没有可退化的 access-token，
++     * 此时返回空集合（该会话本来就没有访问令牌需要撤销）。
+      */
+     private List<OAuth2AccessTokenDO> listAliveAccessTokens(String refreshToken, OAuth2AccessTokenDO fallback) {
+         List<OAuth2AccessTokenDO> aliveTokens = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
+-        return CollUtil.isEmpty(aliveTokens) ? Collections.singletonList(fallback) : aliveTokens;
++        if (CollUtil.isNotEmpty(aliveTokens)) {
++            return aliveTokens;
++        }
++        return fallback == null ? Collections.emptyList() : Collections.singletonList(fallback);
+     }
+ 
+     /**
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
+index 2071a110..c05abd6a 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
+@@ -225,16 +225,28 @@ public class AdminUserServiceImpl implements AdminUserService {
+     }
+ 
+     @Override
++    @Transactional(rollbackFor = Exception.class)
++    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_SELF_PASSWORD_SUB_TYPE, bizNo = "{{#id}}",
++            success = SYSTEM_USER_UPDATE_SELF_PASSWORD_SUCCESS)
+     public void updateUserPassword(Long id, UserProfileUpdatePasswordReqVO reqVO) {
+-        // 校验旧密码密码
++        // 1. 校验用户存在、旧密码密码
++        AdminUserDO user = validateUserExists(id);
+         validateOldPassword(id, reqVO.getOldPassword());
+-        // 执行更新
++
++        // 2. 执行更新
+         AdminUserDO updateObj = new AdminUserDO().setId(id);
+         updateObj.setPassword(encodePassword(reqVO.getNewPassword())); // 加密密码
+         userMapper.updateById(updateObj);
++
++        // 3. ZS-LOGIN-003：改密后全端失效（策略与理由见 invalidateUserSessions）
++        invalidateUserSessions(id, "用户自助修改密码");
++
++        // 4. 记录操作日志上下文
++        LogRecordContext.putVariable("user", user);
+     }
+ 
+     @Override
++    @Transactional(rollbackFor = Exception.class)
+     @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_PASSWORD_SUB_TYPE, bizNo = "{{#id}}",
+             success = SYSTEM_USER_UPDATE_PASSWORD_SUCCESS)
+     public void updateUserPassword(Long id, String password) {
+@@ -247,25 +259,69 @@ public class AdminUserServiceImpl implements AdminUserService {
+         updateObj.setPassword(encodePassword(password)); // 加密密码
+         userMapper.updateById(updateObj);
+ 
+-        // 3. 记录操作日志上下文
++        // 3. ZS-LOGIN-003：管理员重置他人密码后全端失效（重置通常意味着旧密码已泄露或人员变动）
++        invalidateUserSessions(id, "管理员重置密码");
++
++        // 4. 记录操作日志上下文
+         LogRecordContext.putVariable("user", user);
+         LogRecordContext.putVariable("newPassword", updateObj.getPassword());
+     }
+ 
+     @Override
++    @Transactional(rollbackFor = Exception.class)
++    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_STATUS_SUB_TYPE, bizNo = "{{#id}}",
++            success = SYSTEM_USER_UPDATE_STATUS_SUCCESS)
+     public void updateUserStatus(Long id, Integer status) {
+-        // 校验用户存在
+-        validateUserExists(id);
+-        // 更新状态
++        // 1. 校验用户存在
++        AdminUserDO user = validateUserExists(id);
++
++        // 2. 更新状态
+         AdminUserDO updateObj = new AdminUserDO();
+         updateObj.setId(id);
+         updateObj.setStatus(status);
+         userMapper.updateById(updateObj);
+ 
+-        // 如果是禁用用户，则删除其 Token 信息
++        // 3. ZS-LOGIN-003：如果是禁用用户，则失效其全部登录会话
+         if (CommonStatusEnum.isDisable(status)) {
+-            oauth2TokenService.removeAccessToken(id, UserTypeEnum.ADMIN.getValue());
++            invalidateUserSessions(id, "禁用用户");
+         }
++
++        // 4. 记录操作日志上下文
++        LogRecordContext.putVariable("user", user);
++    }
++
++    /**
++     * ZS-LOGIN-003：失效指定用户的<b>全部</b>登录会话（access / refresh / 已缓存转换凭据 / 会话代际键）。
++     *
++     * <p><b>策略：全端失效，不保留「当前端」。</b>理由：
++     * <ol>
++     *     <li>{@code LoginUser} 与 {@code OAuth2AccessTokenCheckRespDTO} 均<b>不携带</b>访问令牌串，
++     *         {@code TokenAuthenticationFilter} 也不把它写入安全上下文 —— 服务端当前<b>无法识别「当前端」</b>；</li>
++     *     <li>任何由客户端上送（请求体 / 请求头 / URL 参数）的「保留哪一端」提示都<b>可被伪造</b>：
++     *         攻击者持失窃凭据改密后可指定保留自己的会话，使改密彻底失去止损意义；</li>
++     *     <li>{@link #updateUserPassword(Long, String)} 是管理员重置<b>他人</b>密码，
++     *         根本不存在「目标用户的当前端」这个概念；</li>
++     *     <li>改密 / 禁用 / 删除 本身即「怀疑凭据泄露或账号不再可用」的止损动作，全端失效是安全默认。</li>
++     * </ol>
++     * 代价：自助改密后需全端重新登录（下一次请求 401 → 前端跳登录页，属既有契约）。
++     * 若产品后续要「保留当前端」，必须先在 {@code TokenAuthenticationFilter} 把<b>已验证的</b>
++     * 访问令牌串写入 {@code LoginUser}（服务端来源、非客户端断言）—— 本任务<b>不预埋</b>。
++     *
++     * <p>撤销能力完全复用 {@link OAuth2TokenService#removeAccessToken(Long, Integer)}
++     * （ZS-LOGIN-002 的行锁 + 固定锁序 + 会话代际键，ZS-LOGIN-003 的孤立刷新凭据全集 +
++     * 已缓存转换凭据清理 + 忽略租户），<b>不</b>另造锁、<b>不</b>另造审计机制。
++     *
++     * <p>调用方<b>必须</b>处于 {@code @Transactional} 中：撤销失败则回滚状态变更 ——
++     * 宁可显式失败，也不留下「已禁用 / 已删除 / 已改密但仍在线」的窗口。
++     *
++     * @param userId 用户编号
++     * @param reason 失效原因（仅用于审计日志，与 {@code @LogRecord} 操作日志经 trace-id 关联；不入库、不入令牌）
++     */
++    private void invalidateUserSessions(Long userId, String reason) {
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++        // ZS-LOGIN-003：事件与审计可追踪。此处只记「哪个用户、因为什么」；
++        // 撤销明细（会话数 / 其中孤立刷新凭据数）由 OAuth2TokenServiceImpl 侧的同 trace 日志给出。
++        log.info("[invalidateUserSessions][ZS-LOGIN-003 用户({}) 的全部登录会话已失效，原因({})]", userId, reason);
+     }
+ 
+     @Override
+@@ -284,6 +340,9 @@ public class AdminUserServiceImpl implements AdminUserService {
+         permissionService.processUserDeleted(id);
+         // 2.2 删除用户岗位
+         userPostMapper.deleteByUserId(id);
++        // 2.3 ZS-LOGIN-003：删除后失效全部登录会话（此前缺失：被删用户的凭据在自然过期前仍可用，
++        // 因为 checkAccessToken 只校验令牌存在与到期，不校验用户是否仍存在）
++        invalidateUserSessions(id, "删除用户");
+ 
+         // 3. 记录操作日志上下文
+         LogRecordContext.putVariable("user", user);
+@@ -292,7 +351,10 @@ public class AdminUserServiceImpl implements AdminUserService {
+     @Override
+     @Transactional(rollbackFor = Exception.class)
+     public void deleteUserList(List<Long> ids) {
+-        // 1. 校验用户都不是部门负责人；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
++        // 1. 校验用户都存在、且在调用方租户可见范围内；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
++        // ZS-LOGIN-003 codex r0 P1：此前只校验「不是部门负责人」，不校验归属 —— 跨租户强制下线漏洞，详见 validateUsersExists
++        validateUsersExists(ids);
++        // 1.1 校验用户都不是部门负责人
+         ids.forEach(this::validateUserNotDeptLeader);
+ 
+         // 2.1 批量删除用户
+@@ -302,6 +364,8 @@ public class AdminUserServiceImpl implements AdminUserService {
+         ids.forEach(id -> {
+             permissionService.processUserDeleted(id);
+             userPostMapper.deleteByUserId(id);
++            // 2.3 ZS-LOGIN-003：与单条删除对齐，批量删除同样必须失效会话
++            invalidateUserSessions(id, "批量删除用户");
+         });
+     }
+ 
+@@ -440,6 +504,36 @@ public class AdminUserServiceImpl implements AdminUserService {
+         return user;
+     }
+ 
++    /**
++     * ZS-LOGIN-003（codex r0 P1 修复）：批量校验用户都存在，且在<b>调用方租户可见范围内</b>。
++     *
++     * <p><b>为何必须补</b>：{@link #deleteUserList(List)} 此前只校验「不是部门负责人」。
++     * {@code userMapper.deleteByIds} 受租户拦截器过滤（他租户账号根本删不掉），
++     * 但会话撤销走 {@link #invalidateUserSessions} → {@code OAuth2TokenService#removeAccessToken(Long, Integer)}，
++     * 后者为了「不被调用方租户上下文静默收窄」而在 {@code TenantUtils.executeIgnore} 作用域内执行、是<b>全局</b>的。
++     * 两者叠加就形成漏洞：持有 {@code system:user:delete} 的管理员只要向他租户用户编号，
++     * 就能在账号<b>未被删除</b>的情况下把对方<b>跨租户强制下线</b>（DoS）。
++     *
++     * <p>因此本校验与单条删除的 {@link #validateUserExists(Long)} 对齐：任一编号不可见即<b>整批失败</b>，
++     * 对外统一抛 {@code USER_NOT_EXISTS}（他租户编号与真不存在不可区分，不泄露跨租户存在性）。
++     *
++     * <p><b>关键：本校验必须留在调用方租户作用域内执行（绝不得包进 {@code executeIgnore}）</b>，
++     * 否则租户过滤失效、他租户编号也能通过校验，修复即形同虚设。
++     * 只有校验通过后的撤销才允许进入忽略租户作用域。
++     *
++     * @param ids 用户编号集合
++     */
++    private void validateUsersExists(Collection<Long> ids) {
++        if (CollUtil.isEmpty(ids)) {
++            return;
++        }
++        // 去重后比较数量：selectByIds 同样受「租户过滤 + 逻辑删除过滤」，不可见的编号不会返回
++        Set<Long> distinctIds = new HashSet<>(ids);
++        if (CollUtil.size(userMapper.selectByIds(distinctIds)) != distinctIds.size()) {
++            throw exception(USER_NOT_EXISTS);
++        }
++    }
++
+     /**
+      * 校验用户不是部门负责人，避免删除后 {@link DeptDO#getLeaderUserId()} 悬空
+      *
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java
+new file mode 100644
+index 00000000..a8853fdf
+--- /dev/null
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java
+@@ -0,0 +1,538 @@
++package cn.zszj.module.system.service.oauth2;
++
++import ch.qos.logback.classic.Level;
++import ch.qos.logback.classic.Logger;
++import ch.qos.logback.classic.spi.ILoggingEvent;
++import ch.qos.logback.core.read.ListAppender;
++import cn.zszj.framework.common.enums.UserTypeEnum;
++import cn.zszj.framework.common.exception.ErrorCode;
++import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
++import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
++import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
++import cn.zszj.module.system.service.user.AdminUserService;
++import jakarta.annotation.Resource;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.slf4j.LoggerFactory;
++import org.springframework.context.annotation.Import;
++import org.springframework.test.context.TestPropertySource;
++import org.springframework.test.context.bean.override.mockito.MockitoBean;
++
++import java.time.LocalDateTime;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.Callable;
++import java.util.concurrent.CyclicBarrier;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.TimeUnit;
++
++import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomLongId;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.when;
++
++/**
++ * ZS-LOGIN-003：用户维度撤销（{@code removeAccessToken(userId, userType)}）的「孤立刷新凭据」单元测试类。
++ *
++ * <p>门控取<b>安全默认</b> {@code refresh-token-as-access-token-enabled=false}（与 LOGIN-001 一致）；
++ * gate=true 的「已缓存转换凭据」路径由 {@code OAuth2TokenServiceImplSyntheticCredentialRevokeTest} 看守。
++ *
++ * <p><b>缺陷（RED 依据）</b>：修复前 {@code removeAccessToken(userId, userType)} 的刷新凭据集合
++ * 完全<b>由 access-token 记录反推</b>，且在 access-token 为空时首句即 early-return。于是：
++ * <ol>
++ *     <li>「无 Access 记录但仍有 Refresh」的孤立刷新凭据<b>永远不会被撤销</b>——
++ *         它仍可用于 {@code refreshAccessToken} 换出全新访问令牌（会话复活），
++ *         在 gate=true 下更可直接当作访问令牌通过鉴权；</li>
++ *     <li>LOGIN-001 兼容路径写入 Redis 的「合成访问令牌」条目（key = refreshToken 串）
++ *         对孤立刷新凭据同样无人清理，会一直存活到刷新令牌 TTL（default client 达 30 天）。</li>
++ * </ol>
++ *
++ * <p><b>合同（GREEN）</b>：用户维度撤销必须取「access-token 反推 ∪ refresh-token 直查」的<b>全集</b>，
++ * 沿用 ZS-LOGIN-002 的<b>去重 + 自然序排序 + 行锁 + 获锁后重读</b>，逐个撤销访问令牌、刷新令牌、
++ * Redis 缓存凭据（含合成条目）与会话代际键。
++ *
++ * <p><b>范围边界</b>：仅技术账号闭环（B03），不涉及任职撤销（B07 / D-09 后）。
++ *
++ * @author ZS-LOGIN-003
++ */
++@Import({OAuth2TokenServiceImpl.class, OAuth2AccessTokenRedisDAO.class})
++@TestPropertySource(properties = "zszj.security.refresh-token-as-access-token-enabled=false")
++public class OAuth2TokenServiceImplOrphanRevokeTest extends BaseDbAndRedisUnitTest {
++
++    /**
++     * 并发任务的硬超时（秒）：避免死锁 / 连接池耗尽时无限挂起 CI。
++     */
++    private static final long CONCURRENT_TIMEOUT_SECONDS = 120L;
++    /**
++     * 竞态窗口放大延时（毫秒）：注入在「读刷新令牌（已持行锁）」之后、「删旧插新访问令牌」之前。
++     */
++    private static final long RACE_WINDOW_MILLIS = 200L;
++
++    @Resource
++    private OAuth2TokenServiceImpl oauth2TokenService;
++
++    @Resource
++    private OAuth2AccessTokenMapper oauth2AccessTokenMapper;
++    @Resource
++    private OAuth2RefreshTokenMapper oauth2RefreshTokenMapper;
++
++    @Resource
++    private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
++
++    @MockitoBean
++    private OAuth2ClientService oauth2ClientService;
++    @MockitoBean
++    private AdminUserService adminUserService;
++
++    private ListAppender<ILoggingEvent> logAppender;
++    private Logger serviceLogger;
++
++    @BeforeEach
++    public void before() {
++        serviceLogger = (Logger) LoggerFactory.getLogger(OAuth2TokenServiceImpl.class);
++        serviceLogger.setLevel(Level.INFO);
++        logAppender = new ListAppender<>();
++        logAppender.start();
++        serviceLogger.addAppender(logAppender);
++    }
++
++    @AfterEach
++    public void after() {
++        if (serviceLogger != null && logAppender != null) {
++            serviceLogger.detachAppender(logAppender);
++            logAppender.stop();
++        }
++    }
++
++    // ========== ① 孤立刷新凭据：不得残留权限 ==========
++
++    /**
++     * 场景 ①（卡片明写判据）：无 Access 记录但仍有 Refresh 的夹具，撤销后不得残留任何权限。
++     *
++     * <p>RED：修复前 access-token 集合为空 → 首句 early-return → 刷新令牌行、Redis 合成条目、
++     * 会话代际键<b>全部残留</b>。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_orphanRefreshToken_shouldLeaveNoResidualPrivilege() {
++        // 准备：只有刷新令牌，没有任何访问令牌（孤立刷新凭据）
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String refreshToken = refreshTokenDO.getRefreshToken();
++        // 额外污染：LOGIN-001 兼容路径会把「合成访问令牌」写进 Redis（key = refreshToken 串）
++        cacheSyntheticAccessToken(refreshToken, userId, clientId);
++        // 额外污染：留下会话代际键
++        oauth2AccessTokenRedisDAO.nextSessionGeneration(refreshToken, 60_000L);
++        // 前置断言
++        assertEquals(0, oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()).size(),
++                "前置：该夹具不应有 access-token 记录");
++        assertNotNull(oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken), "前置：刷新令牌应存活");
++        assertNotNull(oauth2AccessTokenRedisDAO.get(refreshToken), "前置：Redis 应存在已缓存的转换凭据");
++
++        // 调用：模拟禁用 / 删除 / 改密触发的用户维度撤销
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：刷新令牌行必须被撤销
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken),
++                "孤立刷新凭据必须被撤销，否则可继续换出新访问令牌（残留权限）");
++        // 断言：已缓存的转换凭据必须被清除
++        assertNull(oauth2AccessTokenRedisDAO.get(refreshToken),
++                "Redis 中「刷新令牌当访问令牌」的已缓存转换凭据必须被清除");
++        // 断言：会话代际键必须随会话终结清理
++        assertNull(oauth2AccessTokenRedisDAO.getSessionGeneration(refreshToken),
++                "会话终结后会话代际键必须被清理");
++        // 断言：不得残留任何访问令牌
++        assertEquals(0, oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()).size());
++    }
++
++    /**
++     * 场景 ①-2：孤立刷新凭据被撤销后，再用它刷新必须被拒绝（会话不得复活）。
++     *
++     * <p>RED：修复前撤销是 no-op，刷新会成功换出全新访问令牌 → 被禁用 / 被删除的用户重新获得权限。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_orphanRefreshToken_shouldRejectSubsequentRefresh() {
++        // 准备
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String refreshToken = refreshTokenDO.getRefreshToken();
++
++        // 调用
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：刷新被拒绝，且不产生任何访问令牌
++        assertServiceException(() -> oauth2TokenService.refreshAccessToken(refreshToken, clientId),
++                new ErrorCode(400, "无效的刷新令牌"));
++        assertEquals(0, oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken).size(),
++                "撤销后不得由孤立刷新凭据换出新访问令牌（会话复活）");
++    }
++
++    /**
++     * 场景 ①-3：孤立刷新凭据在撤销后也不得通过 {@code checkAccessToken}（即使它曾被当作访问令牌缓存）。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_orphanRefreshToken_shouldFailCheckAccessToken() {
++        // 准备
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String refreshToken = refreshTokenDO.getRefreshToken();
++        cacheSyntheticAccessToken(refreshToken, userId, clientId);
++
++        // 调用
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：合成凭据不可用
++        assertNull(oauth2TokenService.getAccessToken(refreshToken), "撤销后合成访问令牌不得可用");
++        assertServiceException(() -> oauth2TokenService.checkAccessToken(refreshToken),
++                new ErrorCode(401, "访问令牌不存在"));
++    }
++
++    // ========== ② 混合会话：正常会话与孤立刷新凭据都要撤销 ==========
++
++    /**
++     * 场景 ②：用户同时拥有「有 access-token 的正常会话」与「孤立刷新凭据」，撤销必须覆盖全集。
++     *
++     * <p>RED：修复前只撤销由 access-token 反推出的那一个会话，孤立刷新凭据存活。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_mixedNormalAndOrphan_shouldRevokeAll() {
++        // 准备
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
++        // 会话 A：正常（refresh + access）
++        OAuth2RefreshTokenDO normalRefresh = seedRefreshToken(clientId, userId);
++        OAuth2AccessTokenDO normalAccess = seedAccessToken(normalRefresh.getRefreshToken(), userId, clientId);
++        // 会话 B：孤立（只有 refresh）
++        OAuth2RefreshTokenDO orphanRefresh = seedRefreshToken(clientId, userId);
++
++        // 调用
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：两个会话都被撤销
++        assertNull(oauth2AccessTokenMapper.selectByAccessToken(normalAccess.getAccessToken()), "正常会话的访问令牌应被撤销");
++        assertNull(oauth2AccessTokenRedisDAO.get(normalAccess.getAccessToken()), "正常会话的 Redis 缓存应被清除");
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(normalRefresh.getRefreshToken()), "正常会话的刷新令牌应被撤销");
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(orphanRefresh.getRefreshToken()),
++                "孤立刷新凭据必须一并撤销");
++        assertEquals(0, oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()).size());
++        // 断言：两个会话的代际键都被清理
++        assertNull(oauth2AccessTokenRedisDAO.getSessionGeneration(normalRefresh.getRefreshToken()));
++        assertNull(oauth2AccessTokenRedisDAO.getSessionGeneration(orphanRefresh.getRefreshToken()));
++    }
++
++    /**
++     * 场景 ②-2：撤销必须只影响目标用户，不得波及同租户下的其他用户会话。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_shouldNotAffectOtherUsers() {
++        // 准备
++        String clientId = randomString();
++        Long targetUserId = randomLongId();
++        Long otherUserId = randomLongId();
++        mockClient(clientId, 0L);
++        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO targetRefresh = seedRefreshToken(clientId, targetUserId);
++        seedAccessToken(targetRefresh.getRefreshToken(), targetUserId, clientId);
++        OAuth2RefreshTokenDO otherRefresh = seedRefreshToken(clientId, otherUserId);
++        OAuth2AccessTokenDO otherAccess = seedAccessToken(otherRefresh.getRefreshToken(), otherUserId, clientId);
++
++        // 调用
++        oauth2TokenService.removeAccessToken(targetUserId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：目标用户被清空，其他用户不受影响
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(targetRefresh.getRefreshToken()));
++        assertNotNull(oauth2RefreshTokenMapper.selectByRefreshToken(otherRefresh.getRefreshToken()),
++                "其他用户的刷新令牌不得被误撤销");
++        assertNotNull(oauth2AccessTokenMapper.selectByAccessToken(otherAccess.getAccessToken()),
++                "其他用户的访问令牌不得被误撤销");
++    }
++
++    /**
++     * 场景 ②-3：既无 access-token 也无 refresh-token 时，撤销是无害空操作（不得抛异常、不得加锁）。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_noSessionAtAll_shouldBeNoop() {
++        Long userId = randomLongId();
++
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        assertEquals(0, oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()).size());
++    }
++
++    // ========== ③ 并发 / 竞态：撤销与刷新并发不得复活会话 ==========
++
++    /**
++     * 场景 ③：孤立刷新凭据上的「用户维度撤销」与「晚到刷新」并发，会话不得复活。
++     *
++     * <p>刻意复用 ZS-LOGIN-002 已有的<b>行锁 + 会话代际</b>机制，不新造锁。
++     *
++     * <p>RED：修复前撤销首句 early-return（access-token 为空）且<b>不获取任何行锁</b>，
++     * 晚到刷新在 200ms 延时后提交并插入访问令牌 → 会话复活（残留 1 个有效访问令牌 + 刷新令牌存活）。
++     * <p>GREEN：撤销取刷新凭据全集并逐个行锁，获锁后重读 access-token，把并发刷新已提交的新代际一并撤销。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_orphanRefreshToken_concurrentWithRefresh_shouldNotRevive() {
++        // 准备：孤立刷新凭据
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, RACE_WINDOW_MILLIS);
++        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String refreshToken = refreshTokenDO.getRefreshToken();
++
++        // 调用：撤销 与 晚到刷新 并发
++        List<Callable<Object>> tasks = new ArrayList<>();
++        tasks.add(() -> {
++            oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++            return null;
++        });
++        tasks.add(() -> oauth2TokenService.refreshAccessToken(refreshToken, clientId));
++        ConcurrentOutcome outcome = runConcurrently(tasks);
++
++        // 断言：不得复活会话
++        assertEquals(0, oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken).size(),
++                "撤销与晚到刷新并发后不得残留有效访问令牌（会话不得复活）");
++        assertEquals(0, oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()).size(),
++                "撤销后该用户不得残留任何访问令牌");
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken),
++                "撤销后刷新令牌必须已被删除，晚到刷新不得复活会话");
++        // 断言：并发过程中未出现死锁 / 超时（沿用 LOGIN-002 的稳定锁序）
++        assertTrue(outcome.failures.stream().noneMatch(OAuth2TokenServiceImplOrphanRevokeTest::isDeadlock),
++                "撤销与刷新并发不得死锁；实际失败：" + outcome.firstFailureMessage());
++    }
++
++    /**
++     * 场景 ③-2：两个孤立刷新凭据（字母序与插入序相反）+ 并发撤销，必须无死锁（稳定锁序覆盖孤立凭据）。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_twoOrphans_concurrentRevoke_noDeadlock() {
++        // 准备：插入序 zzz → aaa，字母序 aaa → zzz
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        String rZzz = "zzz-" + randomString();
++        String rAaa = "aaa-" + randomString();
++        seedRefreshToken(rZzz, clientId, userId);
++        seedRefreshToken(rAaa, clientId, userId);
++
++        // 调用：两个并发撤销
++        List<Callable<Object>> tasks = new ArrayList<>();
++        tasks.add(() -> {
++            oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++            return null;
++        });
++        tasks.add(() -> {
++            oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++            return null;
++        });
++        ConcurrentOutcome outcome = runConcurrently(tasks);
++
++        // 断言
++        assertTrue(outcome.failures.stream().noneMatch(OAuth2TokenServiceImplOrphanRevokeTest::isDeadlock),
++                "并发撤销孤立刷新凭据不得死锁（须沿用 LOGIN-002 的去重 + 自然序锁序）；实际失败："
++                        + outcome.firstFailureMessage());
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(rZzz), "孤立刷新凭据 zzz 应被撤销");
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(rAaa), "孤立刷新凭据 aaa 应被撤销");
++    }
++
++    // ========== ④ 事件与审计可追踪 ==========
++
++    /**
++     * 场景 ④：用户维度撤销必须留下结构化审计日志（用户编号 + 撤销会话数 + 孤立凭据数），
++     * 与 {@code AdminUserServiceImpl} 侧的操作日志经 trace-id 关联，满足「事件及审计可追踪」。
++     *
++     * <p>RED：修复前 {@code removeAccessToken(userId, userType)} <b>没有任何日志</b>，
++     * 大批会话被静默撤销，运维与安全审计无法定位。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_shouldEmitAuditLog() {
++        // 准备：1 个正常会话 + 1 个孤立刷新凭据
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO normalRefresh = seedRefreshToken(clientId, userId);
++        seedAccessToken(normalRefresh.getRefreshToken(), userId, clientId);
++        seedRefreshToken(clientId, userId);
++
++        // 调用
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：审计日志包含 ZS-LOGIN-003 标记、用户编号与撤销会话数
++        String auditLog = findAuditLog(userId);
++        assertNotNull(auditLog, "用户维度撤销必须留下审计日志；实际日志：" + formattedLogs());
++        assertTrue(auditLog.contains("ZS-LOGIN-003"), "审计日志必须带任务标记以便检索，实际：" + auditLog);
++        assertTrue(auditLog.contains("2"), "审计日志必须给出撤销会话数（本例 2 个），实际：" + auditLog);
++    }
++
++    // ========== 夹具与并发工具 ==========
++
++    private void mockClient(String clientId, long delayMillis) {
++        OAuth2ClientDO clientDO = randomPojo(OAuth2ClientDO.class).setClientId(clientId)
++                .setAccessTokenValiditySeconds(300).setRefreshTokenValiditySeconds(3600);
++        when(oauth2ClientService.validOAuthClientFromCache(eq(clientId))).thenAnswer(invocation -> {
++            if (delayMillis > 0) {
++                Thread.sleep(delayMillis);
++            }
++            return clientDO;
++        });
++    }
++
++    private OAuth2RefreshTokenDO seedRefreshToken(String clientId, Long userId) {
++        return seedRefreshToken(randomString(), clientId, userId);
++    }
++
++    /**
++     * 插入一条未过期的刷新令牌（显式设置 tenantId，避免依赖 ThreadLocal 在子线程中丢失）。
++     */
++    private OAuth2RefreshTokenDO seedRefreshToken(String refreshToken, String clientId, Long userId) {
++        OAuth2RefreshTokenDO refreshTokenDO = randomPojo(OAuth2RefreshTokenDO.class, o -> o
++                .setRefreshToken(refreshToken)
++                .setUserId(userId)
++                .setUserType(UserTypeEnum.ADMIN.getValue())
++                .setClientId(clientId)
++                .setExpiresTime(LocalDateTime.now().plusDays(1))
++                .setTenantId(0L));
++        oauth2RefreshTokenMapper.insert(refreshTokenDO);
++        return refreshTokenDO;
++    }
++
++    /**
++     * 插入一条挂在指定刷新令牌下的有效访问令牌，并写入 Redis 缓存。
++     */
++    private OAuth2AccessTokenDO seedAccessToken(String refreshToken, Long userId, String clientId) {
++        OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class, o -> o
++                .setRefreshToken(refreshToken)
++                .setUserId(userId)
++                .setUserType(UserTypeEnum.ADMIN.getValue())
++                .setClientId(clientId)
++                .setExpiresTime(LocalDateTime.now().plusMinutes(30))
++                .setTenantId(0L));
++        oauth2AccessTokenMapper.insert(accessTokenDO);
++        oauth2AccessTokenRedisDAO.set(accessTokenDO);
++        return accessTokenDO;
++    }
++
++    /**
++     * 模拟 ZS-LOGIN-001 兼容路径写入 Redis 的「合成访问令牌」：accessToken == refreshToken，
++     * 不落 system_oauth2_access_token 表，仅随 Redis TTL 过期。
++     */
++    private void cacheSyntheticAccessToken(String refreshToken, Long userId, String clientId) {
++        OAuth2AccessTokenDO synthetic = new OAuth2AccessTokenDO();
++        synthetic.setAccessToken(refreshToken);
++        synthetic.setRefreshToken(refreshToken);
++        synthetic.setUserId(userId);
++        synthetic.setUserType(UserTypeEnum.ADMIN.getValue());
++        synthetic.setClientId(clientId);
++        synthetic.setExpiresTime(LocalDateTime.now().plusDays(1));
++        synthetic.setTenantId(0L);
++        oauth2AccessTokenRedisDAO.set(synthetic);
++    }
++
++    private String findAuditLog(Long userId) {
++        for (ILoggingEvent event : logAppender.list) {
++            String message = event.getFormattedMessage();
++            if (message.contains("removeAccessToken") && message.contains(String.valueOf(userId))) {
++                return message;
++            }
++        }
++        return null;
++    }
++
++    private List<String> formattedLogs() {
++        List<String> messages = new ArrayList<>();
++        for (ILoggingEvent event : logAppender.list) {
++            messages.add(event.getFormattedMessage());
++        }
++        return messages;
++    }
++
++    /**
++     * 栅栏同步并发执行所有任务，返回成功数 / 结果 / 失败原因。硬超时保护，避免死锁挂起 CI。
++     */
++    private ConcurrentOutcome runConcurrently(List<Callable<Object>> tasks) {
++        int threads = tasks.size();
++        ExecutorService executor = Executors.newFixedThreadPool(threads);
++        CyclicBarrier barrier = new CyclicBarrier(threads);
++        ConcurrentOutcome outcome = new ConcurrentOutcome();
++        try {
++            for (Callable<Object> task : tasks) {
++                executor.submit(() -> {
++                    try {
++                        barrier.await(CONCURRENT_TIMEOUT_SECONDS, TimeUnit.SECONDS); // 同时起跑，最大化竞态
++                        outcome.recordSuccess(task.call());
++                    } catch (Throwable ex) {
++                        outcome.recordFailure(ex);
++                    }
++                });
++            }
++        } finally {
++            executor.shutdown();
++        }
++        try {
++            assertTrue(executor.awaitTermination(CONCURRENT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
++                    "并发任务未在 " + CONCURRENT_TIMEOUT_SECONDS + "s 内结束（疑似死锁或连接池耗尽）");
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++            throw new IllegalStateException("并发测试被中断", e);
++        }
++        return outcome;
++    }
++
++    private static boolean isDeadlock(Throwable ex) {
++        if (ex == null) {
++            return false;
++        }
++        String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
++        String cls = ex.getClass().getName().toLowerCase();
++        return msg.contains("deadlock") || msg.contains("lock timeout")
++                || cls.contains("jdbcsqltransactionrollback")
++                || msg.contains("concurrent update")
++                || isDeadlock(ex.getCause());
++    }
++
++    /**
++     * 并发执行结果收集器。
++     */
++    private static class ConcurrentOutcome {
++
++        private final List<Object> results = new ArrayList<>();
++        private final List<Throwable> failures = new ArrayList<>();
++        private int successCount;
++
++        private synchronized void recordSuccess(Object value) {
++            results.add(value);
++            successCount++;
++        }
++
++        private synchronized void recordFailure(Throwable ex) {
++            failures.add(ex);
++        }
++
++        private synchronized String firstFailureMessage() {
++            return failures.isEmpty() ? "无" : String.valueOf(failures.get(0));
++        }
++    }
++
++}
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplSyntheticCredentialRevokeTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplSyntheticCredentialRevokeTest.java
+new file mode 100644
+index 00000000..04969a85
+--- /dev/null
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplSyntheticCredentialRevokeTest.java
+@@ -0,0 +1,207 @@
++package cn.zszj.module.system.service.oauth2;
++
++import cn.zszj.framework.common.enums.UserTypeEnum;
++import cn.zszj.framework.common.exception.ErrorCode;
++import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
++import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
++import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
++import cn.zszj.module.system.service.user.AdminUserService;
++import jakarta.annotation.Resource;
++import org.junit.jupiter.api.Test;
++import org.springframework.context.annotation.Import;
++import org.springframework.test.context.TestPropertySource;
++import org.springframework.test.context.bean.override.mockito.MockitoBean;
++
++import java.time.LocalDateTime;
++
++import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomLongId;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.when;
++
++/**
++ * ZS-LOGIN-003：兼容开关开启（{@code refresh-token-as-access-token-enabled=true}，即现网实际配置）下，
++ * 用户维度撤销必须清除「已缓存的转换凭据」的单元测试类。
++ *
++ * <p>背景（ZS-LOGIN-001）：gate=true 时 {@code getAccessToken} 会把「刷新令牌」静默当作「访问令牌」，
++ * 并由 {@code convertToAccessToken} 合成一条 {@code accessToken == refreshToken} 的记录写入 Redis，
++ * TTL 继承刷新令牌（default client 达 30 天）、<b>不落 system_oauth2_access_token 表</b>。
++ *
++ * <p><b>缺陷（RED 依据）</b>：修复前 {@code removeAccessToken(userId, userType)} 的刷新凭据集合完全由
++ * access-token 记录反推，「无 Access 记录但仍有 Refresh」的孤立刷新凭据会走 early-return —— 于是：
++ * <ol>
++ *     <li>Redis 里的合成凭据条目<b>无人清理</b>，被禁用 / 被删除 / 已改密的用户仍能凭它通过鉴权达 30 天；</li>
++ *     <li>DB 里的刷新令牌行也存活，可随时 {@code refreshAccessToken} 换出全新访问令牌。</li>
++ * </ol>
++ * 这正是卡片验收项「无 Access 记录但仍有 Refresh 的夹具也不能残留权限」与
++ * 「已缓存的转换凭据……被清除，不残留」在现网门控下的真实形态。
++ *
++ * <p>注：严禁使用 {@code ReflectionTestUtils.setField} 注入门控——{@code OAuth2TokenServiceImpl} 含
++ * {@code @Transactional} 方法，注入的是 CGLIB 代理，setField 会写到代理而非目标对象，造成假绿
++ * （沿用 {@code OAuth2TokenServiceImplCompatTest} 的既有约定）。
++ *
++ * @author ZS-LOGIN-003
++ */
++@Import({OAuth2TokenServiceImpl.class, OAuth2AccessTokenRedisDAO.class})
++@TestPropertySource(properties = "zszj.security.refresh-token-as-access-token-enabled=true")
++public class OAuth2TokenServiceImplSyntheticCredentialRevokeTest extends BaseDbAndRedisUnitTest {
++
++    @Resource
++    private OAuth2TokenServiceImpl oauth2TokenService;
++
++    @Resource
++    private OAuth2AccessTokenMapper oauth2AccessTokenMapper;
++    @Resource
++    private OAuth2RefreshTokenMapper oauth2RefreshTokenMapper;
++
++    @Resource
++    private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
++
++    @MockitoBean
++    private OAuth2ClientService oauth2ClientService;
++    @MockitoBean
++    private AdminUserService adminUserService;
++
++    // ========== ① 孤立刷新凭据 + 已缓存转换凭据 ==========
++
++    /**
++     * 场景 ①（卡片明写判据 × 现网门控）：孤立刷新凭据已被当作访问令牌使用并缓存，
++     * 用户维度撤销后该凭据必须彻底不可用。
++     *
++     * <p>RED：修复前撤销是 no-op —— Redis 合成条目与 DB 刷新令牌行都残留，
++     * {@code getAccessToken} 命中缓存直接返回，被禁用用户继续持有权限。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_gateEnabled_orphanRefreshToken_shouldPurgeCachedSyntheticCredential() {
++        // 准备：只有刷新令牌，没有任何访问令牌
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId);
++        when(adminUserService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String credential = refreshTokenDO.getRefreshToken();
++        // 前置：gate=true 下刷新令牌可当访问令牌使用，并被缓存进 Redis（产生「已缓存的转换凭据」）
++        assertNotNull(oauth2TokenService.getAccessToken(credential),
++                "前置：gate=true 时刷新令牌应可被当作访问令牌使用");
++        assertNotNull(oauth2AccessTokenRedisDAO.get(credential),
++                "前置：转换凭据应已被缓存进 Redis");
++        assertEquals(0, oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()).size(),
++                "前置：该夹具不应有 access-token 记录（孤立刷新凭据）");
++
++        // 调用：模拟禁用 / 删除 / 改密触发的用户维度撤销
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言：已缓存的转换凭据被清除
++        assertNull(oauth2AccessTokenRedisDAO.get(credential),
++                "已缓存的转换凭据（合成访问令牌）必须被清除，不得残留至刷新令牌 TTL");
++        // 断言：DB 刷新令牌行被撤销
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(credential),
++                "孤立刷新凭据必须被撤销");
++        // 断言：凭据彻底不可用
++        assertNull(oauth2TokenService.getAccessToken(credential), "撤销后该凭据不得再被解析为访问令牌");
++        assertServiceException(() -> oauth2TokenService.checkAccessToken(credential),
++                new ErrorCode(401, "访问令牌不存在"));
++        // 断言：也不能再换出新访问令牌
++        assertServiceException(() -> oauth2TokenService.refreshAccessToken(credential, clientId),
++                new ErrorCode(400, "无效的刷新令牌"));
++    }
++
++    // ========== ② 正常会话 + 同时被当作访问令牌缓存 ==========
++
++    /**
++     * 场景 ②：正常会话（refresh + access），且刷新令牌也被当作访问令牌缓存过（WebSocket 握手场景）。
++     * 撤销后两个 Redis 条目、两行 DB 记录都必须清除。
++     *
++     * <p>本例作为<b>回归看守</b>：access-token 存在时既有实现已会 {@code delete(refreshToken)}，
++     * 改造不得把它弄坏。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_gateEnabled_normalSession_shouldPurgeBothCredentials() {
++        // 准备
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId);
++        when(adminUserService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String refreshToken = refreshTokenDO.getRefreshToken();
++        OAuth2AccessTokenDO accessTokenDO = seedAccessToken(refreshToken, userId, clientId);
++        // 刷新令牌也被当作访问令牌使用过（gate=true 兼容路径）
++        assertNotNull(oauth2TokenService.getAccessToken(refreshToken));
++
++        // 调用
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++
++        // 断言
++        assertNull(oauth2AccessTokenMapper.selectByAccessToken(accessTokenDO.getAccessToken()), "访问令牌行应被撤销");
++        assertNull(oauth2AccessTokenRedisDAO.get(accessTokenDO.getAccessToken()), "访问令牌缓存应被清除");
++        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken), "刷新令牌行应被撤销");
++        assertNull(oauth2AccessTokenRedisDAO.get(refreshToken), "已缓存的转换凭据应被清除");
++        assertNull(oauth2AccessTokenRedisDAO.getSessionGeneration(refreshToken), "会话代际键应被清理");
++    }
++
++    /**
++     * 场景 ②-2：gate=true 下，撤销后即便 Redis 被重新预热（再次 getAccessToken），
++     * 也不得因 DB 刷新令牌残留而重新合成出可用凭据。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_gateEnabled_shouldNotRehydrateSyntheticCredential() {
++        // 准备
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId);
++        when(adminUserService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
++        String credential = refreshTokenDO.getRefreshToken();
++        assertNotNull(oauth2TokenService.getAccessToken(credential), "前置：应已合成并缓存");
++
++        // 调用
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++        // 再次尝试预热（模拟撤销后仍有请求携旧凭据到达）
++        assertNull(oauth2TokenService.getAccessToken(credential),
++                "撤销后不得由残留的 DB 刷新令牌重新合成出可用凭据");
++        assertNull(oauth2AccessTokenRedisDAO.get(credential), "不得重新写入缓存");
++    }
++
++    // ========== 夹具 ==========
++
++    private void mockClient(String clientId) {
++        OAuth2ClientDO clientDO = randomPojo(OAuth2ClientDO.class).setClientId(clientId)
++                .setAccessTokenValiditySeconds(300).setRefreshTokenValiditySeconds(3600);
++        when(oauth2ClientService.validOAuthClientFromCache(eq(clientId))).thenReturn(clientDO);
++    }
++
++    private OAuth2RefreshTokenDO seedRefreshToken(String clientId, Long userId) {
++        OAuth2RefreshTokenDO refreshTokenDO = randomPojo(OAuth2RefreshTokenDO.class, o -> o
++                .setUserId(userId)
++                .setUserType(UserTypeEnum.ADMIN.getValue())
++                .setClientId(clientId)
++                .setExpiresTime(LocalDateTime.now().plusDays(1))
++                .setTenantId(0L));
++        oauth2RefreshTokenMapper.insert(refreshTokenDO);
++        return refreshTokenDO;
++    }
++
++    private OAuth2AccessTokenDO seedAccessToken(String refreshToken, Long userId, String clientId) {
++        OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class, o -> o
++                .setRefreshToken(refreshToken)
++                .setUserId(userId)
++                .setUserType(UserTypeEnum.ADMIN.getValue())
++                .setClientId(clientId)
++                .setExpiresTime(LocalDateTime.now().plusMinutes(30))
++                .setTenantId(0L));
++        oauth2AccessTokenMapper.insert(accessTokenDO);
++        oauth2AccessTokenRedisDAO.set(accessTokenDO);
++        return accessTokenDO;
++    }
++
++}
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
+new file mode 100644
+index 00000000..dae305a6
+--- /dev/null
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
+@@ -0,0 +1,249 @@
++package cn.zszj.module.system.service.oauth2;
++
++import cn.zszj.framework.common.enums.UserTypeEnum;
++import cn.zszj.framework.tenant.core.context.TenantContextHolder;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
++import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
++import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.mockito.InOrder;
++import org.springframework.test.util.ReflectionTestUtils;
++
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.Mockito.inOrder;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++/**
++ * ZS-LOGIN-003：用户维度撤销（{@code removeAccessToken(userId, userType)}）的锁序 / 去重 / 租户上下文单元测试。
++ *
++ * <p>沿用 {@code OAuth2TokenServiceImplBatchLockOrderUnitTest} 的手法：裸 {@code new} + mock，
++ * 绕开 Spring CGLIB 代理，精确控制 mapper 返回集合与调用顺序。
++ *
++ * <p><b>RED 依据</b>：修复前刷新凭据集合完全由 access-token 记录反推，且 access-token 为空时首句 early-return，
++ * 因此「孤立刷新凭据」既不会被发现、也不会被加锁撤销；同时整个撤销受调用方 ThreadLocal 租户上下文约束，
++ * 在无租户上下文（定时任务 / MQ 消费）或跨租户运维调用时会静默收窄甚至 NPE。
++ *
++ * @author ZS-LOGIN-003
++ */
++public class OAuth2TokenServiceImplUserRevokeLockOrderUnitTest {
++
++    private static final Integer USER_TYPE = UserTypeEnum.ADMIN.getValue();
++
++    private OAuth2TokenServiceImpl service;
++    private OAuth2AccessTokenMapper accessTokenMapper;
++    private OAuth2RefreshTokenMapper refreshTokenMapper;
++    private OAuth2AccessTokenRedisDAO redisDAO;
++
++    @BeforeEach
++    void setUp() {
++        service = new OAuth2TokenServiceImpl();
++        accessTokenMapper = mock(OAuth2AccessTokenMapper.class);
++        refreshTokenMapper = mock(OAuth2RefreshTokenMapper.class);
++        redisDAO = mock(OAuth2AccessTokenRedisDAO.class);
++        ReflectionTestUtils.setField(service, "oauth2AccessTokenMapper", accessTokenMapper);
++        ReflectionTestUtils.setField(service, "oauth2RefreshTokenMapper", refreshTokenMapper);
++        ReflectionTestUtils.setField(service, "oauth2AccessTokenRedisDAO", redisDAO);
++    }
++
++    @AfterEach
++    void tearDown() {
++        TenantContextHolder.setIgnore(false);
++        TenantContextHolder.setTenantId(null);
++    }
++
++    /**
++     * 核心 RED 测试：无 access-token、只有孤立 refresh-token 时，仍必须加锁并撤销。
++     *
++     * <p>RED（修复前）：access-token 集合为空 → 首句 early-return → 不加锁、不删除、不清缓存。
++     * <p>GREEN（修复后）：refresh-token 直查补齐全集 → 行锁 → 删刷新令牌 → 清 Redis 凭据与代际键。
++     */
++    @Test
++    void batchRevoke_orphanRefreshToken_mustStillLockAndRevoke() {
++        Long userId = 100L;
++        String orphan = "aaa-orphan-refresh";
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
++                .thenReturn(List.of(makeRefreshToken(orphan, userId)));
++        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of());
++
++        service.removeAccessToken(userId, USER_TYPE);
++
++        // 断言：先锁刷新令牌行（复用 ZS-LOGIN-002 行锁，不新造锁）
++        verify(refreshTokenMapper, times(1)).selectByRefreshTokenForUpdate(orphan);
++        // 断言：刷新令牌被撤销
++        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
++        // 断言：Redis 中以 refreshToken 串为 key 的「已缓存转换凭据」被清除
++        verify(redisDAO, times(1)).delete(orphan);
++        // 断言：会话代际键被清理
++        verify(redisDAO, times(1)).deleteSessionGeneration(orphan);
++    }
++
++    /**
++     * 孤立刷新凭据下若被并发刷新插入了访问令牌，获锁后重读必须把它们一并撤销。
++     */
++    @Test
++    void batchRevoke_orphanRefreshToken_mustRevokeAliveAccessTokensFoundAfterLock() {
++        Long userId = 110L;
++        String orphan = "bbb-orphan-refresh";
++        OAuth2AccessTokenDO alive = makeAccessToken("at-alive", orphan, userId);
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
++                .thenReturn(List.of(makeRefreshToken(orphan, userId)));
++        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of(alive));
++
++        service.removeAccessToken(userId, USER_TYPE);
++
++        verify(accessTokenMapper, times(1)).deleteById(alive.getId());
++        verify(redisDAO, times(1)).delete("at-alive");
++        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
++        verify(redisDAO, times(1)).delete(orphan);
++    }
++
++    /**
++     * 混合来源（access-token 反推 + refresh-token 直查）时，锁获取顺序必须仍是 refresh-token 自然序。
++     *
++     * <p>RED（修复前）：只会锁 access-token 反推出的 R_zzz，孤立凭据 R_aaa 完全不加锁。
++     * <p>GREEN（修复后）：并集去重排序 → [R_aaa, R_zzz]。
++     */
++    @Test
++    void batchRevoke_mixedSources_mustAcquireLocksInSortedRefreshTokenOrder() {
++        Long userId = 200L;
++        String rZzz = "zzz-refresh";
++        String rAaa = "aaa-orphan-refresh";
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
++                .thenReturn(List.of(makeAccessToken("at-1", rZzz, userId)));
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
++                .thenReturn(List.of(makeRefreshToken(rZzz, userId), makeRefreshToken(rAaa, userId)));
++        when(accessTokenMapper.selectListByRefreshToken(anyString())).thenReturn(List.of());
++
++        service.removeAccessToken(userId, USER_TYPE);
++
++        InOrder lockOrder = inOrder(refreshTokenMapper);
++        lockOrder.verify(refreshTokenMapper).selectByRefreshTokenForUpdate(rAaa);
++        lockOrder.verify(refreshTokenMapper).selectByRefreshTokenForUpdate(rZzz);
++        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(rAaa);
++        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(rZzz);
++    }
++
++    /**
++     * 两个来源命中同一 refresh-token 时必须去重，只加一次锁、只删一次。
++     */
++    @Test
++    void batchRevoke_deduplicatesAcrossBothSources() {
++        Long userId = 300L;
++        String shared = "mmm-shared-refresh";
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
++                .thenReturn(List.of(makeAccessToken("at-1", shared, userId), makeAccessToken("at-2", shared, userId)));
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
++                .thenReturn(List.of(makeRefreshToken(shared, userId)));
++        when(accessTokenMapper.selectListByRefreshToken(shared)).thenReturn(List.of());
++
++        service.removeAccessToken(userId, USER_TYPE);
++
++        verify(refreshTokenMapper, times(1)).selectByRefreshTokenForUpdate(shared);
++        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(shared);
++        verify(redisDAO, times(1)).deleteSessionGeneration(shared);
++    }
++
++    /**
++     * 两个来源都为空时，不得加任何锁（无害空操作）。
++     */
++    @Test
++    void batchRevoke_noSessionAtAll_mustNotAcquireAnyLock() {
++        Long userId = 400L;
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
++
++        service.removeAccessToken(userId, USER_TYPE);
++
++        verify(refreshTokenMapper, never()).selectByRefreshTokenForUpdate(anyString());
++        verify(refreshTokenMapper, never()).deleteByRefreshToken(anyString());
++    }
++
++    /**
++     * 撤销是安全操作，必须在「忽略租户」作用域内执行，不得被调用方 ThreadLocal 租户上下文静默收窄。
++     *
++     * <p>RED（修复前）：撤销随调用方租户过滤 —— 在定时任务 / MQ 消费等无租户上下文下
++     * {@code TenantDatabaseInterceptor#getTenantId()} 会因 {@code getRequiredTenantId()} 抛 NPE，
++     * 在跨租户运维调用下则查不到目标用户的凭据 → 撤销静默 no-op，被禁用用户的会话继续存活。
++     * <p>GREEN（修复后）：全部 mapper 调用都发生在 {@code TenantContextHolder.isIgnore() == true} 作用域内，
++     * 且退出后恢复原值（不污染调用方上下文）。
++     */
++    @Test
++    void batchRevoke_mustRunUnderTenantIgnoreAndRestoreContext() {
++        Long userId = 500L;
++        String orphan = "ccc-orphan-refresh";
++        // 调用方带着一个「错误」的租户上下文（模拟跨租户运维 / 上下文污染）
++        TenantContextHolder.setTenantId(999L);
++        TenantContextHolder.setIgnore(false);
++
++        AtomicBoolean ignoreOnRefreshQuery = new AtomicBoolean(false);
++        AtomicBoolean ignoreOnLock = new AtomicBoolean(false);
++        AtomicBoolean ignoreOnDelete = new AtomicBoolean(false);
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenAnswer(invocation -> {
++            ignoreOnRefreshQuery.set(TenantContextHolder.isIgnore());
++            return List.of(makeRefreshToken(orphan, userId));
++        });
++        when(refreshTokenMapper.selectByRefreshTokenForUpdate(anyString())).thenAnswer(invocation -> {
++            ignoreOnLock.set(TenantContextHolder.isIgnore());
++            return makeRefreshToken(invocation.getArgument(0), userId);
++        });
++        when(refreshTokenMapper.deleteByRefreshToken(anyString())).thenAnswer(invocation -> {
++            ignoreOnDelete.set(TenantContextHolder.isIgnore());
++            return 1;
++        });
++        when(accessTokenMapper.selectListByRefreshToken(anyString())).thenReturn(List.of());
++
++        service.removeAccessToken(userId, USER_TYPE);
++
++        assertTrue(ignoreOnRefreshQuery.get(), "刷新令牌直查必须在忽略租户作用域内执行");
++        assertTrue(ignoreOnLock.get(), "行锁必须在忽略租户作用域内获取");
++        assertTrue(ignoreOnDelete.get(), "刷新令牌删除必须在忽略租户作用域内执行");
++        // 断言：退出后恢复调用方上下文，不得污染
++        assertFalse(TenantContextHolder.isIgnore(), "撤销结束后必须恢复调用方的租户忽略标记");
++        assertTrue(Long.valueOf(999L).equals(TenantContextHolder.getTenantId()),
++                "撤销结束后必须恢复调用方的租户编号");
++    }
++
++    // ========== 工具 ==========
++
++    private static OAuth2AccessTokenDO makeAccessToken(String accessToken, String refreshToken, Long userId) {
++        OAuth2AccessTokenDO at = new OAuth2AccessTokenDO();
++        at.setId(accessToken.hashCode() & 0x7fffffffL);
++        at.setAccessToken(accessToken);
++        at.setRefreshToken(refreshToken);
++        at.setUserId(userId);
++        at.setUserType(USER_TYPE);
++        at.setClientId("test-client");
++        at.setExpiresTime(LocalDateTime.now().plusHours(1));
++        at.setTenantId(0L);
++        return at;
++    }
++
++    private static OAuth2RefreshTokenDO makeRefreshToken(String refreshToken, Long userId) {
++        OAuth2RefreshTokenDO rt = new OAuth2RefreshTokenDO();
++        rt.setId(refreshToken.hashCode() & 0x7fffffffL);
++        rt.setRefreshToken(refreshToken);
++        rt.setUserId(userId);
++        rt.setUserType(USER_TYPE);
++        rt.setClientId("test-client");
++        rt.setExpiresTime(LocalDateTime.now().plusDays(1));
++        rt.setTenantId(0L);
++        return rt;
++    }
++}
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java
+new file mode 100644
+index 00000000..2013c713
+--- /dev/null
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java
+@@ -0,0 +1,488 @@
++package cn.zszj.module.system.service.user;
++
++import ch.qos.logback.classic.Level;
++import ch.qos.logback.classic.Logger;
++import ch.qos.logback.classic.spi.ILoggingEvent;
++import ch.qos.logback.core.read.ListAppender;
++import cn.zszj.framework.common.enums.CommonStatusEnum;
++import cn.zszj.framework.common.enums.UserTypeEnum;
++import cn.zszj.framework.common.util.collection.ArrayUtils;
++import cn.zszj.framework.tenant.core.context.TenantContextHolder;
++import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
++import cn.zszj.module.infra.api.config.ConfigApi;
++import cn.zszj.module.infra.api.file.FileApi;
++import cn.zszj.module.system.controller.admin.user.vo.profile.UserProfileUpdatePasswordReqVO;
++import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
++import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
++import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
++import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
++import cn.zszj.module.system.enums.LogRecordConstants;
++import cn.zszj.module.system.enums.common.SexEnum;
++import cn.zszj.module.system.mq.producer.user.AdminUserProducer;
++import cn.zszj.module.system.service.dept.DeptService;
++import cn.zszj.module.system.service.dept.PostService;
++import cn.zszj.module.system.service.oauth2.OAuth2TokenService;
++import cn.zszj.module.system.service.permission.PermissionService;
++import cn.zszj.module.system.service.tenant.TenantService;
++import com.mzt.logapi.starter.annotation.LogRecord;
++import jakarta.annotation.Resource;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.mockito.stubbing.Answer;
++import org.slf4j.LoggerFactory;
++import org.springframework.context.annotation.Import;
++import org.springframework.security.crypto.password.PasswordEncoder;
++import org.springframework.test.context.bean.override.mockito.MockitoBean;
++import org.springframework.test.util.ReflectionTestUtils;
++
++import java.lang.reflect.Method;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.function.Consumer;
++
++import static cn.hutool.core.util.RandomUtil.randomEle;
++import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
++import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
++import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_IS_DEPT_LEADER;
++import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_NOT_EXISTS;
++import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_PASSWORD_FAILED;
++import static cn.zszj.module.system.service.user.AdminUserServiceImpl.USER_INIT_PASSWORD_KEY;
++import static org.assertj.core.util.Lists.newArrayList;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyLong;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++/**
++ * ZS-LOGIN-003：技术账号（B03）生命周期入口的会话失效单元测试类。
++ *
++ * <p>合同：禁用 / 删除 / 改密三类生命周期入口，都必须复用既有撤销能力
++ * {@link OAuth2TokenService#removeAccessToken(Long, Integer)} 使该用户的<b>全部</b>会话失效。
++ *
++ * <p><b>改密失效策略（本任务决策）：全端失效</b>。理由：
++ * <ol>
++ *     <li>{@code LoginUser} 与 {@code OAuth2AccessTokenCheckRespDTO} 均<b>不携带</b>访问令牌串，
++ *         {@code TokenAuthenticationFilter} 也不会把它写进安全上下文，因此服务端<b>当前无法识别「当前端」</b>；</li>
++ *     <li>任何由客户端上送（请求体 / 请求头 / URL 参数）的「保留哪一端」提示都可被伪造，
++ *         攻击者持失窃凭据改密后可指定保留自己的会话，使改密失去止损意义；</li>
++ *     <li>管理员重置密码（{@code updateUserPassword(id, password)}）针对的是<b>他人</b>账号，
++ *         根本不存在「目标用户的当前端」概念，只能全端失效；</li>
++ *     <li>改密本身即是「怀疑凭据泄露」的止损动作，全端失效是安全默认。</li>
++ * </ol>
++ * 故本类断言改密走的是<b>用户维度</b>撤销，且<b>不</b>走单令牌维度撤销。
++ *
++ * <p><b>范围边界</b>：仅覆盖技术账号闭环（B03）。任职撤销 / 业务组织语义归 B07（D-09 后），本类不涉及。
++ *
++ * @author ZS-LOGIN-003
++ */
++@Import(AdminUserServiceImpl.class)
++public class AdminUserServiceImplSessionInvalidateTest extends BaseDbUnitTest {
++
++    @Resource
++    private AdminUserServiceImpl userService;
++
++    @Resource
++    private AdminUserMapper userMapper;
++    @Resource
++    private DeptMapper deptMapper;
++
++    @MockitoBean
++    private DeptService deptService;
++    @MockitoBean
++    private PostService postService;
++    @MockitoBean
++    private PermissionService permissionService;
++    @MockitoBean
++    private PasswordEncoder passwordEncoder;
++    @MockitoBean
++    private TenantService tenantService;
++    @MockitoBean
++    private FileApi fileApi;
++    @MockitoBean
++    private ConfigApi configApi;
++    @MockitoBean
++    private OAuth2TokenService oauth2TokenService;
++    @MockitoBean
++    private AdminUserProducer adminUserProducer;
++
++    private ListAppender<ILoggingEvent> logAppender;
++    private Logger serviceLogger;
++
++    @BeforeEach
++    public void before() {
++        when(configApi.getConfigValueByKey(USER_INIT_PASSWORD_KEY)).thenReturn("zszjyuanma");
++        // 捕获 AdminUserServiceImpl 的审计日志（显式设 INFO，避免受全局日志级别影响造成假失败）
++        serviceLogger = (Logger) LoggerFactory.getLogger(AdminUserServiceImpl.class);
++        serviceLogger.setLevel(Level.INFO);
++        logAppender = new ListAppender<>();
++        logAppender.start();
++        serviceLogger.addAppender(logAppender);
++    }
++
++    @AfterEach
++    public void after() {
++        if (serviceLogger != null && logAppender != null) {
++            serviceLogger.detachAppender(logAppender);
++            logAppender.stop();
++        }
++        TenantContextHolder.clear();
++    }
++
++    // ========== ① 删除用户：全部会话必须失效 ==========
++
++    /**
++     * 场景 ①：删除单个用户后，必须撤销该用户的全部会话。
++     *
++     * <p>RED：修复前 {@code deleteUser} 只删用户行与关联数据，从不触碰令牌 ——
++     * 被删用户的 access / refresh 凭据在自然过期前仍然可用（{@code checkAccessToken} 只校验令牌存在与到期）。
++     */
++    @Test
++    public void testDeleteUser_shouldRevokeAllSessions() {
++        // mock 数据
++        AdminUserDO dbUser = randomAdminUserDO();
++        userMapper.insert(dbUser);
++        Long userId = dbUser.getId();
++
++        // 调用
++        userService.deleteUser(userId);
++
++        // 断言：走「用户维度」全端撤销（改密/删除策略一律全端失效，不做保留当前端）
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(userId), eq(UserTypeEnum.ADMIN.getValue()));
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++    }
++
++    /**
++     * 场景 ①-2：批量删除用户后，每个被删用户都必须撤销会话。
++     *
++     * <p>RED：修复前 {@code deleteUserList} 完全不调用撤销能力。
++     */
++    @Test
++    public void testDeleteUserList_shouldRevokeAllSessionsForEachUser() {
++        // mock 数据
++        AdminUserDO dbUser1 = randomAdminUserDO();
++        userMapper.insert(dbUser1);
++        AdminUserDO dbUser2 = randomAdminUserDO();
++        userMapper.insert(dbUser2);
++        List<Long> ids = newArrayList(dbUser1.getId(), dbUser2.getId());
++
++        // 调用
++        userService.deleteUserList(ids);
++
++        // 断言
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser1.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser2.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++    }
++
++    /**
++     * 场景 ①-3：删除前置校验失败（部门负责人）时，不得撤销会话——避免「校验没过却把用户踢下线」。
++     */
++    @Test
++    public void testDeleteUser_isDeptLeader_shouldNotRevokeSessions() {
++        // mock 数据：用户是部门负责人
++        AdminUserDO dbUser = randomAdminUserDO();
++        userMapper.insert(dbUser);
++        deptMapper.insert(randomPojo(DeptDO.class, o -> o.setLeaderUserId(dbUser.getId())));
++
++        // 调用，并断言异常
++        assertServiceException(() -> userService.deleteUser(dbUser.getId()), USER_IS_DEPT_LEADER);
++
++        // 断言：未撤销任何会话
++        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), any());
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++    }
++
++    /**
++     * 场景 ①-4（codex r0 P1）：批量删除时，若传入的用户编号在<b>调用方租户可见范围内不存在</b>
++     * （含「他租户用户编号」——生产环境该编号会被租户拦截器过滤掉，等价于查不到），
++     * 必须<b>整批失败</b>且<b>不撤销任何会话</b>。
++     *
++     * <p><b>RED</b>：修复前 {@code deleteUserList} 只校验「不是部门负责人」，<b>不校验归属</b>。
++     * 由于 {@code userMapper.deleteByIds} 受租户过滤（他租户账号根本删不掉），而会话撤销走
++     * {@code invalidateUserSessions} → {@code removeAccessToken}，后者在 {@code TenantUtils.executeIgnore}
++     * 作用域内是<b>全局</b>的 —— 于是持有 {@code system:user:delete} 的管理员只要提交他租户用户编号，
++     * 就能在账号未被删除的情况下把对方<b>跨租户强制下线</b>（DoS）。
++     *
++     * <p>说明：{@code BaseDbUnitTest} 未装配租户拦截器，无法在 H2 里真复现跨租户过滤，
++     * 故此处以「查不到的编号」等价构造（与 {@code AdminUserServiceImplTest
++     * #testValidateUserNotDeptLeader_ignoresDataPermission} 对数据权限的处理方式一致）；
++     * 「归属校验必须运行在调用方租户作用域内」由下一例直接断言。
++     */
++    @Test
++    public void testDeleteUserList_containsInvisibleUser_shouldFailWholeBatchAndRevokeNothing() {
++        // mock 数据：一个可见的用户 + 一个不可见的编号（模拟他租户用户）
++        AdminUserDO visibleUser = randomAdminUserDO();
++        userMapper.insert(visibleUser);
++        Long invisibleUserId = 999_999_999L;
++
++        // 调用，并断言异常：整批失败
++        assertServiceException(() -> userService.deleteUserList(newArrayList(visibleUser.getId(), invisibleUserId)),
++                USER_NOT_EXISTS);
++
++        // 断言：可见用户未被删除（不得部分删除）
++        assertNotNull(userMapper.selectById(visibleUser.getId()));
++        // 断言：未触发任何会话撤销，也未触发关联数据清理
++        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), any());
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++        verify(permissionService, never()).processUserDeleted(any());
++    }
++
++    /**
++     * 场景 ①-5（codex r0 P1）：批量删除的<b>归属校验</b>必须运行在「调用方租户作用域」内，
++     * 不得被包进 {@code TenantUtils.executeIgnore}；否则他租户用户编号也会通过校验，
++     * 随后的全局撤销就构成跨租户强制下线。
++     *
++     * <p>同时断言：校验失败时不得触发任何撤销，且调用方租户上下文不被污染。
++     */
++    @Test
++    public void testDeleteUserList_ownershipCheckMustRunUnderCallerTenantScope() {
++        AdminUserServiceImpl targetService = new AdminUserServiceImpl();
++        AdminUserMapper mockUserMapper = mock(AdminUserMapper.class);
++        OAuth2TokenService mockTokenService = mock(OAuth2TokenService.class);
++        ReflectionTestUtils.setField(targetService, "userMapper", mockUserMapper);
++        ReflectionTestUtils.setField(targetService, "oauth2TokenService", mockTokenService);
++
++        // 调用方带着自己的租户上下文
++        TenantContextHolder.setTenantId(1L);
++        TenantContextHolder.setIgnore(false);
++        // 归属校验期间「是否忽略租户」的观测值：初值 true，若校验未被包进 executeIgnore 则会被改写为 false
++        AtomicBoolean ignoreDuringOwnershipCheck = new AtomicBoolean(true);
++        AdminUserDO visibleUser = randomAdminUserDO(o -> o.setId(10L));
++        when(mockUserMapper.selectByIds(any())).thenAnswer(invocation -> {
++            ignoreDuringOwnershipCheck.set(TenantContextHolder.isIgnore());
++            return newArrayList(visibleUser); // 只「看得见」1 个，另一个属他租户
++        });
++
++        // 调用，并断言异常
++        assertServiceException(() -> targetService.deleteUserList(newArrayList(10L, 20L)), USER_NOT_EXISTS);
++
++        // 断言：归属校验发生在调用方租户作用域内
++        assertFalse(ignoreDuringOwnershipCheck.get(),
++                "批量删除的归属校验必须在调用方租户作用域内执行，不得忽略租户（否则构成跨租户强制下线）");
++        // 断言：未触发任何撤销
++        verify(mockTokenService, never()).removeAccessToken(anyLong(), any());
++        // 断言：调用方租户上下文未被污染
++        assertFalse(TenantContextHolder.isIgnore(), "校验失败后必须恢复调用方的租户忽略标记");
++        assertEquals(Long.valueOf(1L), TenantContextHolder.getTenantId(), "校验失败后必须保留调用方的租户编号");
++    }
++
++    // ========== ② 禁用用户：既有能力回归看守 ==========
++
++    /**
++     * 场景 ②：禁用用户后撤销全部会话（既有能力的回归看守，防止本次改造把它改坏）。
++     */
++    @Test
++    public void testUpdateUserStatusDisable_shouldRevokeAllSessions() {
++        // mock 数据
++        AdminUserDO dbUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
++        userMapper.insert(dbUser);
++
++        // 调用
++        userService.updateUserStatus(dbUser.getId(), CommonStatusEnum.DISABLE.getStatus());
++
++        // 断言
++        assertEquals(CommonStatusEnum.DISABLE.getStatus(), userMapper.selectById(dbUser.getId()).getStatus());
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++    }
++
++    /**
++     * 场景 ②-2：启用用户时不得撤销会话（避免过度撤销把正常用户踢下线）。
++     */
++    @Test
++    public void testUpdateUserStatusEnable_shouldNotRevokeSessions() {
++        // mock 数据
++        AdminUserDO dbUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.DISABLE.getStatus()));
++        userMapper.insert(dbUser);
++
++        // 调用
++        userService.updateUserStatus(dbUser.getId(), CommonStatusEnum.ENABLE.getStatus());
++
++        // 断言
++        assertEquals(CommonStatusEnum.ENABLE.getStatus(), userMapper.selectById(dbUser.getId()).getStatus());
++        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), any());
++    }
++
++    // ========== ③ 改密：全端失效 ==========
++
++    /**
++     * 场景 ③：用户自助修改密码后，必须<b>全端</b>失效（含当前端）。
++     *
++     * <p>RED：修复前该重载只更新密码列，从不调用撤销能力 —— 失窃凭据在改密后依旧可用。
++     */
++    @Test
++    public void testUpdateUserPasswordBySelf_shouldRevokeAllSessions() {
++        // mock 数据
++        AdminUserDO dbUser = randomAdminUserDO(o -> o.setPassword("encode:tudou"));
++        userMapper.insert(dbUser);
++        UserProfileUpdatePasswordReqVO reqVO = randomPojo(UserProfileUpdatePasswordReqVO.class, o -> {
++            o.setOldPassword("tudou");
++            o.setNewPassword("yuanma");
++        });
++        when(passwordEncoder.encode(anyString())).then(
++                (Answer<String>) invocationOnMock -> "encode:" + invocationOnMock.getArgument(0));
++        when(passwordEncoder.matches(eq(reqVO.getOldPassword()), eq(dbUser.getPassword()))).thenReturn(true);
++
++        // 调用
++        userService.updateUserPassword(dbUser.getId(), reqVO);
++
++        // 断言：密码已更新
++        assertEquals("encode:yuanma", userMapper.selectById(dbUser.getId()).getPassword());
++        // 断言：全端失效（用户维度撤销），且不走单令牌维度撤销
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++    }
++
++    /**
++     * 场景 ③-2：管理员重置他人密码后，必须<b>全端</b>失效。
++     *
++     * <p>RED：修复前该重载只更新密码列，从不调用撤销能力。
++     */
++    @Test
++    public void testUpdateUserPasswordByAdmin_shouldRevokeAllSessions() {
++        // mock 数据
++        AdminUserDO dbUser = randomAdminUserDO();
++        userMapper.insert(dbUser);
++        String password = "zszj";
++        when(passwordEncoder.encode(anyString())).then(
++                (Answer<String>) invocationOnMock -> "encode:" + invocationOnMock.getArgument(0));
++
++        // 调用
++        userService.updateUserPassword(dbUser.getId(), password);
++
++        // 断言
++        assertEquals("encode:" + password, userMapper.selectById(dbUser.getId()).getPassword());
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++    }
++
++    /**
++     * 场景 ③-3：自助改密的旧密码校验失败时，不得撤销会话（避免用错误旧密码把用户踢下线，构成 DoS）。
++     */
++    @Test
++    public void testUpdateUserPasswordBySelf_oldPasswordMismatch_shouldNotRevokeSessions() {
++        // mock 数据
++        AdminUserDO dbUser = randomAdminUserDO(o -> o.setPassword("encode:tudou"));
++        userMapper.insert(dbUser);
++        UserProfileUpdatePasswordReqVO reqVO = randomPojo(UserProfileUpdatePasswordReqVO.class, o -> {
++            o.setOldPassword("wrong-password");
++            o.setNewPassword("yuanma");
++        });
++        when(passwordEncoder.matches(eq(reqVO.getOldPassword()), eq(dbUser.getPassword()))).thenReturn(false);
++
++        // 调用，并断言异常
++        assertServiceException(() -> userService.updateUserPassword(dbUser.getId(), reqVO), USER_PASSWORD_FAILED);
++
++        // 断言：密码未变、会话未撤销
++        assertEquals("encode:tudou", userMapper.selectById(dbUser.getId()).getPassword());
++        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), any());
++        verify(oauth2TokenService, never()).removeAccessToken(anyString());
++    }
++
++    // ========== ④ 事件与审计可追踪 ==========
++
++    /**
++     * 场景 ④：四类生命周期入口都必须挂在底座既有的操作日志机制（{@code @LogRecord} → system_operate_log）上，
++     * 使「禁用 / 删除 / 改密导致的会话失效事件」可追踪、可回溯操作人。
++     *
++     * <p>RED：修复前 {@code updateUserStatus}（禁用）与自助改密重载<b>没有</b> {@code @LogRecord}，
++     * 会话被大批撤销却无任何操作日志留痕。
++     *
++     * <p>刻意<b>不</b>另造审计机制：复用 mzt-biz-log 既有注解与既有 {@code SYSTEM_USER_TYPE}。
++     */
++    @Test
++    public void testLifecycleEntries_shouldBeAuditableByLogRecord() throws Exception {
++        assertLogRecordPresent("updateUserStatus", Long.class, Integer.class);
++        assertLogRecordPresent("updateUserPassword", Long.class, UserProfileUpdatePasswordReqVO.class);
++        assertLogRecordPresent("updateUserPassword", Long.class, String.class);
++        assertLogRecordPresent("deleteUser", Long.class);
++    }
++
++    /**
++     * 场景 ④-2：每个生命周期入口触发撤销时，必须留下结构化审计日志（含用户编号 + 原因），
++     * 与操作日志经 trace-id 关联，满足「事件及审计可追踪」。
++     *
++     * <p>RED：修复前禁用路径虽已撤销会话，但<b>无任何日志</b>；删除 / 改密路径连撤销都没有。
++     */
++    @Test
++    public void testSessionInvalidation_shouldEmitAuditLogWithReason() {
++        // 禁用
++        AdminUserDO disableUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
++        userMapper.insert(disableUser);
++        userService.updateUserStatus(disableUser.getId(), CommonStatusEnum.DISABLE.getStatus());
++        // 删除
++        AdminUserDO deleteUser = randomAdminUserDO();
++        userMapper.insert(deleteUser);
++        userService.deleteUser(deleteUser.getId());
++        // 管理员重置密码
++        AdminUserDO resetUser = randomAdminUserDO();
++        userMapper.insert(resetUser);
++        when(passwordEncoder.encode(anyString())).then(
++                (Answer<String>) invocationOnMock -> "encode:" + invocationOnMock.getArgument(0));
++        userService.updateUserPassword(resetUser.getId(), "zszj");
++
++        // 断言：三类事件各自的审计日志均可检索到（含用户编号与原因关键字）
++        assertTrue(findAuditLog(disableUser.getId(), "禁用"),
++                "禁用用户必须留下会话失效审计日志，实际日志：" + formattedLogs());
++        assertTrue(findAuditLog(deleteUser.getId(), "删除"),
++                "删除用户必须留下会话失效审计日志，实际日志：" + formattedLogs());
++        assertTrue(findAuditLog(resetUser.getId(), "密码"),
++                "改密必须留下会话失效审计日志，实际日志：" + formattedLogs());
++    }
++
++    // ========== 工具方法 ==========
++
++    private void assertLogRecordPresent(String methodName, Class<?>... parameterTypes) throws Exception {
++        Method method = AdminUserServiceImpl.class.getMethod(methodName, parameterTypes);
++        LogRecord logRecord = method.getAnnotation(LogRecord.class);
++        assertNotNull(logRecord, "生命周期入口 " + methodName + " 必须挂 @LogRecord（复用底座既有操作日志机制）");
++        assertEquals(LogRecordConstants.SYSTEM_USER_TYPE, logRecord.type(),
++                "生命周期入口 " + methodName + " 的操作日志 type 必须为 SYSTEM 用户");
++        assertTrue(logRecord.subType() != null && !logRecord.subType().isBlank(),
++                "生命周期入口 " + methodName + " 的操作日志 subType 不得为空");
++        assertTrue(logRecord.success() != null && !logRecord.success().isBlank(),
++                "生命周期入口 " + methodName + " 的操作日志 success 模板不得为空");
++    }
++
++    /**
++     * 检索会话失效审计日志：同一行内既包含用户编号，也包含原因关键字。
++     */
++    private boolean findAuditLog(Long userId, String reasonKeyword) {
++        for (ILoggingEvent event : logAppender.list) {
++            String message = event.getFormattedMessage();
++            if (message.contains("会话") && message.contains(String.valueOf(userId))
++                    && message.contains(reasonKeyword)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private List<String> formattedLogs() {
++        List<String> messages = new ArrayList<>();
++        for (ILoggingEvent event : logAppender.list) {
++            messages.add(event.getFormattedMessage());
++        }
++        return messages;
++    }
++
++    @SafeVarargs
++    private static AdminUserDO randomAdminUserDO(Consumer<AdminUserDO>... consumers) {
++        Consumer<AdminUserDO> consumer = (o) -> {
++            o.setStatus(randomEle(CommonStatusEnum.values()).getStatus()); // 保证 status 的范围
++            o.setSex(randomEle(SexEnum.values()).getSex()); // 保证 sex 的范围
++        };
++        return randomPojo(AdminUserDO.class, ArrayUtils.append(consumer, consumers));
++    }
++
++}

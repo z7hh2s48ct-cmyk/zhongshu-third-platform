@@ -1,0 +1,152 @@
+﻿diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/dept/DeptMapper.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/dept/DeptMapper.java
+index 8fc9b7e2..97826c8b 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/dept/DeptMapper.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/dept/DeptMapper.java
+@@ -27,4 +27,16 @@ public interface DeptMapper extends BaseMapperX<DeptDO> {
+     }
+ 
++    /**
++     * 缁熻浠ユ寚瀹氱敤鎴蜂负璐熻矗浜虹殑閮ㄩ棬鏁伴噺
++     *
++     * 鐢ㄤ簬鍒犻櫎鐢ㄦ埛鍓嶇殑寮曠敤淇濇姢锛氱敤鎴锋槸閮ㄩ棬璐熻矗浜烘椂锛岀姝㈠垹闄わ紝閬垮厤 {@link DeptDO#getLeaderUserId()} 鎮┖
++     *
++     * @param leaderUserId 璐熻矗浜虹敤鎴风紪鍙?+     * @return 閮ㄩ棬鏁伴噺
++     */
++    default Long selectCountByLeaderUserId(Long leaderUserId) {
++        return selectCount(DeptDO::getLeaderUserId, leaderUserId);
++    }
++
+     default List<DeptDO> selectListByParentId(Collection<Long> parentIds) {
+         return selectList(DeptDO::getParentId, parentIds);
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/user/AdminUserMapper.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/user/AdminUserMapper.java
+index 076f6a8b..caca60b2 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/user/AdminUserMapper.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/user/AdminUserMapper.java
+@@ -55,3 +55,15 @@ public interface AdminUserMapper extends BaseMapperX<AdminUserDO> {
+     }
+ 
++    /**
++     * 缁熻鎸囧畾閮ㄩ棬涓嬬殑鐢ㄦ埛鏁伴噺
++     *
++     * 鐢ㄤ簬鍒犻櫎閮ㄩ棬鍓嶇殑寮曠敤淇濇姢锛氶儴闂ㄤ笅鎸傛湁鎴愬憳鏃讹紝绂佹鍒犻櫎锛岄伩鍏?{@link AdminUserDO#getDeptId()} 鎮┖
++     *
++     * @param deptId 閮ㄩ棬缂栧彿
++     * @return 鐢ㄦ埛鏁伴噺
++     */
++    default Long selectCountByDeptId(Long deptId) {
++        return selectCount(AdminUserDO::getDeptId, deptId);
++    }
++
+ }
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/ErrorCodeConstants.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/ErrorCodeConstants.java
+index 9619d225..17f90f97 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/ErrorCodeConstants.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/enums/ErrorCodeConstants.java
+@@ -43,4 +43,5 @@ public interface ErrorCodeConstants {
+     ErrorCode USER_PASSWORD_FAILED = new ErrorCode(1_002_003_005, "鐢ㄦ埛瀵嗙爜鏍￠獙澶辫触");
+     ErrorCode USER_IS_DISABLE = new ErrorCode(1_002_003_006, "鍚嶅瓧涓恒€恵}銆戠殑鐢ㄦ埛宸茶绂佺敤");
++    ErrorCode USER_IS_DEPT_LEADER = new ErrorCode(1_002_003_007, "鐢ㄦ埛鏄儴闂ㄨ礋璐ｄ汉锛岃鍏堝彉鏇磋礋璐ｄ汉鍐嶅垹闄?);
+     ErrorCode USER_COUNT_MAX = new ErrorCode(1_002_003_008, "鍒涘缓鐢ㄦ埛澶辫触锛屽師鍥狅細瓒呰繃绉熸埛鏈€澶х鎴烽厤棰?{})锛?);
+     ErrorCode USER_IMPORT_INIT_PASSWORD = new ErrorCode(1_002_003_009, "鍒濆瀵嗙爜涓嶈兘涓虹┖");
+@@ -54,4 +55,5 @@ public interface ErrorCodeConstants {
+     ErrorCode DEPT_EXITS_CHILDREN = new ErrorCode(1_002_004_003, "瀛樺湪瀛愰儴闂紝鏃犳硶鍒犻櫎");
+     ErrorCode DEPT_PARENT_ERROR = new ErrorCode(1_002_004_004, "涓嶈兘璁剧疆鑷繁涓虹埗閮ㄩ棬");
++    ErrorCode DEPT_EXITS_USERS = new ErrorCode(1_002_004_005, "瀛樺湪鎴愬憳锛屾棤娉曞垹闄?);
+     ErrorCode DEPT_NOT_ENABLE = new ErrorCode(1_002_004_006, "閮ㄩ棬({})涓嶅浜庡紑鍚姸鎬侊紝涓嶅厑璁搁€夋嫨");
+     ErrorCode DEPT_PARENT_IS_CHILD = new ErrorCode(1_002_004_007, "涓嶈兘璁剧疆鑷繁鐨勫瓙閮ㄩ棬涓虹埗閮ㄩ棬");
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/dept/DeptServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/dept/DeptServiceImpl.java
+index c34252d5..309e693c 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/dept/DeptServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/dept/DeptServiceImpl.java
+@@ -10,4 +10,5 @@ import cn.zszj.module.system.controller.admin.dept.vo.dept.DeptSaveReqVO;
+ import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
+ import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
++import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
+ import cn.zszj.module.system.dal.redis.RedisKeyConstants;
+ import com.google.common.annotations.VisibleForTesting;
+@@ -37,4 +38,6 @@ public class DeptServiceImpl implements DeptService {
+     @Resource
+     private DeptMapper deptMapper;
++    @Resource
++    private AdminUserMapper adminUserMapper; // 娉ㄥ叆 Mapper 鑰岄潪 AdminUserService锛岄伩鍏嶆湇鍔″眰寰幆渚濊禆
+ 
+     @Override
+@@ -85,4 +88,8 @@ public class DeptServiceImpl implements DeptService {
+             throw exception(DEPT_EXITS_CHILDREN);
+         }
++        // 鏍￠獙閮ㄩ棬涓嬫槸鍚︽寕鏈夋垚鍛橈紝閬垮厤鍒犻櫎鍚?AdminUserDO.deptId 鎮┖锛涘彈鎺ц縼绉诲緟 D-09 浠昏亴妯″瀷
++        if (adminUserMapper.selectCountByDeptId(id) > 0) {
++            throw exception(DEPT_EXITS_USERS);
++        }
+         // 鍒犻櫎閮ㄩ棬
+         deptMapper.deleteById(id);
+@@ -93,9 +100,12 @@ public class DeptServiceImpl implements DeptService {
+             allEntries = true) // allEntries 娓呯┖鎵€鏈夌紦瀛橈紝鍥犱负鎿嶄綔涓€涓儴闂紝娑夊強鍒板涓紦瀛?     public void deleteDeptList(List<Long> ids) {
+-        // 鏍￠獙鏄惁鏈夊瓙閮ㄩ棬
++        // 鏍￠獙鏄惁鏈夊瓙閮ㄩ棬銆侀儴闂ㄤ笅鏄惁鎸傛湁鎴愬憳锛涗笌鍗曟潯鍒犻櫎淇濇寔涓€鑷达紝涓斿厛瀹屾垚鍏ㄩ儴鏍￠獙鍐嶅垹闄わ紝閬垮厤閮ㄥ垎鍒犻櫎
+         for (Long id : ids) {
+             if (deptMapper.selectCountByParentId(id) > 0) {
+                 throw exception(DEPT_EXITS_CHILDREN);
+             }
++            if (adminUserMapper.selectCountByDeptId(id) > 0) {
++                throw exception(DEPT_EXITS_USERS);
++            }
+         }
+ 
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
+index 9f6ea1a4..555e49a4 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
+@@ -24,4 +24,5 @@ import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
+ import cn.zszj.module.system.dal.dataobject.dept.UserPostDO;
+ import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
++import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
+ import cn.zszj.module.system.dal.mysql.dept.UserPostMapper;
+ import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
+@@ -87,4 +88,7 @@ public class AdminUserServiceImpl implements AdminUserService {
+     private UserPostMapper userPostMapper;
+ 
++    @Resource
++    private DeptMapper deptMapper; // 娉ㄥ叆 Mapper 鑰岄潪 DeptService锛岄伩鍏嶆湇鍔″眰寰幆渚濊禆
++
+     @Resource
+     private ConfigApi configApi;
+@@ -272,4 +276,6 @@ public class AdminUserServiceImpl implements AdminUserService {
+         // 1. 鏍￠獙鐢ㄦ埛瀛樺湪
+         AdminUserDO user = validateUserExists(id);
++        // 1.1 鏍￠獙鐢ㄦ埛涓嶆槸閮ㄩ棬璐熻矗浜?+        validateUserNotDeptLeader(id);
+ 
+         // 2.1 鍒犻櫎鐢ㄦ埛
+@@ -287,8 +293,11 @@ public class AdminUserServiceImpl implements AdminUserService {
+     @Transactional(rollbackFor = Exception.class)
+     public void deleteUserList(List<Long> ids) {
+-        // 1. 鎵归噺鍒犻櫎鐢ㄦ埛
++        // 1. 鏍￠獙鐢ㄦ埛閮戒笉鏄儴闂ㄨ礋璐ｄ汉锛涗笌鍗曟潯鍒犻櫎淇濇寔涓€鑷达紝涓斿厛瀹屾垚鍏ㄩ儴鏍￠獙鍐嶅垹闄わ紝閬垮厤閮ㄥ垎鍒犻櫎
++        ids.forEach(this::validateUserNotDeptLeader);
++
++        // 2.1 鎵归噺鍒犻櫎鐢ㄦ埛
+         userMapper.deleteByIds(ids);
+ 
+-        // 2. 鎵归噺鍒犻櫎鐢ㄦ埛鍏宠仈鏁版嵁
++        // 2.2 鎵归噺鍒犻櫎鐢ㄦ埛鍏宠仈鏁版嵁
+         ids.forEach(id -> {
+             permissionService.processUserDeleted(id);
+@@ -432,4 +441,19 @@ public class AdminUserServiceImpl implements AdminUserService {
+     }
+ 
++    /**
++     * 鏍￠獙鐢ㄦ埛涓嶆槸閮ㄩ棬璐熻矗浜猴紝閬垮厤鍒犻櫎鍚?{@link DeptDO#getLeaderUserId()} 鎮┖
++     *
++     * 璇存槑锛氭澶勫彧鍋氭妧鏈眰鐨勫紩鐢ㄤ繚鎶わ紝瑕佹眰鍏堝彉鏇磋礋璐ｄ汉鍐嶅垹闄ょ敤鎴凤紝涓嶈嚜鍔ㄧ骇鑱旀姽闄よ礋璐ｄ汉鍘嗗彶锛?+     * 瀹屾暣鐨勪换鑱岀敓鍛藉懆鏈熶笌璐ｄ换鍘嗗彶褰掑睘杩佺Щ锛屽緟 D-09 浠昏亴妯″瀷鍚庣敱 ZS-IAM-002/004 鎵挎帴
++     *
++     * @param id 鐢ㄦ埛缂栧彿
++     */
++    @VisibleForTesting
++    void validateUserNotDeptLeader(Long id) {
++        if (deptMapper.selectCountByLeaderUserId(id) > 0) {
++            throw exception(USER_IS_DEPT_LEADER);
++        }
++    }
++
+     @VisibleForTesting
+     void validateUsernameUnique(Long id, String username) {

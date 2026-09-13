@@ -1,0 +1,2787 @@
+Reading additional input from stdin...
+OpenAI Codex v0.154.0
+--------
+workdir: E:\zszj-wt-login-003
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 01a09a40-9098-7783-8171-d8155623927c
+--------
+user
+你是资深后端安全评审。ZS-LOGIN-003 第 2 轮评审：r1 的 3 个 P1 已修复并提交 882e0ca5：①importUserList 覆盖导入置禁用时同事务调用 invalidateUserSessions；②撤销墓碑机制（Redis markRevoked SETNX + set() Lua 查墓碑原子门闩）堵「读旧快照→撤销提交→回填复活」竞态，覆盖访问令牌串与充当合成凭据 key 的刷新令牌串；③用户级撤销一并删除未消费授权码（deleteByUserIdAndUserType）+ 兑换时校验 ADMIN 账号状态。另将 refreshToken 全局 tenant-id 改为单请求作用域属 CLIENT-003 范畴不在此分支。请 git diff e7d44c34..882e0ca5 审查修复正确性与新引入风险（墓碑 TTL 计算、Lua 原子性、行锁时序、授予路径循环依赖、测试有效性），输出 JSON：{"verdict":"PASS|FAIL","findings":[{"severity":"P1|P2|P3","file":"...","issue":"...","suggestion":"..."}]}。
+codex
+我会先核对指定提交的差异，再沿撤销、缓存回填和授权码兑换路径检查时序与测试覆盖，最后按要求输出 JSON。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "git status --short; git diff --stat e7d44c34..882e0ca5; rg --files -g AGENTS.md -g '*Token*' -g '*OAuth2*' -g '*UserService*'" in E:\zszj-wt-login-003
+ succeeded in 29ms:
+services\zhongshu-core\docs\Token传输与连接凭据规范.md
+services\zhongshu-core\zszj-module-member\src\test\java\cn\zszj\module\member\service\user\MemberUserServiceImplTest.java
+services\zhongshu-core\zszj-module-member\src\test\java\cn\zszj\module\member\service\user\MemberUserServiceImplStatusTest.java
+services\zhongshu-core\zszj-module-member\src\main\java\cn\zszj\module\member\service\user\MemberUserServiceImpl.java
+services\zhongshu-core\zszj-module-member\src\main\java\cn\zszj\module\member\service\user\MemberUserService.java
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-gateway\src\main\java\cn\zszj\module\iot\gateway\service\auth\IotDeviceTokenServiceImpl.java
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-gateway\src\main\java\cn\zszj\module\iot\gateway\service\auth\IotDeviceTokenService.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\user\AdminUserServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\user\AdminUserServiceImplSessionInvalidateTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\social\SocialUserServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplSyntheticCredentialRevokeTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplRefreshConcurrencyTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplOrphanRevokeTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplCompatTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplBatchRevokeLockOrderTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplBatchLockOrderUnitTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2GrantServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2CodeServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2ClientServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2ApproveServiceImplTest.java
+services\zhongshu-core\zszj-module-fms\src\test\java\cn\zszj\module\fms\service\config\FmsAccountUserServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\dal\redis\oauth2\OAuth2AccessTokenRedisDaoTtlTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2OpenControllerTest.java
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\src\test\java\cn\zszj\module\trade\service\brokerage\BrokerageUserServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\util\oauth2\OAuth2Utils.java
+services\zhongshu-core\zszj-module-fms\src\main\java\cn\zszj\module\fms\service\config\FmsAccountUserServiceImpl.java
+services\zhongshu-core\zszj-module-fms\src\main\java\cn\zszj\module\fms\service\config\FmsAccountUserService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\user\AdminUserServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\user\AdminUserService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\social\SocialUserServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\social\SocialUserService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2TokenService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2GrantServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2GrantService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2CodeServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2CodeService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2ClientServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2ClientService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2ApproveServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2ApproveService.java
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\src\main\java\cn\zszj\module\trade\service\brokerage\BrokerageUserServiceImpl.java
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\src\main\java\cn\zszj\module\trade\service\brokerage\BrokerageUserService.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\job\token\TokenCleanJob.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\enums\oauth2\OAuth2GrantTypeEnum.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\enums\oauth2\OAuth2ClientConstants.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\redis\oauth2\OAuth2AccessTokenRedisDAO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2RefreshTokenMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2CodeMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2ClientMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2ApproveMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2AccessTokenMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\dataobject\oauth2\OAuth2RefreshTokenDO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\dataobject\oauth2\OAuth2CodeDO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\dataobject\oauth2\OAuth2ClientDO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\dataobject\oauth2\OAuth2ApproveDO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\dataobject\oauth2\OAuth2AccessTokenDO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\convert\oauth2\OAuth2OpenConvert.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\user\OAuth2UserUpdateReqVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\user\OAuth2UserInfoRespVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\token\OAuth2AccessTokenRespVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\token\OAuth2AccessTokenPageReqVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\open\OAuth2OpenCheckTokenRespVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\open\OAuth2OpenAuthorizeInfoRespVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\open\OAuth2OpenAccessTokenRespVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\client\OAuth2ClientSaveReqVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\client\OAuth2ClientRespVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\vo\client\OAuth2ClientPageReqVO.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2UserController.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2UserController.http
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2TokenController.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2OpenController.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2OpenController.http
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2ClientController.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2ClientController.http
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\test\java\cn\zszj\framework\security\fixture\MockOAuth2TokenApi.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\api\oauth2\OAuth2TokenApiImpl.java
+services\zhongshu-core\zszj-module-report\src\main\java\cn\zszj\module\report\framework\jmreport\core\service\JmReportTokenServiceImpl.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-security\src\main\java\cn\zszj\framework\security\core\filter\TokenAuthenticationFilter.java
+services\zhongshu-core\zszj-framework\zszj-common\src\main\java\cn\zszj\framework\common\biz\system\oauth2\OAuth2TokenCommonApi.java
+services\zhongshu-core\zszj-framework\zszj-common\src\main\java\cn\zszj\framework\common\biz\system\oauth2\dto\OAuth2AccessTokenRespDTO.java
+services\zhongshu-core\zszj-framework\zszj-common\src\main\java\cn\zszj\framework\common\biz\system\oauth2\dto\OAuth2AccessTokenCreateReqDTO.java
+services\zhongshu-core\zszj-framework\zszj-common\src\main\java\cn\zszj\framework\common\biz\system\oauth2\dto\OAuth2AccessTokenCheckRespDTO.java
+services\zhongshu-core\zszj-module-mp\src\main\java\cn\zszj\module\mp\service\user\MpUserServiceImpl.java
+services\zhongshu-core\zszj-module-mp\src\main\java\cn\zszj\module\mp\service\user\MpUserService.java
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git diff e7d44c34..882e0ca5 -- services/zhongshu-core/zszj-module-system/src/main' in E:\zszj-wt-login-003
+ succeeded in 0ms:
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2CodeMapper.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2CodeMapper.java
+index 7e1fc1d9..68a8a11f 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2CodeMapper.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2CodeMapper.java
+@@ -1,6 +1,7 @@
+ package cn.zszj.module.system.dal.mysql.oauth2;
+ 
+ import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
++import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
+ import org.apache.ibatis.annotations.Mapper;
+ 
+@@ -11,4 +12,16 @@ public interface OAuth2CodeMapper extends BaseMapperX<OAuth2CodeDO> {
+         return selectOne(OAuth2CodeDO::getCode, code);
+     }
+ 
++    /**
++     * ZS-LOGIN-003 codex r1 P1：删除指定用户的全部未消费授权码（用户被禁用/删除/改密时，
++     * 残留的 code 在有效期内仍可兑换出新会话，须随生命周期撤销一并失效）。
++     *
++     * @return 删除的授权码数量
++     */
++    default int deleteByUserIdAndUserType(Long userId, Integer userType) {
++        return delete(new LambdaQueryWrapperX<OAuth2CodeDO>()
++                .eq(OAuth2CodeDO::getUserId, userId)
++                .eq(OAuth2CodeDO::getUserType, userType));
++    }
++
+ }
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/RedisKeyConstants.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/RedisKeyConstants.java
+index 4b7e5b13..17f5627f 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/RedisKeyConstants.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/RedisKeyConstants.java
+@@ -66,6 +66,11 @@ public interface RedisKeyConstants {
+      * 由于动态过期时间，使用 RedisTemplate 操作
+      */
+     String OAUTH2_ACCESS_TOKEN = "oauth2_access_token:%s";
++    /**
++     * ZS-LOGIN-003 codex r1 P1：撤销墓碑——令牌串被撤销后写入，阻塞并发鉴权的缓存回填复活旧凭据。
++     * 值固定 "1"，TTL = 被撤销凭据的剩余有效期（自清理）。
++     */
++    String OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE = "oauth2_access_token_revoke_tomb:%s";
+ 
+     /**
+      * ZS-LOGIN-002：会话代际号（以刷新令牌为会话标识；本底座刷新沿用原 refresh token 不轮换）
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/oauth2/OAuth2AccessTokenRedisDAO.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/oauth2/OAuth2AccessTokenRedisDAO.java
+index d650154a..1c5e183f 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/oauth2/OAuth2AccessTokenRedisDAO.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/oauth2/OAuth2AccessTokenRedisDAO.java
+@@ -5,6 +5,7 @@ import cn.zszj.framework.common.util.collection.CollectionUtils;
+ import cn.zszj.framework.common.util.json.JsonUtils;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+ import org.springframework.data.redis.core.StringRedisTemplate;
++import org.springframework.data.redis.core.script.DefaultRedisScript;
+ import org.springframework.stereotype.Repository;
+ 
+ import jakarta.annotation.Resource;
+@@ -15,6 +16,7 @@ import java.util.List;
+ import java.util.concurrent.TimeUnit;
+ 
+ import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_SESSION_GENERATION;
++import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE;
+ import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_TOKEN;
+ import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_REFRESH_SESSION_GENERATION;
+ 
+@@ -26,6 +28,14 @@ import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_REFRESH_S
+ @Repository
+ public class OAuth2AccessTokenRedisDAO {
+ 
++    /**
++     * ZS-LOGIN-003 codex r1 P1：缓存写入的撤销门闩——墓碑存在则拒绝回填。
++     * Lua 保证「查墓碑 + 写缓存」原子，堵住「读旧 DB 快照 → 撤销提交删缓存 → 旧快照回填复活」竞态。
++     */
++    private static final DefaultRedisScript<Long> SET_IF_NOT_REVOKED_SCRIPT = new DefaultRedisScript<>(
++            "if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end "
++                    + "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1", Long.class);
++
+     @Resource
+     private StringRedisTemplate stringRedisTemplate;
+ 
+@@ -40,8 +50,24 @@ public class OAuth2AccessTokenRedisDAO {
+         accessTokenDO.setUpdater(null).setUpdateTime(null).setCreateTime(null).setCreator(null).setDeleted(null);
+         long time = LocalDateTimeUtil.between(LocalDateTime.now(), accessTokenDO.getExpiresTime(), ChronoUnit.SECONDS);
+         if (time > 0) {
+-            stringRedisTemplate.opsForValue().set(redisKey, JsonUtils.toJsonString(accessTokenDO), time, TimeUnit.SECONDS);
++            // ZS-LOGIN-003 codex r1 P1：墓碑存在（该凭据串已被撤销）则拒绝回填，防止旧快照复活已撤销会话
++            stringRedisTemplate.execute(SET_IF_NOT_REVOKED_SCRIPT,
++                    java.util.Arrays.asList(redisKey, formatTombstoneKey(accessTokenDO.getAccessToken())),
++                    JsonUtils.toJsonString(accessTokenDO), String.valueOf(time));
++        }
++    }
++
++    /**
++     * ZS-LOGIN-003 codex r1 P1：写入撤销墓碑（SETNX 语义），阻塞后续对该凭据串的任何缓存回填。
++     *
++     * @param token     被撤销的凭据串（访问令牌串，或充当合成凭据 key 的刷新令牌串）
++     * @param ttlMillis 墓碑存活毫秒数，取被撤销凭据的剩余有效期；<= 0（已过期）无需墓碑
++     */
++    public void markRevoked(String token, long ttlMillis) {
++        if (ttlMillis <= 0) {
++            return; // 已过期凭据不会因回填复活，无需墓碑
+         }
++        stringRedisTemplate.opsForValue().setIfAbsent(formatTombstoneKey(token), "1", ttlMillis, TimeUnit.MILLISECONDS);
+     }
+ 
+     public void delete(String accessToken) {
+@@ -143,6 +169,10 @@ public class OAuth2AccessTokenRedisDAO {
+         return String.format(OAUTH2_ACCESS_TOKEN, accessToken);
+     }
+ 
++    private static String formatTombstoneKey(String token) {
++        return String.format(OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE, token);
++    }
++
+     private static String formatSessionGenerationKey(String refreshToken) {
+         return String.format(OAUTH2_REFRESH_SESSION_GENERATION, refreshToken);
+     }
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java
+index 6ebf7b29..f31bd169 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java
+@@ -3,12 +3,14 @@ package cn.zszj.module.system.service.oauth2;
+ import cn.hutool.core.lang.Assert;
+ import cn.hutool.core.util.ObjectUtil;
+ import cn.hutool.core.util.StrUtil;
++import cn.zszj.framework.common.enums.CommonStatusEnum;
+ import cn.zszj.framework.common.enums.UserTypeEnum;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
+ import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+ import cn.zszj.module.system.enums.ErrorCodeConstants;
+ import cn.zszj.module.system.service.auth.AdminAuthService;
++import cn.zszj.module.system.service.user.AdminUserService;
+ import org.springframework.stereotype.Service;
+ 
+ import jakarta.annotation.Resource;
+@@ -30,6 +32,8 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
+     private OAuth2CodeService oauth2CodeService;
+     @Resource
+     private AdminAuthService adminAuthService;
++    @Resource
++    private AdminUserService adminUserService;
+ 
+     @Override
+     public OAuth2AccessTokenDO grantImplicit(Long userId, Integer userType,
+@@ -64,6 +68,16 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
+             throw exception(ErrorCodeConstants.OAUTH2_GRANT_STATE_MISMATCH);
+         }
+ 
++        // ZS-LOGIN-003 codex r1 P1：兑换时校验账号状态——授权码签发后、兑换前账号可能已被禁用/删除，
++        // 不校验则撤销完成后仍能凭旧 code 换出可用新会话（撤销后复活）。技术账号（ADMIN）先闭环，
++        // 会员（MEMBER）兑换状态校验归其模块任务。
++        if (UserTypeEnum.ADMIN.getValue().equals(codeDO.getUserType())) {
++            AdminUserDO user = adminUserService.getUser(codeDO.getUserId());
++            if (user == null || CommonStatusEnum.isDisable(user.getStatus())) {
++                throw exception(ErrorCodeConstants.USER_NOT_EXISTS);
++            }
++        }
++
+         // 创建访问令牌
+         return oauth2TokenService.createAccessToken(codeDO.getUserId(), codeDO.getUserType(),
+                 codeDO.getClientId(), codeDO.getScopes());
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
+index 9b56e35d..17cab7c1 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
+@@ -18,6 +18,7 @@ import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenP
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+ import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
+ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
+@@ -58,6 +59,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+ 
+     @Resource
+     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
++    @Resource
++    private OAuth2CodeMapper oauth2CodeMapper;
+ 
+     @Resource
+     private OAuth2ClientService oauth2ClientService;
+@@ -247,11 +250,15 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+         oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+         for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
+             oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+-            oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
++            revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+         }
+         // 删除刷新令牌
++        OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+-        oauth2AccessTokenRedisDAO.delete(refreshToken);
++        // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
++        // 撤销时同样落墓碑（TTL 取刷新令牌剩余有效期，删除前读取），堵住并发门控路径从旧 DB 快照回填复活
++        revokeWithTombstone(refreshToken, refreshTokenDO != null ? refreshTokenDO.getExpiresTime()
++                : accessTokenDO.getExpiresTime());
+         // ZS-LOGIN-002：会话终结，清理代际键（访问令牌侧的代际标识保留至自然过期，供审计定位）
+         deleteSessionGenerationQuietly(refreshToken);
+         return accessTokenDO;
+@@ -348,16 +355,25 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+             // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
+             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
+                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+-                oauth2AccessTokenRedisDAO.delete(aliveToken.getAccessToken());
++                revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+             }
++            // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
++            // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
++            OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+             // 删除刷新令牌
+             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+             // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
+             // key 即 refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时机
+-            oauth2AccessTokenRedisDAO.delete(refreshToken);
++            revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
+             // ZS-LOGIN-002：会话终结，清理代际键
+             deleteSessionGenerationQuietly(refreshToken);
+         }
++        // ZS-LOGIN-003 codex r1 P1：一并失效未消费的 OAuth2 授权码——禁用/改密前签发的 code 若残留，
++        // 有效期内仍可经 grantAuthorizationCodeForAccessToken 兑换出新会话（撤销后复活）
++        int revokedCodes = oauth2CodeMapper.deleteByUserIdAndUserType(userId, userType);
++        if (revokedCodes > 0 && log.isInfoEnabled()) {
++            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的未消费授权码已一并失效：数量({})]", userType, userId, revokedCodes);
++        }
+         // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识）
+         if (log.isInfoEnabled()) {
+             log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的全部会话已撤销：会话数({})，其中孤立刷新凭据({})]",
+@@ -462,6 +478,19 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+         }
+     }
+ 
++    /**
++     * ZS-LOGIN-003 codex r1 P1：撤销缓存凭据前先落「撤销墓碑」，再删除缓存。
++     *
++     * <p>竞态背景：{@link #getAccessToken} 缓存未命中时从 DB 回源并回填缓存。若「读 DB 旧快照 →
++     * 本方撤销提交并删缓存 → 旧快照回填」交错，旧凭据会在 Redis 复活，后续缓存命中不再校验
++     * 用户状态，被禁用/删除用户的旧凭据（含 gate 开启时的合成凭据）继续有效。墓碑以
++     * 「查墓碑 + 写缓存」的 Lua 原子门闩拒绝该回填；TTL 取凭据剩余有效期，自清理。
++     */
++    private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
++        oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
++        oauth2AccessTokenRedisDAO.delete(token);
++    }
++
+     /**
+      * ZS-LOGIN-002：清理会话代际键（best-effort，失败只告警，不影响退出主流程）。
+      */
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
+index c05abd6a..d98a9345 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java
+@@ -674,6 +674,12 @@ public class AdminUserServiceImpl implements AdminUserService {
+             AdminUserDO updateUser = BeanUtils.toBean(importUser, AdminUserDO.class);
+             updateUser.setId(existUser.getId());
+             userMapper.updateById(updateUser);
++            // ZS-LOGIN-003 codex r1 P1：覆盖导入把已有账号置为禁用时，同事务内失效其全部登录会话——
++            // 此前该禁用入口未接统一撤销，旧 Access/Refresh/合成凭据在导入禁用后仍然可用
++            if (CommonStatusEnum.isDisable(updateUser.getStatus())
++                    && !CommonStatusEnum.isDisable(existUser.getStatus())) {
++                invalidateUserSessions(existUser.getId(), "Excel 覆盖导入禁用");
++            }
+             respVO.getUpdateUsernames().add(importUser.getUsername());
+         });
+         return respVO;
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "git diff e7d44c34..882e0ca5 -- services/zhongshu-core/zszj-module-system/src/test; git rev-parse HEAD; Get-ChildItem -Path E:\\ -Filter AGENTS.md; Get-ChildItem -Path E:\\zszj-wt-login-003 -Filter AGENTS.md -Force" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImplTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImplTest.java
+index 1b544614..a2367024 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImplTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImplTest.java
+@@ -1,11 +1,13 @@
+ package cn.zszj.module.system.service.oauth2;
+ 
++import cn.zszj.framework.common.enums.CommonStatusEnum;
+ import cn.zszj.framework.common.enums.UserTypeEnum;
+ import cn.zszj.framework.test.core.ut.BaseMockitoUnitTest;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
+ import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+ import cn.zszj.module.system.service.auth.AdminAuthService;
++import cn.zszj.module.system.service.user.AdminUserService;
+ import com.google.common.collect.Lists;
+ import org.junit.jupiter.api.Test;
+ import org.mockito.InjectMocks;
+@@ -15,6 +17,8 @@ import java.util.List;
+ 
+ import static cn.hutool.core.util.RandomUtil.randomEle;
+ import static cn.zszj.framework.test.core.util.AssertUtils.assertPojoEquals;
++import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
++import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_NOT_EXISTS;
+ import static cn.zszj.framework.test.core.util.RandomUtils.*;
+ import static org.junit.jupiter.api.Assertions.*;
+ import static org.mockito.ArgumentMatchers.eq;
+@@ -36,6 +40,8 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
+     private OAuth2CodeService oauth2CodeService;
+     @Mock
+     private AdminAuthService adminAuthService;
++    @Mock
++    private AdminUserService adminUserService;
+ 
+     @Test
+     public void testGrantImplicit() {
+@@ -81,14 +87,17 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
+         List<String> scopes = Lists.newArrayList("read", "write");
+         String redirectUri = randomString();
+         String state = randomString();
+-        // mock 方法（code）
++        // mock 方法（code）——技术账号（ADMIN）兑换时校验账号状态（ZS-LOGIN-003 codex r1 P1）
+         OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class, o -> {
+             o.setClientId(clientId);
+             o.setRedirectUri(redirectUri);
+             o.setState(state);
+             o.setScopes(scopes);
++            o.setUserType(UserTypeEnum.ADMIN.getValue());
+         });
+         when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
++        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(
++                new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.ENABLE.getStatus()));
+         // mock 方法（创建令牌）
+         OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class);
+         when(oauth2TokenService.createAccessToken(eq(codeDO.getUserId()), eq(codeDO.getUserType()),
+@@ -99,6 +108,51 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
+                 clientId, code, redirectUri, state));
+     }
+ 
++    @Test
++    public void testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject() {
++        // 准备参数
++        String clientId = randomString();
++        String code = randomString();
++        String redirectUri = randomString();
++        String state = randomString();
++        // mock 方法（code 属已禁用的 ADMIN 用户）
++        OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class, o -> {
++            o.setClientId(clientId);
++            o.setRedirectUri(redirectUri);
++            o.setState(state);
++            o.setUserType(UserTypeEnum.ADMIN.getValue());
++        });
++        when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
++        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(
++                new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.DISABLE.getStatus()));
++
++        // 调用，并断言：禁用账号不得凭旧授权码换出新会话
++        assertServiceException(() -> oauth2GrantService.grantAuthorizationCodeForAccessToken(
++                clientId, code, redirectUri, state), USER_NOT_EXISTS);
++    }
++
++    @Test
++    public void testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject() {
++        // 准备参数
++        String clientId = randomString();
++        String code = randomString();
++        String redirectUri = randomString();
++        String state = randomString();
++        // mock 方法（code 属已被删除（查无）的 ADMIN 用户）
++        OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class, o -> {
++            o.setClientId(clientId);
++            o.setRedirectUri(redirectUri);
++            o.setState(state);
++            o.setUserType(UserTypeEnum.ADMIN.getValue());
++        });
++        when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
++        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(null);
++
++        // 调用，并断言
++        assertServiceException(() -> oauth2GrantService.grantAuthorizationCodeForAccessToken(
++                clientId, code, redirectUri, state), USER_NOT_EXISTS);
++    }
++
+     @Test
+     public void testGrantPassword() {
+         // 准备参数
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplBatchLockOrderUnitTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplBatchLockOrderUnitTest.java
+index 22bfe9c5..2d114100 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplBatchLockOrderUnitTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplBatchLockOrderUnitTest.java
+@@ -4,6 +4,7 @@ import cn.zszj.framework.common.enums.UserTypeEnum;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
+ import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+ import org.junit.jupiter.api.BeforeEach;
+@@ -47,6 +48,8 @@ public class OAuth2TokenServiceImplBatchLockOrderUnitTest {
+         ReflectionTestUtils.setField(service, "oauth2AccessTokenMapper", accessTokenMapper);
+         ReflectionTestUtils.setField(service, "oauth2RefreshTokenMapper", refreshTokenMapper);
+         ReflectionTestUtils.setField(service, "oauth2AccessTokenRedisDAO", redisDAO);
++        // ZS-LOGIN-003 codex r1 P1：用户级撤销现在还会失效未消费授权码，裸构造实例需注入 mapper mock
++        ReflectionTestUtils.setField(service, "oauth2CodeMapper", mock(OAuth2CodeMapper.class));
+     }
+ 
+     /**
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java
+index a8853fdf..aa16df42 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java
+@@ -399,6 +399,56 @@ public class OAuth2TokenServiceImplOrphanRevokeTest extends BaseDbAndRedisUnitTe
+         });
+     }
+ 
++    // ========== ⑤ codex r1 P1：撤销墓碑阻塞旧快照回填（缓存复活竞态） ==========
++
++    /**
++     * 场景 ⑤：撤销后，并发鉴权路径遗留的「旧 DB 快照」不得把已撤销凭据回填复活。
++     *
++     * <p>竞态：{@code getAccessToken} 缓存未命中时从 DB 回源；若「读 DB 旧快照 → 撤销提交并删缓存 →
++     * 旧快照回填」交错，旧凭据在 Redis 复活且后续命中不再校验用户状态。修复后撤销先落墓碑，
++     * {@code set()} 以「查墓碑 + 写缓存」Lua 门闩拒绝回填。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_tombstoneBlocksStaleSnapshotBackfill() {
++        // 准备
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refresh = seedRefreshToken(clientId, userId);
++        OAuth2AccessTokenDO access = seedAccessToken(refresh.getRefreshToken(), userId, clientId);
++
++        // 撤销（写墓碑 + 删缓存 + 删 DB 行）
++        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()), "撤销后缓存应被清除");
++
++        // 模拟并发鉴权遗留的旧快照回填（该快照在撤销提交前读取，仍带未过期 expiresTime）
++        oauth2AccessTokenRedisDAO.set(access);
++
++        // 断言：墓碑拒绝回填，旧凭据不得复活
++        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
++                "撤销墓碑存在时，旧快照回填必须被拒绝（不得复活已撤销会话）");
++    }
++
++    /**
++     * 场景 ⑤-2：未撤销的存活凭据不受墓碑影响——缓存回填正常工作（门闩不误伤）。
++     */
++    @Test
++    public void testAccessTokenCache_setWithoutTombstone_shouldSucceed() {
++        String clientId = randomString();
++        Long userId = randomLongId();
++        mockClient(clientId, 0L);
++        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
++        OAuth2RefreshTokenDO refresh = seedRefreshToken(clientId, userId);
++        OAuth2AccessTokenDO access = seedAccessToken(refresh.getRefreshToken(), userId, clientId);
++
++        oauth2AccessTokenRedisDAO.delete(access.getAccessToken()); // 先清缓存
++        oauth2AccessTokenRedisDAO.set(access);                     // 无墓碑时回填
++
++        assertNotNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
++                "无撤销墓碑时缓存回填必须正常工作");
++    }
++
+     private OAuth2RefreshTokenDO seedRefreshToken(String clientId, Long userId) {
+         return seedRefreshToken(randomString(), clientId, userId);
+     }
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
+index dae305a6..255ed604 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
+@@ -5,6 +5,7 @@ import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
++import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
+ import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+ import org.junit.jupiter.api.AfterEach;
+@@ -57,6 +58,8 @@ public class OAuth2TokenServiceImplUserRevokeLockOrderUnitTest {
+         ReflectionTestUtils.setField(service, "oauth2AccessTokenMapper", accessTokenMapper);
+         ReflectionTestUtils.setField(service, "oauth2RefreshTokenMapper", refreshTokenMapper);
+         ReflectionTestUtils.setField(service, "oauth2AccessTokenRedisDAO", redisDAO);
++        // ZS-LOGIN-003 codex r1 P1：用户级撤销现在还会失效未消费授权码，裸构造实例需注入 mapper mock
++        ReflectionTestUtils.setField(service, "oauth2CodeMapper", mock(OAuth2CodeMapper.class));
+     }
+ 
+     @AfterEach
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java
+index 2013c713..fab74dec 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/user/AdminUserServiceImplSessionInvalidateTest.java
+@@ -12,6 +12,8 @@ import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
+ import cn.zszj.module.infra.api.config.ConfigApi;
+ import cn.zszj.module.infra.api.file.FileApi;
+ import cn.zszj.module.system.controller.admin.user.vo.profile.UserProfileUpdatePasswordReqVO;
++import cn.zszj.module.system.controller.admin.user.vo.user.UserImportExcelVO;
++import cn.zszj.module.system.controller.admin.user.vo.user.UserImportRespVO;
+ import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
+ import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+ import cn.zszj.module.system.dal.mysql.dept.DeptMapper;
+@@ -440,6 +442,55 @@ public class AdminUserServiceImplSessionInvalidateTest extends BaseDbUnitTest {
+                 "改密必须留下会话失效审计日志，实际日志：" + formattedLogs());
+     }
+ 
++    // ========== ⑤ codex r1 P1：Excel 覆盖导入的禁用入口 ==========
++
++    /**
++     * 场景 ⑤：覆盖导入把既有账号置为禁用时，必须同事务撤销其全部会话。
++     *
++     * <p>RED：修复前 {@code importUserList(updateSupport=true)} 会把 Excel 的 status 直接更新进账号，
++     * 却从不调用统一撤销入口——导入禁用后旧 Access / Refresh / 合成凭据仍然可用。
++     */
++    @Test
++    public void testImportUserList_disableExistingUser_shouldRevokeAllSessions() {
++        AdminUserDO dbUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
++        userMapper.insert(dbUser);
++
++        UserImportExcelVO importUser = new UserImportExcelVO();
++        importUser.setUsername(dbUser.getUsername());
++        importUser.setNickname(dbUser.getNickname());
++        importUser.setMobile("13900000001");
++        importUser.setEmail("import-disable@example.com");
++        importUser.setStatus(CommonStatusEnum.DISABLE.getStatus());
++
++        UserImportRespVO respVO = userService.importUserList(newArrayList(importUser), true);
++
++        assertTrue(respVO.getUpdateUsernames().contains(dbUser.getUsername()),
++                "覆盖导入应更新既有账号，实际失败明细：" + respVO.getFailureUsernames());
++        verify(oauth2TokenService, times(1)).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++    }
++
++    /**
++     * 场景 ⑤-2：覆盖导入未改变启用状态（仍启用）时，不得误触发会话撤销。
++     */
++    @Test
++    public void testImportUserList_keepEnabledExistingUser_shouldNotRevokeSessions() {
++        AdminUserDO dbUser = randomAdminUserDO(o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
++        userMapper.insert(dbUser);
++
++        UserImportExcelVO importUser = new UserImportExcelVO();
++        importUser.setUsername(dbUser.getUsername());
++        importUser.setNickname(dbUser.getNickname());
++        importUser.setMobile("13900000002");
++        importUser.setEmail("import-enable@example.com");
++        importUser.setStatus(CommonStatusEnum.ENABLE.getStatus());
++
++        UserImportRespVO respVO = userService.importUserList(newArrayList(importUser), true);
++
++        assertTrue(respVO.getUpdateUsernames().contains(dbUser.getUsername()),
++                "覆盖导入应更新既有账号，实际失败明细：" + respVO.getFailureUsernames());
++        verify(oauth2TokenService, never()).removeAccessToken(eq(dbUser.getId()), eq(UserTypeEnum.ADMIN.getValue()));
++    }
++
+     // ========== 工具方法 ==========
+ 
+     private void assertLogRecordPresent(String methodName, Class<?>... parameterTypes) throws Exception {
+882e0ca57584ca07c109ae1ebec061438f2acbe1
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg --files --hidden -g AGENTS.md -g '"'!node_modules'"' -g '"'!.git'"'; Get-Content -Encoding UTF8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java; Get-Content -Encoding UTF8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java; Get-Content -Encoding UTF8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/oauth2/OAuth2AccessTokenRedisDAO.java" in E:\zszj-wt-login-003
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$p='"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java'; "'$n=0; Get-Content -Encoding UTF8 $p | ForEach-Object { $n++; '"'{0,4}: {1}' -f "'$n,$_ }' in E:\zszj-wt-login-003
+ succeeded in 0ms:
+   1: package cn.zszj.module.system.service.oauth2;
+   2: 
+   3: import cn.hutool.core.collection.CollUtil;
+   4: import cn.hutool.core.map.MapUtil;
+   5: import cn.hutool.core.util.IdUtil;
+   6: import cn.hutool.core.util.ObjectUtil;
+   7: import cn.hutool.core.util.StrUtil;
+   8: import cn.zszj.framework.common.enums.UserTypeEnum;
+   9: import cn.zszj.framework.common.exception.ServiceException;
+  10: import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
+  11: import cn.zszj.framework.common.pojo.PageResult;
+  12: import cn.zszj.framework.common.util.date.DateUtils;
+  13: import cn.zszj.framework.common.util.object.BeanUtils;
+  14: import cn.zszj.framework.security.core.LoginUser;
+  15: import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+  16: import cn.zszj.framework.tenant.core.util.TenantUtils;
+  17: import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenPageReqVO;
+  18: import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+  19: import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
+  20: import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+  21: import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+  22: import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+  23: import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
+  24: import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
+  25: import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+  26: import cn.zszj.module.system.service.user.AdminUserService;
+  27: import jakarta.annotation.PostConstruct;
+  28: import jakarta.annotation.Resource;
+  29: import lombok.extern.slf4j.Slf4j;
+  30: import org.springframework.beans.factory.annotation.Value;
+  31: import org.springframework.context.annotation.Lazy;
+  32: import org.springframework.stereotype.Service;
+  33: import org.springframework.transaction.annotation.Transactional;
+  34: 
+  35: import java.time.Duration;
+  36: import java.time.LocalDateTime;
+  37: import java.util.Collections;
+  38: import java.util.List;
+  39: import java.util.Map;
+  40: import java.util.Set;
+  41: import java.util.TreeSet;
+  42: 
+  43: import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
+  44: import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
+  45: 
+  46: /**
+  47:  * OAuth2.0 Token Service ʵ����
+  48:  *
+  49:  * @author ���Դ��
+  50:  */
+  51: @Slf4j
+  52: @Service
+  53: public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+  54: 
+  55:     @Resource
+  56:     private OAuth2AccessTokenMapper oauth2AccessTokenMapper;
+  57:     @Resource
+  58:     private OAuth2RefreshTokenMapper oauth2RefreshTokenMapper;
+  59: 
+  60:     @Resource
+  61:     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
+  62:     @Resource
+  63:     private OAuth2CodeMapper oauth2CodeMapper;
+  64: 
+  65:     @Resource
+  66:     private OAuth2ClientService oauth2ClientService;
+  67:     @Resource
+  68:     @Lazy // �����أ�����ѭ������
+  69:     private AdminUserService adminUserService;
+  70: 
+  71:     /**
+  72:      * ZS-LOGIN-001��������;�����ſؿ��ء����Ƿ������ѡ�ˢ�����ơ���Ĭ�������������ơ�ʹ�á�
+  73:      * <p>����Ĭ�� {@code false}����ȫĬ�ϣ�{@link #getAccessToken} ֻ�Ϸ������ƣ�ˢ�����Ƶ����������� �� ���� null �� checkAccessToken �� UNAUTHORIZED����
+  74:      * <p><b>����Ϊ����ʱ�� true��</b>admin-web IM �� miniapp IM/�ͷ��� WebSocket ������ {@code ?token=<refreshToken>} ��ƾ��
+  75:      * ������� WebSocket �����Զ��� Header��ֻ��ƴ URL �����������������˷��У����� LOGIN-001.B����ʱ����Ʊ�� + ǰ�� WS Ǩ�ƣ����ǰ���� true �Բ��ƻ��������ӡ�
+  76:      * ע����ľ������ {@code X-Access-Token} ��������ƣ�<b>��</b>���������ˡ�
+  77:      * <p><b>�������գ�</b>ת������"��������"�̳�ˢ������ TTL��default client �� 30 �죩������ system_oauth2_access_token ��
+  78:      * �����������Ʒ�ҳ/�߳����ɼ�����{@link #removeAccessToken(String)} �޷����������� Redis TTL ��Ȼ���ڡ��ʽ�ΪǨ������ʱ���ݡ�
+  79:      */
+  80:     @Value("${zszj.security.refresh-token-as-access-token-enabled:false}")
+  81:     private boolean refreshTokenAsAccessTokenEnabled;
+  82: 
+  83:     @PostConstruct
+  84:     public void warnRefreshTokenAsAccessTokenCompat() {
+  85:         if (refreshTokenAsAccessTokenEnabled) {
+  86:             log.warn("[warnRefreshTokenAsAccessTokenCompat][ZS-LOGIN-001 ������;������ݿ����ѿ���"
+  87:                     + "��zszj.security.refresh-token-as-access-token-enabled=true����ˢ�����ƿɱ�������������ʹ�ã�"
+  88:                     + "��������Ч���̳�ˢ������ TTL��������⡢removeAccessToken �޷����������� Redis TTL ���ڵ�ƾ�ݡ�"
+  89:                     + "��Ϊ admin-web IM / miniapp IM���ͷ� WebSocket Ǩ������ʱ���ݣ�"
+  90:                     + "���� LOGIN-001.B ��ʱƱ��Ǩ����ɺ�ر�]");
+  91:         }
+  92:     }
+  93: 
+  94:     @Override
+  95:     @Transactional(rollbackFor = Exception.class)
+  96:     public OAuth2AccessTokenDO createAccessToken(Long userId, Integer userType, String clientId, List<String> scopes) {
+  97:         OAuth2ClientDO clientDO = oauth2ClientService.validOAuthClientFromCache(clientId);
+  98:         // ����ˢ������
+  99:         OAuth2RefreshTokenDO refreshTokenDO = createOAuth2RefreshToken(userId, userType, clientDO, scopes);
+ 100:         // ������������
+ 101:         return createOAuth2AccessToken(refreshTokenDO, clientDO);
+ 102:     }
+ 103: 
+ 104:     /**
+ 105:      * ZS-LOGIN-002��ˢ�·������ơ�
+ 106:      *
+ 107:      * <p><b>������ͬ�����������ߣ��������ƻ� ��3.3��</b>������ԭ refresh token��<b>���ֻ�</b>���Բ��ƻ� ZS-LOGIN-001 �ſ�
+ 108:      * ��ǰ��ˢ����Լ��+ �Ự���ʺţ�session generation��+ �طż�⡣��һʱ�̣�ͬһˢ��ƾ����<b>ǡ�� 1 ��</b>��Ч�������ơ�
+ 109:      *
+ 110:      * <p><b>�޸�ǰ��ʧ����</b>��ԭʵ���׾�Ϊ������ {@code selectByRefreshToken}����
+ 111:      * <ol>
+ 112:      *     <li>N ������ˢ�¶���ͬһ��ˢ�����ƣ����Բ���������� �� ���� N ��ͬʱ��Ч��ʧ�ػỰ��</li>
+ 113:      *     <li>�� {@link #removeAccessToken(String)} ����ʱ��������ˢ���ѳ��оɵ� refreshTokenDO ���գ�
+ 114:      *         �˳��ύ���Բ����·������� �� ��������˳��ĻỰ���¶����ƣ���</li>
+ 115:      * </ol>
+ 116:      *
+ 117:      * <p><b>�޸��ַ�</b>���׾��Ϊ {@link OAuth2RefreshTokenMapper#selectByRefreshTokenForUpdate(String)}
+ 118:      * ��{@code SELECT ... FOR UPDATE} ��������������<b>�����ύ/�ع�ʱ</b>���ͷţ���˱�������
+ 119:      * ����ˢ������ �� У�� Client �� ɾ�ɷ������� �� ���·������� �� �ǼǴ��ʡ������Ϊͬһ�Ự�ϵ��ٽ�����
+ 120:      * ����ˢ�±����л�����һ������������ض�����Ȼ����ǰһ�����ύ���·������Ʋ�����ɾ����
+ 121:      * ���ǡ���Ч�������ƺ�Ϊ 1�����Ự���ʺ� == �ɹ�ˢ�´��������޶�ʧ���£���
+ 122:      *
+ 123:      * <p><b>�طţ��ɴ��ʣ��ܾ�</b>���ɴ��ʷ���������ˢ��ʱ��ͬʱ�� DB���߼�ɾ������ Redis ������
+ 124:      * �طž����� �� {@link #getAccessToken(String)} ���� null �� {@link #checkAccessToken(String)} �׼���
+ 125:      * 401���������Ʋ����ڡ����˴�<b>���ⲻ����ҵ�������</b>��ǰ�������صġ�401 �� ����¼����Լ�����ơ�
+ 126:      * ���ʱ�ʶ��Redis����������ƶ�λ��ĳ�������ڵڼ����Ự�����ɴ��ʱ�ʶ��������Ȼ���ڡ�
+ 127:      *
+ 128:      * <p><b>����</b>���� {@link #removeAccessToken(String)} һ�¡�������ˢ�������У��ٴ����������ơ�
+ 129:      * �˳����ڻ������<b>�ض�</b>��ˢ�������µķ������ƣ��Ѳ���ˢ�����ύ���´���һ��������
+ 130:      * ��ˡ�����ˢ�¡����������˳�֮�����´�����ơ�
+ 131:      *
+ 132:      * <p><b>���� DB ��</b>������/�ط�״ֻ̬�� Redis��{@link OAuth2AccessTokenRedisDAO}�������� Flyway Ǩ��
+ 133:      * �� ZS-DB-019.B �� PG �ع���ϣ����ʵǼ�Ϊ best-effort��Redis ��������ϺϷ�ˢ��
+ 134:      * ������ DB/����һ���Իָ��� ZS-LOGIN-005.A����
+ 135:      */
+ 136:     @Override
+ 137:     @Transactional(noRollbackFor = ServiceException.class)
+ 138:     public OAuth2AccessTokenDO refreshAccessToken(String refreshToken, String clientId) {
+ 139:         // ��ѯˢ�����ƣ�ZS-LOGIN-002�����������л�ͬһ�Ự��ˢ�����˳���
+ 140:         OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+ 141:         if (refreshTokenDO == null) {
+ 142:             // ������ˢ�����ƣ����ܴ�δ���ڣ�Ҳ�����ѱ�����/���е��˳�ɾ����
+ 143:             // ��Ϊ����ͬһ�����ڣ�������ˢ���ڴ˱�Ȼ������ �� ���Ḵ��Ự��
+ 144:             throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "��Ч��ˢ������");
+ 145:         }
+ 146: 
+ 147:         // У�� Client ƥ��
+ 148:         OAuth2ClientDO clientDO = oauth2ClientService.validOAuthClientFromCache(clientId);
+ 149:         if (ObjectUtil.notEqual(clientId, refreshTokenDO.getClientId())) {
+ 150:             throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "ˢ�����ƵĿͻ��˱�Ų���ȷ");
+ 151:         }
+ 152: 
+ 153:         // �Ƴ���صķ������ƣ����������ض����ɳ�������ˢ�����ύ�ľɴ������� �� �طžɴ��ʰ����� 401 ʧЧ��
+ 154:         List<OAuth2AccessTokenDO> accessTokenDOs = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
+ 155:         if (CollUtil.isNotEmpty(accessTokenDOs)) {
+ 156:             oauth2AccessTokenMapper.deleteByIds(convertSet(accessTokenDOs, OAuth2AccessTokenDO::getId));
+ 157:             oauth2AccessTokenRedisDAO.deleteList(convertSet(accessTokenDOs, OAuth2AccessTokenDO::getAccessToken));
+ 158:         }
+ 159: 
+ 160:         // �ѹ��ڵ�����£�ɾ��ˢ������
+ 161:         if (DateUtils.isExpired(refreshTokenDO.getExpiresTime())) {
+ 162:             oauth2RefreshTokenMapper.deleteById(refreshTokenDO.getId());
+ 163:             // ZS-LOGIN-002���Ự��ˢ������һ���սᣬ�������ʼ���best-effort����Ӱ������쳣���壩
+ 164:             deleteSessionGenerationQuietly(refreshToken);
+ 165:             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "ˢ�������ѹ���");
+ 166:         }
+ 167: 
+ 168:         // ������������
+ 169:         OAuth2AccessTokenDO accessTokenDO = createOAuth2AccessToken(refreshTokenDO, clientDO);
+ 170:         // ZS-LOGIN-002���ƽ��Ự���ʲ��ǼǷ��������������ʣ��ɶ�λ��ʶ��best-effort����
+ 171:         // ������� createOAuth2AccessToken ֮��DB ����ʧ��ʱ�����������ʺš�
+ 172:         recordSessionGeneration(refreshTokenDO, accessTokenDO);
+ 173:         return accessTokenDO;
+ 174:     }
+ 175: 
+ 176:     @Override
+ 177:     public OAuth2AccessTokenDO getAccessToken(String accessToken) {
+ 178:         // ���ȴ� Redis �л�ȡ
+ 179:         OAuth2AccessTokenDO accessTokenDO = oauth2AccessTokenRedisDAO.get(accessToken);
+ 180:         if (accessTokenDO != null) {
+ 181:             // ZS-LOGIN-001��codex P1 �޸������ſعر�ʱ���ܾ���ǰ�����ڣ�gate=true���� convertToAccessToken
+ 182:             // ����� Redis �ġ��ϳɷ������ơ���accessToken==refreshToken�����������������Ⱦ��Ŀ�������������ڴ�
+ 183:             // Redis ���д���ǰ return���ƹ��·��ſأ��� gate �رպ��Ա� checkAccessToken ������ˢ������ TTL��default client �� 30 �죩��
+ 184:             if (!refreshTokenAsAccessTokenEnabled && isSyntheticAccessToken(accessTokenDO)) {
+ 185:                 oauth2AccessTokenRedisDAO.delete(accessToken);
+ 186:                 return null;
+ 187:             }
+ 188:             return accessTokenDO;
+ 189:         }
+ 190: 
+ 191:         // ��ȡ�������� MySQL �л�ȡ��������
+ 192:         accessTokenDO = oauth2AccessTokenMapper.selectByAccessToken(accessToken);
+ 193:         // ZS-LOGIN-001��������;���룬Ĭ���ſعر�ʱ���پ�Ĭ��ˢ�����Ƶ���������
+ 194:         if (accessTokenDO == null && refreshTokenAsAccessTokenEnabled) {
+ 195:             // ���⣺�� MySQL �л�ȡˢ�����ơ�ԭ�򣺽�����ֳ���������ˢ�·������Ƴ���
+ 196:             // ����˵����ľ����ֻ�������� token������������ refresh_token�������޷�ˢ�·�������
+ 197:             // ������˵��ǰ�� WebSocket �� token ֱ�Ӹ��� url �ϣ��޷����� refresh_token
+ 198:             OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(accessToken);
+ 199:             if (refreshTokenDO != null && !DateUtils.isExpired(refreshTokenDO.getExpiresTime())) {
+ 200:                 accessTokenDO = convertToAccessToken(refreshTokenDO);
+ 201:             }
+ 202:         }
+ 203: 
+ 204:         // ����� MySQL ���ڣ����� Redis ��д��
+ 205:         if (accessTokenDO != null && !DateUtils.isExpired(accessTokenDO.getExpiresTime())) {
+ 206:             oauth2AccessTokenRedisDAO.set(accessTokenDO);
+ 207:         }
+ 208:         return accessTokenDO;
+ 209:     }
+ 210: 
+ 211:     @Override
+ 212:     public OAuth2AccessTokenDO checkAccessToken(String accessToken) {
+ 213:         OAuth2AccessTokenDO accessTokenDO = getAccessToken(accessToken);
+ 214:         if (accessTokenDO == null) {
+ 215:             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "�������Ʋ�����");
+ 216:         }
+ 217:         if (DateUtils.isExpired(accessTokenDO.getExpiresTime())) {
+ 218:             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "���������ѹ���");
+ 219:         }
+ 220:         return accessTokenDO;
+ 221:     }
+ 222: 
+ 223:     /**
+ 224:      * ZS-LOGIN-002���˳��������������� + ˢ������ + �Ự���ʣ���
+ 225:      *
+ 226:      * <p><b>�� {@link #refreshAccessToken(String, String)} ����ͬһ����</b>���ȶ�ˢ�������м��������ٴ����������ƣ�
+ 227:      * ������<b>�ض�</b>��ˢ�������µķ������ƣ��ѡ�����ˢ���ڱ��������ǰ���ύ���´������ơ�һ��������
+ 228:      * �����˳�������ˢ�µ����ֽ��������Ḵ��Ự��
+ 229:      * <ul>
+ 230:      *     <li>ˢ���Ȼ������˳��ڻ������ض���ˢ�²���������Ʋ�ɾ������ɾ��ˢ������ �� ��������Чƾ�ݣ�</li>
+ 231:      *     <li>�˳��Ȼ�����ˢ�»����������ˢ������ �� �� 400����Ч��ˢ�����ơ����������κ����ơ�</li>
+ 232:      * </ul>
+ 233:      *
+ 234:      * <p><b>��֪�߽磨��¼Ϊ���������ڱ�����Χ��</b>�������÷����е��ǡ��ѱ�ǰһ��ˢ��ȡ���ľɷ������ƴ�����
+ 235:      * �׾� {@code selectByAccessToken} ��������DB �߼�ɾ�� + Redis �ѳ������� ��������Լ���˷��� {@code null}��
+ 236:      * ���᳷����ǰ���ʵĻỰ����Ϊ ZS-LOGIN-001 ֮ǰ�ʹ��ڵļ������壨�� OAuth2TokenServiceImplTest#testRemoveAccessToken_null����
+ 237:      * ����ʵ�˳�·��������ͷЯ���ļ���ǰ�������ƣ�����Ӱ�죻���衸ƾ�����ƴ�Ҳ��ɱ�Ự����
+ 238:      * ��Ҫ����� accessToken �� refreshToken ���飨����ɾ�У����� ZS-LOGIN-005.A / codex ������ߡ�
+ 239:      */
+ 240:     @Override
+ 241:     @Transactional(rollbackFor = Exception.class)
+ 242:     public OAuth2AccessTokenDO removeAccessToken(String accessToken) {
+ 243:         // ɾ����������
+ 244:         OAuth2AccessTokenDO accessTokenDO = oauth2AccessTokenMapper.selectByAccessToken(accessToken);
+ 245:         if (accessTokenDO == null) {
+ 246:             return null;
+ 247:         }
+ 248:         // ZS-LOGIN-002������ + �������ض�����������ˢ�¿������ύ���´��ʷ�������
+ 249:         String refreshToken = accessTokenDO.getRefreshToken();
+ 250:         oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+ 251:         for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
+ 252:             oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+ 253:             revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+ 254:         }
+ 255:         // ɾ��ˢ������
+ 256:         OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+ 257:         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+ 258:         // ZS-LOGIN-003 codex r1 P1��ˢ�����ƴ����ܳ䵱���ѻ���ת��ƾ�ݡ��� Redis key��ZS-LOGIN-001 ����·������
+ 259:         // ����ʱͬ����Ĺ����TTL ȡˢ������ʣ����Ч�ڣ�ɾ��ǰ��ȡ������ס�����ſ�·���Ӿ� DB ���ջ����
+ 260:         revokeWithTombstone(refreshToken, refreshTokenDO != null ? refreshTokenDO.getExpiresTime()
+ 261:                 : accessTokenDO.getExpiresTime());
+ 262:         // ZS-LOGIN-002���Ự�սᣬ�������ʼ����������Ʋ�Ĵ��ʱ�ʶ��������Ȼ���ڣ�����ƶ�λ��
+ 263:         deleteSessionGenerationQuietly(refreshToken);
+ 264:         return accessTokenDO;
+ 265:     }
+ 266: 
+ 267:     /**
+ 268:      * ZS-LOGIN-002�����û�ά�������������ƣ��û�������/ɾ��/���ܵȣ���
+ 269:      *
+ 270:      * <p>�� {@link #removeAccessToken(String)} ͬ����ѭ������ˢ�������У��ٳ����������ơ�������
+ 271:      * ���ڻ������ض��������벢��ˢ�»��ิ�
+ 272:      *
+ 273:      * <p>ZS-LOGIN-002 P2-A��codex r0 �޸�������ȡ��ǰ�� refresh-token ��ʶ<b>ȥ�ز�����Ȼ������</b>��
+ 274:      * ԭ��access-token ��ѯ����� ID ˳���ˢ�²��ȶ���ˢ�»�ɾ�ɲ��¡��ı� ID �򣩣�
+ 275:      * ������˳����� FOR UPDATE�������������û������������������෴˳���ȡ�� �� ������
+ 276:      * ��������в�������������ͬ˳�����������Ӹ���������������Coffman ����֮��ѭ���ȴ�������
+ 277:      *
+ 278:      * <p>��������ǰ<b>�� {@code @Transactional}</b>�������������ԭ����Ҫ������������Ӧ��;���ϣ���
+ 279:      * Ҳ��������Ч��ǰ�ᣨ��������ÿ������Զ��ύ���������ͷţ���
+ 280:      *
+ 281:      * <p><b>ZS-LOGIN-003 ���루����ˢ��ƾ�ݣ�</b>����ǰ�������� refresh-token ����<b>��ȫ�� access-token
+ 282:      * ��¼����</b>���� access-token Ϊ��ʱ�׾伴 early-return�����ǡ��� Access ��¼������ Refresh����
+ 283:      * ����ˢ��ƾ��<b>��Զ���ᱻ����</b>�������Կ����� {@link #refreshAccessToken} ����ȫ�·�������
+ 284:      * ���Ự������� ZS-LOGIN-001 �����ſؿ���ʱ����ֱ�ӵ�����������ͨ����Ȩ��ͬʱ���ſ���
+ 285:      * {@code convertToAccessToken} д�� Redis �ġ��ѻ���ת��ƾ�ݡ���key = refreshToken ����Ҳ����������
+ 286:      * ��һֱ��ˢ������ TTL��default client �� 30 �죩�����ڸ�Ϊȡ
+ 287:      * ��<b>access-token ���� �� refresh-token ֱ��</b>����<b>ȫ��</b>����������������ơ�ˢ�����ơ�
+ 288:      * Redis ����ƾ�ݣ����ϳ���Ŀ����Ự���ʼ���
+ 289:      *
+ 290:      * <p><b>ZS-LOGIN-003 ���루�⻧�����ģ�</b>�������ǰ�ȫ���������븲�Ǹ��û����µ�<b>ȫ��</b>�Ự��
+ 291:      * ���ܱ����÷��� ThreadLocal �⻧�����ľ�Ĭ��խ�������⻧�����ģ���ʱ���� / MQ ���ѣ�ʱ�⻧����������
+ 292:      * {@code getRequiredTenantId()} �� NPE�����⻧��ά����ʱ��鲻��Ŀ���û�ƾ�� �� ������Ĭ no-op��
+ 293:      * ������/��ɾ���û��ĻỰ�������������������� {@link TenantUtils#executeIgnore(Runnable)} ��ִ�У�
+ 294:      * �˳����Զ��ָ����÷������ģ�����Ⱦ����
+ 295:      *
+ 296:      * <p><b>ZS-LOGIN-003 ���루��ƣ�</b>�������Ự����Ĭ������ǰ���κ���־���¼�����׷�٣�
+ 297:      * ���ڳ�����ɺ�����ṹ�� INFO ��־���û���� / �û����� / �Ự�� / ���й���ˢ��ƾ��������
+ 298:      * ����÷���{@code AdminUserServiceImpl}���ġ�ʧЧԭ����־�� trace-id ������
+ 299:      *
+ 300:      * <p><b>��Χ�߽�</b>���������˺űջ���B03������ְ���� / ҵ����֯����� B07��D-09 �󣩣���������Ԥ��
+ 301:      */
+ 302:     @Override
+ 303:     @Transactional(rollbackFor = Exception.class)
+ 304:     public void removeAccessToken(Long userId, Integer userType) {
+ 305:         TenantUtils.executeIgnore(() -> doRemoveAccessTokenByUser(userId, userType));
+ 306:     }
+ 307: 
+ 308:     /**
+ 309:      * ZS-LOGIN-003���û�ά�ȳ�����ʵ��ִ���壬<b>����</b>�ڡ������⻧���������ڱ����á�
+ 310:      *
+ 311:      * @param userId   �û����
+ 312:      * @param userType �û�����
+ 313:      */
+ 314:     private void doRemoveAccessTokenByUser(Long userId, Integer userType) {
+ 315:         // 1. ���ܴ������� refresh-token ȫ����access-token ���� �� refresh-token ֱ��
+ 316:         List<OAuth2AccessTokenDO> accessTokens =
+ 317:                 ObjectUtil.defaultIfNull(oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType),
+ 318:                         Collections.emptyList());
+ 319:         List<OAuth2RefreshTokenDO> refreshTokens =
+ 320:                 ObjectUtil.defaultIfNull(oauth2RefreshTokenMapper.selectListByUserIdAndUserType(userId, userType),
+ 321:                         Collections.emptyList());
+ 322:         // ZS-LOGIN-002 P2-A��ȥ�� + ��Ȼ������ refresh-token��ȷ�����������������ȶ�˳���ȡ����
+ 323:         Set<String> sortedRefreshTokens = new TreeSet<>();
+ 324:         for (OAuth2AccessTokenDO accessToken : accessTokens) {
+ 325:             if (StrUtil.isNotEmpty(accessToken.getRefreshToken())) {
+ 326:                 sortedRefreshTokens.add(accessToken.getRefreshToken());
+ 327:             }
+ 328:         }
+ 329:         // ZS-LOGIN-003��refresh-token ֱ�鲹�롸����ˢ��ƾ�ݡ����� access-token ��¼�����Ʒ��ֲ��ˣ�
+ 330:         int orphanCount = 0;
+ 331:         for (OAuth2RefreshTokenDO refreshTokenDO : refreshTokens) {
+ 332:             String refreshToken = refreshTokenDO.getRefreshToken();
+ 333:             if (StrUtil.isEmpty(refreshToken)) {
+ 334:                 continue;
+ 335:             }
+ 336:             if (sortedRefreshTokens.add(refreshToken)) {
+ 337:                 orphanCount++;
+ 338:             }
+ 339:         }
+ 340:         if (sortedRefreshTokens.isEmpty()) {
+ 341:             return; // ���û����κλỰ���޺��ղ���������������д��־��
+ 342:         }
+ 343:         // 2. ���ȶ�˳���������������
+ 344:         for (String refreshToken : sortedRefreshTokens) {
+ 345:             // ZS-LOGIN-002������ + �������ض�
+ 346:             oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+ 347:             // �ҵ��� refresh-token ��Ӧ����һ access-token ��Ϊ fallback������ˢ��ƾ��û�� fallback��Ϊ null��
+ 348:             OAuth2AccessTokenDO fallback = null;
+ 349:             for (OAuth2AccessTokenDO at : accessTokens) {
+ 350:                 if (refreshToken.equals(at.getRefreshToken())) {
+ 351:                     fallback = at;
+ 352:                     break;
+ 353:                 }
+ 354:             }
+ 355:             // �������ض������ǲ���ˢ���ڻ���ǰ�ղ�����´��ʷ������ƣ����Ự���
+ 356:             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
+ 357:                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+ 358:                 revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+ 359:             }
+ 360:             // ZS-LOGIN-003 codex r1 P1��ɾ��ǰ�ȶ�ˢ������ʣ����Ч�ڣ�ɾ����鲻�������䳷��Ĺ����
+ 361:             // ��ס������Ȩ/�ſ�·���Ӿ� DB ���ջ����
+ 362:             OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+ 363:             // ɾ��ˢ������
+ 364:             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+ 365:             // ZS-LOGIN-003�������ˢ�����Ʊ������������ơ�ʱ����������ת��ƾ�ݣ�ZS-LOGIN-001 ����·��д�룬
+ 366:             // key �� refreshToken ����TTL �̳�ˢ�����ƣ����Թ���ˢ��ƾ�ݶ�������Ψһ������ʱ��
+ 367:             revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
+ 368:             // ZS-LOGIN-002���Ự�սᣬ�������ʼ�
+ 369:             deleteSessionGenerationQuietly(refreshToken);
+ 370:         }
+ 371:         // ZS-LOGIN-003 codex r1 P1��һ��ʧЧδ���ѵ� OAuth2 ��Ȩ�롪������/����ǰǩ���� code ��������
+ 372:         // ��Ч�����Կɾ� grantAuthorizationCodeForAccessToken �һ����»Ự�������󸴻
+ 373:         int revokedCodes = oauth2CodeMapper.deleteByUserIdAndUserType(userId, userType);
+ 374:         if (revokedCodes > 0 && log.isInfoEnabled()) {
+ 375:             log.info("[removeAccessToken][ZS-LOGIN-003 �û�({}/{}) ��δ������Ȩ����һ��ʧЧ������({})]", userType, userId, revokedCodes);
+ 376:         }
+ 377:         // 3. ZS-LOGIN-003����ƿ�׷�٣����ƴ�������־�������������û���ʶ��
+ 378:         if (log.isInfoEnabled()) {
+ 379:             log.info("[removeAccessToken][ZS-LOGIN-003 �û�({}/{}) ��ȫ���Ự�ѳ������Ự��({})�����й���ˢ��ƾ��({})]",
+ 380:                     userType, userId, sortedRefreshTokens.size(), orphanCount);
+ 381:         }
+ 382:     }
+ 383: 
+ 384:     @Override
+ 385:     public PageResult<OAuth2AccessTokenDO> getAccessTokenPage(OAuth2AccessTokenPageReqVO reqVO) {
+ 386:         return oauth2AccessTokenMapper.selectPage(reqVO);
+ 387:     }
+ 388: 
+ 389:     private OAuth2AccessTokenDO createOAuth2AccessToken(OAuth2RefreshTokenDO refreshTokenDO, OAuth2ClientDO clientDO) {
+ 390:         OAuth2AccessTokenDO accessTokenDO = new OAuth2AccessTokenDO().setAccessToken(generateAccessToken())
+ 391:                 .setUserId(refreshTokenDO.getUserId()).setUserType(refreshTokenDO.getUserType())
+ 392:                 .setUserInfo(buildUserInfo(refreshTokenDO.getUserId(), refreshTokenDO.getUserType()))
+ 393:                 .setClientId(clientDO.getClientId()).setScopes(refreshTokenDO.getScopes())
+ 394:                 .setRefreshToken(refreshTokenDO.getRefreshToken())
+ 395:                 .setExpiresTime(DateUtils.now().plusSeconds(clientDO.getAccessTokenValiditySeconds()));
+ 396:         // ���ȴ� refreshToken ��ȡ�⻧��ţ����� ThreadLocal ����Ⱦʱ���� tenantId Ϊ null
+ 397:         // ���ܹ����� issue��https://t.zsxq.com/JIi5G
+ 398:         Long tenantId = refreshTokenDO.getTenantId();
+ 399:         if (tenantId == null) {
+ 400:             tenantId = TenantContextHolder.getTenantId();
+ 401:         }
+ 402:         accessTokenDO.setTenantId(tenantId);
+ 403:         oauth2AccessTokenMapper.insert(accessTokenDO);
+ 404:         // ��¼�� Redis ��
+ 405:         oauth2AccessTokenRedisDAO.set(accessTokenDO);
+ 406:         return accessTokenDO;
+ 407:     }
+ 408: 
+ 409:     private OAuth2RefreshTokenDO createOAuth2RefreshToken(Long userId, Integer userType, OAuth2ClientDO clientDO, List<String> scopes) {
+ 410:         OAuth2RefreshTokenDO refreshToken = new OAuth2RefreshTokenDO().setRefreshToken(generateRefreshToken())
+ 411:                 .setUserId(userId).setUserType(userType)
+ 412:                 .setClientId(clientDO.getClientId()).setScopes(scopes)
+ 413:                 .setExpiresTime(DateUtils.now().plusSeconds(clientDO.getRefreshTokenValiditySeconds()));
+ 414:         oauth2RefreshTokenMapper.insert(refreshToken);
+ 415:         return refreshToken;
+ 416:     }
+ 417: 
+ 418:     private OAuth2AccessTokenDO convertToAccessToken(OAuth2RefreshTokenDO refreshTokenDO) {
+ 419:         OAuth2AccessTokenDO accessTokenDO = BeanUtils.toBean(refreshTokenDO, OAuth2AccessTokenDO.class)
+ 420:                 .setAccessToken(refreshTokenDO.getRefreshToken());
+ 421:         TenantUtils.execute(refreshTokenDO.getTenantId(),
+ 422:                         () -> accessTokenDO.setUserInfo(buildUserInfo(refreshTokenDO.getUserId(), refreshTokenDO.getUserType())));
+ 423:         return accessTokenDO;
+ 424:     }
+ 425: 
+ 426:     /**
+ 427:      * ZS-LOGIN-001���ж��Ƿ�Ϊ����ˢ������ת�������ĺϳɷ������ơ���
+ 428:      * <p>{@link #convertToAccessToken} �� refreshToken ��ͬʱ�䵱 accessToken �� refreshToken���ʶ�����ȼ��ϳ����ƣ�
+ 429:      * �����������Ƶ� accessToken �� refreshToken �������������ɵ� UUID��������ȡ������ſعر�ʱʶ�𲢾ܾ�������Ⱦ��Ŀ��
+ 430:      */
+ 431:     private static boolean isSyntheticAccessToken(OAuth2AccessTokenDO accessTokenDO) {
+ 432:         return StrUtil.isNotEmpty(accessTokenDO.getAccessToken())
+ 433:                 && StrUtil.equals(accessTokenDO.getAccessToken(), accessTokenDO.getRefreshToken());
+ 434:     }
+ 435: 
+ 436:     /**
+ 437:      * ZS-LOGIN-002����ȡĳˢ�������µ�ǰ���ķ������ƣ���һ�����������������ѱ�����·��ɾ������
+ 438:      * �˻�Ϊ��������� {@code fallback} ��������֤�����ٳ������÷����ֵ���һ�š���
+ 439:      *
+ 440:      * <p>ZS-LOGIN-003��{@code fallback} ����Ϊ {@code null}�����û�ά�ȳ���ʱ��
+ 441:      * ���� Access ��¼������ Refresh���Ĺ���ˢ��ƾ��û�п��˻��� access-token��
+ 442:      * ��ʱ���ؿռ��ϣ��ûỰ������û�з���������Ҫ��������
+ 443:      */
+ 444:     private List<OAuth2AccessTokenDO> listAliveAccessTokens(String refreshToken, OAuth2AccessTokenDO fallback) {
+ 445:         List<OAuth2AccessTokenDO> aliveTokens = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
+ 446:         if (CollUtil.isNotEmpty(aliveTokens)) {
+ 447:             return aliveTokens;
+ 448:         }
+ 449:         return fallback == null ? Collections.emptyList() : Collections.singletonList(fallback);
+ 450:     }
+ 451: 
+ 452:     /**
+ 453:      * ZS-LOGIN-002���ƽ��Ự���ʺţ������·������ƵǼǵ��ô��ʣ���ƿɶ�λ��ʶ����
+ 454:      *
+ 455:      * <p>best-effort��Redis ����<b>����</b>��ϺϷ�ˢ�£������� try/catch ����Ϊ�澯��
+ 456:      * �������طžܾ��ɡ�ˢ��ʱ�����ɴ��ʷ������ƣ�DB + Redis������֤���뱾�Ǽ��޹ء�
+ 457:      * ����״ֻ̬�� Redis��<b>������ DB ��</b>���ܿ� Flyway Ǩ���� ZS-DB-019.B ��ϣ���
+ 458:      *
+ 459:      * <p>ZS-LOGIN-002 P2-B��codex r0 �޸��������ú��뾫�� TTL��{@link #millisUntil}����
+ 460:      * ����������ʣ��ʱ���������� TTL��������"������"�������ѹ�����Ŀ����д�롣
+ 461:      */
+ 462:     private void recordSessionGeneration(OAuth2RefreshTokenDO refreshTokenDO, OAuth2AccessTokenDO accessTokenDO) {
+ 463:         String refreshToken = refreshTokenDO.getRefreshToken();
+ 464:         try {
+ 465:             long generation = oauth2AccessTokenRedisDAO.nextSessionGeneration(refreshToken,
+ 466:                     millisUntil(refreshTokenDO.getExpiresTime()));
+ 467:             oauth2AccessTokenRedisDAO.setAccessTokenGeneration(accessTokenDO.getAccessToken(), generation,
+ 468:                     millisUntil(accessTokenDO.getExpiresTime()));
+ 469:             if (log.isInfoEnabled()) {
+ 470:                 log.info("[recordSessionGeneration][ZS-LOGIN-002 �Ự(user={}/{}, refresh={}) ˢ��������({})��"
+ 471:                                 + "�ɴ��ʷ��������ѳ������·�������({})]",
+ 472:                         refreshTokenDO.getUserType(), refreshTokenDO.getUserId(), maskToken(refreshToken),
+ 473:                         generation, maskToken(accessTokenDO.getAccessToken()));
+ 474:             }
+ 475:         } catch (Exception ex) {
+ 476:             log.warn("[recordSessionGeneration][ZS-LOGIN-002 �Ự(refresh={}) ���ʵǼ�ʧ�ܣ�����Ϊ���Ǽǣ�"
+ 477:                     + "��Ӱ�챾��ˢ�½��������Ʋཫȱʧ�ô��ʱ�ʶ]", maskToken(refreshToken), ex);
+ 478:         }
+ 479:     }
+ 480: 
+ 481:     /**
+ 482:      * ZS-LOGIN-003 codex r1 P1����������ƾ��ǰ���䡸����Ĺ��������ɾ�����档
+ 483:      *
+ 484:      * <p>��̬������{@link #getAccessToken} ����δ����ʱ�� DB ��Դ������档������ DB �ɿ��� ��
+ 485:      * ���������ύ��ɾ���� �� �ɿ��ջ����������ƾ�ݻ��� Redis ��������������в���У��
+ 486:      * �û�״̬��������/ɾ���û��ľ�ƾ�ݣ��� gate ����ʱ�ĺϳ�ƾ�ݣ�������Ч��Ĺ����
+ 487:      * ����Ĺ�� + д���桹�� Lua ԭ�����žܾ��û��TTL ȡƾ��ʣ����Ч�ڣ���������
+ 488:      */
+ 489:     private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
+ 490:         oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
+ 491:         oauth2AccessTokenRedisDAO.delete(token);
+ 492:     }
+ 493: 
+ 494:     /**
+ 495:      * ZS-LOGIN-002�������Ự���ʼ���best-effort��ʧ��ֻ�澯����Ӱ���˳������̣���
+ 496:      */
+ 497:     private void deleteSessionGenerationQuietly(String refreshToken) {
+ 498:         try {
+ 499:             oauth2AccessTokenRedisDAO.deleteSessionGeneration(refreshToken);
+ 500:         } catch (Exception ex) {
+ 501:             log.warn("[deleteSessionGenerationQuietly][ZS-LOGIN-002 �Ự(refresh={}) ���ʼ�����ʧ�ܣ�"
+ 502:                     + "���� TTL ��Ȼ����]", maskToken(refreshToken), ex);
+ 503:         }
+ 504:     }
+ 505: 
+ 506:     /**
+ 507:      * ZS-LOGIN-002 P2-B�����ص���ʣ���������
+ 508:      * <p>����ֵ <= 0 ��ʾ�ѹ��ڻ��޵���ʱ�䣨���÷�Ӧ����д�룬���ⴴ���������ڵļ�����
+ 509:      * <p>���ԭ {@code secondsUntil}���ض�Ϊ�롢���뷵�� 0 ����"������"�������뾫��ȷ��
+ 510:      * ���� 1 �� access-token �������ڵĿͻ���ÿ��ˢ�¶��õ����� TTL �Ĵ��ʼ���
+ 511:      */
+ 512:     private static long millisUntil(LocalDateTime expiresTime) {
+ 513:         if (expiresTime == null) {
+ 514:             return -1L;
+ 515:         }
+ 516:         return Duration.between(LocalDateTime.now(), expiresTime).toMillis();
+ 517:     }
+ 518: 
+ 519:     /**
+ 520:      * ����������������ǰ 8 λ��������־й¶����ƾ�ݡ�
+ 521:      */
+ 522:     private static String maskToken(String token) {
+ 523:         if (StrUtil.isEmpty(token)) {
+ 524:             return "";
+ 525:         }
+ 526:         return token.length() <= 8 ? "***" : token.substring(0, 8) + "***";
+ 527:     }
+ 528: 
+ 529:     /**
+ 530:      * �����û���Ϣ������ {@link cn.zszj.framework.security.core.LoginUser} ��ȡ���ǳơ����ŵ���Ϣ
+ 531:      *
+ 532:      * @param userId �û����
+ 533:      * @param userType �û�����
+ 534:      * @return �û���Ϣ
+ 535:      */
+ 536:     private Map<String, String> buildUserInfo(Long userId, Integer userType) {
+ 537:         if (userId == null || userId <= 0) {
+ 538:             return Collections.emptyMap();
+ 539:         }
+ 540:         if (userType.equals(UserTypeEnum.ADMIN.getValue())) {
+ 541:             AdminUserDO user = adminUserService.getUser(userId);
+ 542:             return MapUtil.builder(LoginUser.INFO_KEY_NICKNAME, user.getNickname())
+ 543:                     .put(LoginUser.INFO_KEY_DEPT_ID, StrUtil.toStringOrNull(user.getDeptId())).build();
+ 544:         } else if (userType.equals(UserTypeEnum.MEMBER.getValue())) {
+ 545:             // ע�⣺Ŀǰ Member ��ʱ����ȡ�����԰���ʵ��
+ 546:             return Collections.emptyMap();
+ 547:         }
+ 548:         throw new IllegalArgumentException("δ֪�û����ͣ�" + userType);
+ 549:     }
+ 550: 
+ 551:     private static String generateAccessToken() {
+ 552:         return IdUtil.fastSimpleUUID();
+ 553:     }
+ 554: 
+ 555:     private static String generateRefreshToken() {
+ 556:         return IdUtil.fastSimpleUUID();
+ 557:     }
+ 558: 
+ 559:     @Override
+ 560:     public Integer cleanRefreshToken(Integer exceedDay, Integer deleteLimit) {
+ 561:         int count = 0;
+ 562:         LocalDateTime expireDate = DateUtils.now().minusDays(exceedDay);
+ 563:         // ѭ��ɾ����ֱ��û����������������
+ 564:         for (int i = 0; i < Short.MAX_VALUE; i++) {
+ 565:             int deleteCount = oauth2RefreshTokenMapper.deleteByExpiresTimeLt(expireDate, deleteLimit);
+ 566:             count += deleteCount;
+ 567:             // �ﵽɾ��Ԥ��������˵��������
+ 568:             if (deleteCount < deleteLimit) {
+ 569:                 break;
+ 570:             }
+ 571:         }
+ 572:         return count;
+ 573:     }
+ 574: 
+ 575:     @Override
+ 576:     public Integer cleanAccessToken(Integer exceedDay, Integer deleteLimit) {
+ 577:         int count = 0;
+ 578:         LocalDateTime expireDate = DateUtils.now().minusDays(exceedDay);
+ 579:         // ѭ��ɾ����ֱ��û����������������
+ 580:         for (int i = 0; i < Short.MAX_VALUE; i++) {
+ 581:             int deleteCount = oauth2AccessTokenMapper.deleteByExpiresTimeLt(expireDate, deleteLimit);
+ 582:             count += deleteCount;
+ 583:             // �ﵽɾ��Ԥ��������˵��������
+ 584:             if (deleteCount < deleteLimit) {
+ 585:                 break;
+ 586:             }
+ 587:         }
+ 588:         return count;
+ 589:     }
+ 590: }
+
+ succeeded in 2ms:
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$p='"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java'; "'$n=0; Get-Content $p | ForEach-Object { $n++; if ($n -ge 240 -and $n -le 575) { '"'{0,4}: {1}' -f "'$n,$_ } }' in E:\zszj-wt-login-003
+ succeeded in 0ms:
+ 240:      * <p><b>范围边界</b>：仅技术账号闭环（B03）。任职撤销 / 业务组织语义�?B07（D-09 后），本方法不预埋�?     */
+ 241:     @Override
+ 242:     @Transactional(rollbackFor = Exception.class)
+ 243:     public void removeAccessToken(Long userId, Integer userType) {
+ 244:         TenantUtils.executeIgnore(() -> doRemoveAccessTokenByUser(userId, userType));
+ 245:     }
+ 246: 
+ 247:     /**
+ 248:      * ZS-LOGIN-003：用户维度撤销的实际执行体�?b>必须</b>在「忽略租户」作用域内被调用�?     *
+ 249:      * @param userId   用户编号
+ 250:      * @param userType 用户类型
+ 251:      */
+ 252:     private void doRemoveAccessTokenByUser(Long userId, Integer userType) {
+ 253:         // 1. 汇总待撤销�?refresh-token 全集：access-token 反推 �?refresh-token 直查
+ 254:         List<OAuth2AccessTokenDO> accessTokens =
+ 255:                 ObjectUtil.defaultIfNull(oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType),
+ 256:                         Collections.emptyList());
+ 257:         List<OAuth2RefreshTokenDO> refreshTokens =
+ 258:                 ObjectUtil.defaultIfNull(oauth2RefreshTokenMapper.selectListByUserIdAndUserType(userId, userType),
+ 259:                         Collections.emptyList());
+ 260:         // ZS-LOGIN-002 P2-A：去�?+ 自然序排�?refresh-token，确保并发批量撤销以稳定顺序获取行�?        Set<String> sortedRefreshTokens = new TreeSet<>();
+ 261:         for (OAuth2AccessTokenDO accessToken : accessTokens) {
+ 262:             if (StrUtil.isNotEmpty(accessToken.getRefreshToken())) {
+ 263:                 sortedRefreshTokens.add(accessToken.getRefreshToken());
+ 264:             }
+ 265:         }
+ 266:         // ZS-LOGIN-003：refresh-token 直查补齐「孤立刷新凭据」（�?access-token 记录，反推发现不了）
+ 267:         int orphanCount = 0;
+ 268:         for (OAuth2RefreshTokenDO refreshTokenDO : refreshTokens) {
+ 269:             String refreshToken = refreshTokenDO.getRefreshToken();
+ 270:             if (StrUtil.isEmpty(refreshToken)) {
+ 271:                 continue;
+ 272:             }
+ 273:             if (sortedRefreshTokens.add(refreshToken)) {
+ 274:                 orphanCount++;
+ 275:             }
+ 276:         }
+ 277:         if (sortedRefreshTokens.isEmpty()) {
+ 278:             return; // 该用户无任何会话，无害空操作（不加锁、不写日志）
+ 279:         }
+ 280:         // 2. 按稳定顺序逐个锁定并撤销
+ 281:         for (String refreshToken : sortedRefreshTokens) {
+ 282:             // ZS-LOGIN-002：行�?+ 获锁后重�?            oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+ 283:             // 找到�?refresh-token 对应的任一 access-token 作为 fallback；孤立刷新凭据没�?fallback（为 null�?            OAuth2AccessTokenDO fallback = null;
+ 284:             for (OAuth2AccessTokenDO at : accessTokens) {
+ 285:                 if (refreshToken.equals(at.getRefreshToken())) {
+ 286:                     fallback = at;
+ 287:                     break;
+ 288:                 }
+ 289:             }
+ 290:             // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
+ 291:             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
+ 292:                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+ 293:                 revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+ 294:             }
+ 295:             // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑�?            // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
+ 296:             OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+ 297:             // 删除刷新令牌
+ 298:             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+ 299:             // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入�?            // key �?refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时�?            revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
+ 300:             // ZS-LOGIN-002：会话终结，清理代际�?            deleteSessionGenerationQuietly(refreshToken);
+ 301:         }
+ 302:         // ZS-LOGIN-003 codex r1 P1：一并失效未消费�?OAuth2 授权码——禁�?改密前签发的 code 若残留，
+ 303:         // 有效期内仍可�?grantAuthorizationCodeForAccessToken 兑换出新会话（撤销后复活）
+ 304:         int revokedCodes = oauth2CodeMapper.deleteByUserIdAndUserType(userId, userType);
+ 305:         if (revokedCodes > 0 && log.isInfoEnabled()) {
+ 306:             log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的未消费授权码已一并失效：数量({})]", userType, userId, revokedCodes);
+ 307:         }
+ 308:         // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识�?        if (log.isInfoEnabled()) {
+ 309:             log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的全部会话已撤销：会话数({})，其中孤立刷新凭�?{})]",
+ 310:                     userType, userId, sortedRefreshTokens.size(), orphanCount);
+ 311:         }
+ 312:     }
+ 313: 
+ 314:     @Override
+ 315:     public PageResult<OAuth2AccessTokenDO> getAccessTokenPage(OAuth2AccessTokenPageReqVO reqVO) {
+ 316:         return oauth2AccessTokenMapper.selectPage(reqVO);
+ 317:     }
+ 318: 
+ 319:     private OAuth2AccessTokenDO createOAuth2AccessToken(OAuth2RefreshTokenDO refreshTokenDO, OAuth2ClientDO clientDO) {
+ 320:         OAuth2AccessTokenDO accessTokenDO = new OAuth2AccessTokenDO().setAccessToken(generateAccessToken())
+ 321:                 .setUserId(refreshTokenDO.getUserId()).setUserType(refreshTokenDO.getUserType())
+ 322:                 .setUserInfo(buildUserInfo(refreshTokenDO.getUserId(), refreshTokenDO.getUserType()))
+ 323:                 .setClientId(clientDO.getClientId()).setScopes(refreshTokenDO.getScopes())
+ 324:                 .setRefreshToken(refreshTokenDO.getRefreshToken())
+ 325:                 .setExpiresTime(DateUtils.now().plusSeconds(clientDO.getAccessTokenValiditySeconds()));
+ 326:         // 优先�?refreshToken 获取租户编号，避�?ThreadLocal 被污染时导致 tenantId �?null
+ 327:         // 可能关联�?issue：https://t.zsxq.com/JIi5G
+ 328:         Long tenantId = refreshTokenDO.getTenantId();
+ 329:         if (tenantId == null) {
+ 330:             tenantId = TenantContextHolder.getTenantId();
+ 331:         }
+ 332:         accessTokenDO.setTenantId(tenantId);
+ 333:         oauth2AccessTokenMapper.insert(accessTokenDO);
+ 334:         // 记录�?Redis �?        oauth2AccessTokenRedisDAO.set(accessTokenDO);
+ 335:         return accessTokenDO;
+ 336:     }
+ 337: 
+ 338:     private OAuth2RefreshTokenDO createOAuth2RefreshToken(Long userId, Integer userType, OAuth2ClientDO clientDO, List<String> scopes) {
+ 339:         OAuth2RefreshTokenDO refreshToken = new OAuth2RefreshTokenDO().setRefreshToken(generateRefreshToken())
+ 340:                 .setUserId(userId).setUserType(userType)
+ 341:                 .setClientId(clientDO.getClientId()).setScopes(scopes)
+ 342:                 .setExpiresTime(DateUtils.now().plusSeconds(clientDO.getRefreshTokenValiditySeconds()));
+ 343:         oauth2RefreshTokenMapper.insert(refreshToken);
+ 344:         return refreshToken;
+ 345:     }
+ 346: 
+ 347:     private OAuth2AccessTokenDO convertToAccessToken(OAuth2RefreshTokenDO refreshTokenDO) {
+ 348:         OAuth2AccessTokenDO accessTokenDO = BeanUtils.toBean(refreshTokenDO, OAuth2AccessTokenDO.class)
+ 349:                 .setAccessToken(refreshTokenDO.getRefreshToken());
+ 350:         TenantUtils.execute(refreshTokenDO.getTenantId(),
+ 351:                         () -> accessTokenDO.setUserInfo(buildUserInfo(refreshTokenDO.getUserId(), refreshTokenDO.getUserType())));
+ 352:         return accessTokenDO;
+ 353:     }
+ 354: 
+ 355:     /**
+ 356:      * ZS-LOGIN-001：判断是否为「由刷新令牌转换而来的合成访问令牌」�?     * <p>{@link #convertToAccessToken} �?refreshToken 串同时充�?accessToken �?refreshToken，故二者相等即合成令牌�?     * 正常访问令牌�?accessToken �?refreshToken 是两个独立生成的 UUID，不会相等。用于门控关闭时识别并拒绝缓存污染条目�?     */
+ 357:     private static boolean isSyntheticAccessToken(OAuth2AccessTokenDO accessTokenDO) {
+ 358:         return StrUtil.isNotEmpty(accessTokenDO.getAccessToken())
+ 359:                 && StrUtil.equals(accessTokenDO.getAccessToken(), accessTokenDO.getRefreshToken());
+ 360:     }
+ 361: 
+ 362:     /**
+ 363:      * ZS-LOGIN-002：读取某刷新令牌下当前存活的访问令牌；若一条都读不到（例如已被并发路径删除），
+ 364:      * 退化为仅包含入�?{@code fallback} 自身，保证「至少撤销调用方所持的那一张」�?     *
+ 365:      * <p>ZS-LOGIN-003：{@code fallback} 允许�?{@code null}——用户维度撤销时，
+ 366:      * 「无 Access 记录但仍�?Refresh」的孤立刷新凭据没有可退化的 access-token�?     * 此时返回空集合（该会话本来就没有访问令牌需要撤销）�?     */
+ 367:     private List<OAuth2AccessTokenDO> listAliveAccessTokens(String refreshToken, OAuth2AccessTokenDO fallback) {
+ 368:         List<OAuth2AccessTokenDO> aliveTokens = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
+ 369:         if (CollUtil.isNotEmpty(aliveTokens)) {
+ 370:             return aliveTokens;
+ 371:         }
+ 372:         return fallback == null ? Collections.emptyList() : Collections.singletonList(fallback);
+ 373:     }
+ 374: 
+ 375:     /**
+ 376:      * ZS-LOGIN-002：推进会话代际号，并把新访问令牌登记到该代际（审计可定位标识）�?     *
+ 377:      * <p>best-effort：Redis 抖动<b>不得</b>阻断合法刷新，故整体 try/catch 降级为告警�?     * 真正的重放拒绝由「刷新时撤销旧代际访问令牌（DB + Redis）」保证，与本登记无关�?     * 代际状态只�?Redis�?b>不新�?DB �?/b>（避开 Flyway 迁移�?ZS-DB-019.B 耦合）�?     *
+ 378:      * <p>ZS-LOGIN-002 P2-B（codex r0 修复）：改用毫秒精度 TTL（{@link #millisUntil}），
+ 379:      * 对正的亚秒剩余时间仍设有�?TTL（而非误当"无限�?），对已过期条目跳过写入�?     */
+ 380:     private void recordSessionGeneration(OAuth2RefreshTokenDO refreshTokenDO, OAuth2AccessTokenDO accessTokenDO) {
+ 381:         String refreshToken = refreshTokenDO.getRefreshToken();
+ 382:         try {
+ 383:             long generation = oauth2AccessTokenRedisDAO.nextSessionGeneration(refreshToken,
+ 384:                     millisUntil(refreshTokenDO.getExpiresTime()));
+ 385:             oauth2AccessTokenRedisDAO.setAccessTokenGeneration(accessTokenDO.getAccessToken(), generation,
+ 386:                     millisUntil(accessTokenDO.getExpiresTime()));
+ 387:             if (log.isInfoEnabled()) {
+ 388:                 log.info("[recordSessionGeneration][ZS-LOGIN-002 会话(user={}/{}, refresh={}) 刷新至代�?{})�?
+ 389:                                 + "旧代际访问令牌已撤销，新访问令牌({})]",
+ 390:                         refreshTokenDO.getUserType(), refreshTokenDO.getUserId(), maskToken(refreshToken),
+ 391:                         generation, maskToken(accessTokenDO.getAccessToken()));
+ 392:             }
+ 393:         } catch (Exception ex) {
+ 394:             log.warn("[recordSessionGeneration][ZS-LOGIN-002 会话(refresh={}) 代际登记失败，降级为不登记；"
+ 395:                     + "不影响本次刷新结果，但审计侧将缺失该代际标识]", maskToken(refreshToken), ex);
+ 396:         }
+ 397:     }
+ 398: 
+ 399:     /**
+ 400:      * ZS-LOGIN-003 codex r1 P1：撤销缓存凭据前先落「撤销墓碑」，再删除缓存�?     *
+ 401:      * <p>竞态背景：{@link #getAccessToken} 缓存未命中时�?DB 回源并回填缓存。若「读 DB 旧快�?�?     * 本方撤销提交并删缓存 �?旧快照回填」交错，旧凭据会�?Redis 复活，后续缓存命中不再校�?     * 用户状态，被禁�?删除用户的旧凭据（含 gate 开启时的合成凭据）继续有效。墓碑以
+ 402:      * 「查墓碑 + 写缓存」的 Lua 原子门闩拒绝该回填；TTL 取凭据剩余有效期，自清理�?     */
+ 403:     private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
+ 404:         oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
+ 405:         oauth2AccessTokenRedisDAO.delete(token);
+ 406:     }
+ 407: 
+ 408:     /**
+ 409:      * ZS-LOGIN-002：清理会话代际键（best-effort，失败只告警，不影响退出主流程）�?     */
+ 410:     private void deleteSessionGenerationQuietly(String refreshToken) {
+ 411:         try {
+ 412:             oauth2AccessTokenRedisDAO.deleteSessionGeneration(refreshToken);
+ 413:         } catch (Exception ex) {
+ 414:             log.warn("[deleteSessionGenerationQuietly][ZS-LOGIN-002 会话(refresh={}) 代际键清理失败，"
+ 415:                     + "将随 TTL 自然过期]", maskToken(refreshToken), ex);
+ 416:         }
+ 417:     }
+ 418: 
+ 419:     /**
+ 420:      * ZS-LOGIN-002 P2-B：返回到期剩余毫秒数�?     * <p>返回�?<= 0 表示已过期或无到期时间（调用方应跳过写入，避免创建永不过期的键）�?     * <p>相比�?{@code secondsUntil}（截断为秒、亚秒返�?0 被误�?无限�?），毫秒精度确保
+ 421:      * 配置 1 �?access-token 生命周期的客户端每次刷新都得到有�?TTL 的代际键�?     */
+ 422:     private static long millisUntil(LocalDateTime expiresTime) {
+ 423:         if (expiresTime == null) {
+ 424:             return -1L;
+ 425:         }
+ 426:         return Duration.between(LocalDateTime.now(), expiresTime).toMillis();
+ 427:     }
+ 428: 
+ 429:     /**
+ 430:      * 令牌脱敏：仅保留�?8 位，避免日志泄露完整凭据�?     */
+ 431:     private static String maskToken(String token) {
+ 432:         if (StrUtil.isEmpty(token)) {
+ 433:             return "";
+ 434:         }
+ 435:         return token.length() <= 8 ? "***" : token.substring(0, 8) + "***";
+ 436:     }
+ 437: 
+ 438:     /**
+ 439:      * 加载用户信息，方�?{@link cn.zszj.framework.security.core.LoginUser} 获取到昵称、部门等信息
+ 440:      *
+ 441:      * @param userId 用户编号
+ 442:      * @param userType 用户类型
+ 443:      * @return 用户信息
+ 444:      */
+ 445:     private Map<String, String> buildUserInfo(Long userId, Integer userType) {
+ 446:         if (userId == null || userId <= 0) {
+ 447:             return Collections.emptyMap();
+ 448:         }
+ 449:         if (userType.equals(UserTypeEnum.ADMIN.getValue())) {
+ 450:             AdminUserDO user = adminUserService.getUser(userId);
+ 451:             return MapUtil.builder(LoginUser.INFO_KEY_NICKNAME, user.getNickname())
+ 452:                     .put(LoginUser.INFO_KEY_DEPT_ID, StrUtil.toStringOrNull(user.getDeptId())).build();
+ 453:         } else if (userType.equals(UserTypeEnum.MEMBER.getValue())) {
+ 454:             // 注意：目�?Member 暂时不读取，可以按需实现
+ 455:             return Collections.emptyMap();
+ 456:         }
+ 457:         throw new IllegalArgumentException("未知用户类型�? + userType);
+ 458:     }
+ 459: 
+ 460:     private static String generateAccessToken() {
+ 461:         return IdUtil.fastSimpleUUID();
+ 462:     }
+ 463: 
+ 464:     private static String generateRefreshToken() {
+ 465:         return IdUtil.fastSimpleUUID();
+ 466:     }
+ 467: 
+ 468:     @Override
+ 469:     public Integer cleanRefreshToken(Integer exceedDay, Integer deleteLimit) {
+ 470:         int count = 0;
+ 471:         LocalDateTime expireDate = DateUtils.now().minusDays(exceedDay);
+ 472:         // 循环删除，直到没有满足条件的数据
+ 473:         for (int i = 0; i < Short.MAX_VALUE; i++) {
+ 474:             int deleteCount = oauth2RefreshTokenMapper.deleteByExpiresTimeLt(expireDate, deleteLimit);
+ 475:             count += deleteCount;
+ 476:             // 达到删除预期条数，说明到底了
+ 477:             if (deleteCount < deleteLimit) {
+ 478:                 break;
+ 479:             }
+ 480:         }
+ 481:         return count;
+ 482:     }
+ 483: 
+ 484:     @Override
+ 485:     public Integer cleanAccessToken(Integer exceedDay, Integer deleteLimit) {
+ 486:         int count = 0;
+ 487:         LocalDateTime expireDate = DateUtils.now().minusDays(exceedDay);
+ 488:         // 循环删除，直到没有满足条件的数据
+ 489:         for (int i = 0; i < Short.MAX_VALUE; i++) {
+ 490:             int deleteCount = oauth2AccessTokenMapper.deleteByExpiresTimeLt(expireDate, deleteLimit);
+ 491:             count += deleteCount;
+ 492:             // 达到删除预期条数，说明到底了
+ 493:             if (deleteCount < deleteLimit) {
+ 494:                 break;
+ 495:             }
+ 496:         }
+ 497:         return count;
+ 498:     }
+ 499: }
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n -C 6 'invalidateUserSessions|importUserList|private .*Service|updateUserStatus|updateUserPassword|deleteUser|public AdminUserDO getUser' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java; Get-Content services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2RefreshTokenMapper.java; Get-Content services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2AccessTokenMapper.java" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+67-    static final String USER_REGISTER_ENABLED_KEY = "system.user.register-enabled";
+68-
+69-    @Resource
+70-    private AdminUserMapper userMapper;
+71-
+72-    @Resource
+73:    private DeptService deptService;
+74-    @Resource
+75:    private PostService postService;
+76-    @Resource
+77:    private PermissionService permissionService;
+78-    @Resource
+79-    private PasswordEncoder passwordEncoder;
+80-    @Resource
+81-    @Lazy // 延迟，避免循环依赖报错
+82:    private TenantService tenantService;
+83-    @Resource
+84-    @Lazy // 懒加载，避免循环依赖
+85:    private OAuth2TokenService oauth2TokenService;
+86-
+87-    @Resource
+88-    private UserPostMapper userPostMapper;
+89-
+90-    @Resource
+91:    private DeptMapper deptMapper; // 负责人计数走 DeptMapper 原语即可，无需为一次计数在 DeptService 接口扩方法（本类已注入 DeptService）
+92-
+93-    @Resource
+94-    private ConfigApi configApi;
+95-
+96-    @Resource
+97-    private AdminUserProducer adminUserProducer;
+--
+225-    }
+226-
+227-    @Override
+228-    @Transactional(rollbackFor = Exception.class)
+229-    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_SELF_PASSWORD_SUB_TYPE, bizNo = "{{#id}}",
+230-            success = SYSTEM_USER_UPDATE_SELF_PASSWORD_SUCCESS)
+231:    public void updateUserPassword(Long id, UserProfileUpdatePasswordReqVO reqVO) {
+232-        // 1. 校验用户存在、旧密码密码
+233-        AdminUserDO user = validateUserExists(id);
+234-        validateOldPassword(id, reqVO.getOldPassword());
+235-
+236-        // 2. 执行更新
+237-        AdminUserDO updateObj = new AdminUserDO().setId(id);
+238-        updateObj.setPassword(encodePassword(reqVO.getNewPassword())); // 加密密码
+239-        userMapper.updateById(updateObj);
+240-
+241:        // 3. ZS-LOGIN-003：改密后全端失效（策略与理由见 invalidateUserSessions）
+242:        invalidateUserSessions(id, "用户自助修改密码");
+243-
+244-        // 4. 记录操作日志上下文
+245-        LogRecordContext.putVariable("user", user);
+246-    }
+247-
+248-    @Override
+249-    @Transactional(rollbackFor = Exception.class)
+250-    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_PASSWORD_SUB_TYPE, bizNo = "{{#id}}",
+251-            success = SYSTEM_USER_UPDATE_PASSWORD_SUCCESS)
+252:    public void updateUserPassword(Long id, String password) {
+253-        // 1. 校验用户存在
+254-        AdminUserDO user = validateUserExists(id);
+255-
+256-        // 2. 更新密码
+257-        AdminUserDO updateObj = new AdminUserDO();
+258-        updateObj.setId(id);
+259-        updateObj.setPassword(encodePassword(password)); // 加密密码
+260-        userMapper.updateById(updateObj);
+261-
+262-        // 3. ZS-LOGIN-003：管理员重置他人密码后全端失效（重置通常意味着旧密码已泄露或人员变动）
+263:        invalidateUserSessions(id, "管理员重置密码");
+264-
+265-        // 4. 记录操作日志上下文
+266-        LogRecordContext.putVariable("user", user);
+267-        LogRecordContext.putVariable("newPassword", updateObj.getPassword());
+268-    }
+269-
+270-    @Override
+271-    @Transactional(rollbackFor = Exception.class)
+272-    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_UPDATE_STATUS_SUB_TYPE, bizNo = "{{#id}}",
+273-            success = SYSTEM_USER_UPDATE_STATUS_SUCCESS)
+274:    public void updateUserStatus(Long id, Integer status) {
+275-        // 1. 校验用户存在
+276-        AdminUserDO user = validateUserExists(id);
+277-
+278-        // 2. 更新状态
+279-        AdminUserDO updateObj = new AdminUserDO();
+280-        updateObj.setId(id);
+281-        updateObj.setStatus(status);
+282-        userMapper.updateById(updateObj);
+283-
+284-        // 3. ZS-LOGIN-003：如果是禁用用户，则失效其全部登录会话
+285-        if (CommonStatusEnum.isDisable(status)) {
+286:            invalidateUserSessions(id, "禁用用户");
+287-        }
+288-
+289-        // 4. 记录操作日志上下文
+290-        LogRecordContext.putVariable("user", user);
+291-    }
+292-
+--
+296-     * <p><b>策略：全端失效，不保留「当前端」。</b>理由：
+297-     * <ol>
+298-     *     <li>{@code LoginUser} 与 {@code OAuth2AccessTokenCheckRespDTO} 均<b>不携带</b>访问令牌串，
+299-     *         {@code TokenAuthenticationFilter} 也不把它写入安全上下文 —— 服务端当前<b>无法识别「当前端」</b>；</li>
+300-     *     <li>任何由客户端上送（请求体 / 请求头 / URL 参数）的「保留哪一端」提示都<b>可被伪造</b>：
+301-     *         攻击者持失窃凭据改密后可指定保留自己的会话，使改密彻底失去止损意义；</li>
+302:     *     <li>{@link #updateUserPassword(Long, String)} 是管理员重置<b>他人</b>密码，
+303-     *         根本不存在「目标用户的当前端」这个概念；</li>
+304-     *     <li>改密 / 禁用 / 删除 本身即「怀疑凭据泄露或账号不再可用」的止损动作，全端失效是安全默认。</li>
+305-     * </ol>
+306-     * 代价：自助改密后需全端重新登录（下一次请求 401 → 前端跳登录页，属既有契约）。
+307-     * 若产品后续要「保留当前端」，必须先在 {@code TokenAuthenticationFilter} 把<b>已验证的</b>
+308-     * 访问令牌串写入 {@code LoginUser}（服务端来源、非客户端断言）—— 本任务<b>不预埋</b>。
+--
+314-     * <p>调用方<b>必须</b>处于 {@code @Transactional} 中：撤销失败则回滚状态变更 ——
+315-     * 宁可显式失败，也不留下「已禁用 / 已删除 / 已改密但仍在线」的窗口。
+316-     *
+317-     * @param userId 用户编号
+318-     * @param reason 失效原因（仅用于审计日志，与 {@code @LogRecord} 操作日志经 trace-id 关联；不入库、不入令牌）
+319-     */
+320:    private void invalidateUserSessions(Long userId, String reason) {
+321-        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+322-        // ZS-LOGIN-003：事件与审计可追踪。此处只记「哪个用户、因为什么」；
+323-        // 撤销明细（会话数 / 其中孤立刷新凭据数）由 OAuth2TokenServiceImpl 侧的同 trace 日志给出。
+324:        log.info("[invalidateUserSessions][ZS-LOGIN-003 用户({}) 的全部登录会话已失效，原因({})]", userId, reason);
+325-    }
+326-
+327-    @Override
+328-    @Transactional(rollbackFor = Exception.class)
+329-    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_DELETE_SUB_TYPE, bizNo = "{{#id}}",
+330-            success = SYSTEM_USER_DELETE_SUCCESS)
+331:    public void deleteUser(Long id) {
+332-        // 1. 校验用户存在
+333-        AdminUserDO user = validateUserExists(id);
+334-        // 1.1 校验用户不是部门负责人
+335-        validateUserNotDeptLeader(id);
+336-
+337-        // 2.1 删除用户
+--
+339-        // 2.2 删除用户关联数据
+340-        permissionService.processUserDeleted(id);
+341-        // 2.2 删除用户岗位
+342-        userPostMapper.deleteByUserId(id);
+343-        // 2.3 ZS-LOGIN-003：删除后失效全部登录会话（此前缺失：被删用户的凭据在自然过期前仍可用，
+344-        // 因为 checkAccessToken 只校验令牌存在与到期，不校验用户是否仍存在）
+345:        invalidateUserSessions(id, "删除用户");
+346-
+347-        // 3. 记录操作日志上下文
+348-        LogRecordContext.putVariable("user", user);
+349-    }
+350-
+351-    @Override
+352-    @Transactional(rollbackFor = Exception.class)
+353:    public void deleteUserList(List<Long> ids) {
+354-        // 1. 校验用户都存在、且在调用方租户可见范围内；与单条删除保持一致，且先完成全部校验再删除，避免部分删除
+355-        // ZS-LOGIN-003 codex r0 P1：此前只校验「不是部门负责人」，不校验归属 —— 跨租户强制下线漏洞，详见 validateUsersExists
+356-        validateUsersExists(ids);
+357-        // 1.1 校验用户都不是部门负责人
+358-        ids.forEach(this::validateUserNotDeptLeader);
+359-
+--
+362-
+363-        // 2.2 批量删除用户关联数据
+364-        ids.forEach(id -> {
+365-            permissionService.processUserDeleted(id);
+366-            userPostMapper.deleteByUserId(id);
+367-            // 2.3 ZS-LOGIN-003：与单条删除对齐，批量删除同样必须失效会话
+368:            invalidateUserSessions(id, "批量删除用户");
+369-        });
+370-    }
+371-
+372-    @Override
+373:    public AdminUserDO getUserByUsername(String username) {
+374-        return userMapper.selectByUsername(username);
+375-    }
+376-
+377-    @Override
+378:    public AdminUserDO getUserByMobile(String mobile) {
+379-        return userMapper.selectByMobile(mobile);
+380-    }
+381-
+382-    @Override
+383-    public PageResult<AdminUserDO> getUserPage(UserPageReqVO reqVO) {
+384-        // 如果有角色编号，查询角色对应的用户编号
+--
+392-
+393-        // 分页查询
+394-        return userMapper.selectPage(reqVO, getDeptCondition(reqVO.getDeptId()), userIds);
+395-    }
+396-
+397-    @Override
+398:    public AdminUserDO getUser(Long id) {
+399-        return userMapper.selectById(id);
+400-    }
+401-
+402-    @Override
+403-    public List<AdminUserDO> getUserListByDeptIds(Collection<Long> deptIds) {
+404-        if (CollUtil.isEmpty(deptIds)) {
+--
+504-        return user;
+505-    }
+506-
+507-    /**
+508-     * ZS-LOGIN-003（codex r0 P1 修复）：批量校验用户都存在，且在<b>调用方租户可见范围内</b>。
+509-     *
+510:     * <p><b>为何必须补</b>：{@link #deleteUserList(List)} 此前只校验「不是部门负责人」。
+511-     * {@code userMapper.deleteByIds} 受租户拦截器过滤（他租户账号根本删不掉），
+512:     * 但会话撤销走 {@link #invalidateUserSessions} → {@code OAuth2TokenService#removeAccessToken(Long, Integer)}，
+513-     * 后者为了「不被调用方租户上下文静默收窄」而在 {@code TenantUtils.executeIgnore} 作用域内执行、是<b>全局</b>的。
+514-     * 两者叠加就形成漏洞：持有 {@code system:user:delete} 的管理员只要向他租户用户编号，
+515-     * 就能在账号<b>未被删除</b>的情况下把对方<b>跨租户强制下线</b>（DoS）。
+516-     *
+517-     * <p>因此本校验与单条删除的 {@link #validateUserExists(Long)} 对齐：任一编号不可见即<b>整批失败</b>，
+518-     * 对外统一抛 {@code USER_NOT_EXISTS}（他租户编号与真不存在不可区分，不泄露跨租户存在性）。
+--
+621-            throw exception(USER_PASSWORD_FAILED);
+622-        }
+623-    }
+624-
+625-    @Override
+626-    @Transactional(rollbackFor = Exception.class) // 添加事务，异常则回滚所有导入
+627:    public UserImportRespVO importUserList(List<UserImportExcelVO> importUsers, boolean isUpdateSupport) {
+628-        // 1.1 参数校验
+629-        if (CollUtil.isEmpty(importUsers)) {
+630-            throw exception(USER_IMPORT_LIST_IS_EMPTY);
+631-        }
+632-        // 1.2 初始化密码不能为空
+633-        String initPassword = configApi.getConfigValueByKey(USER_INIT_PASSWORD_KEY);
+--
+675-            updateUser.setId(existUser.getId());
+676-            userMapper.updateById(updateUser);
+677-            // ZS-LOGIN-003 codex r1 P1：覆盖导入把已有账号置为禁用时，同事务内失效其全部登录会话——
+678-            // 此前该禁用入口未接统一撤销，旧 Access/Refresh/合成凭据在导入禁用后仍然可用
+679-            if (CommonStatusEnum.isDisable(updateUser.getStatus())
+680-                    && !CommonStatusEnum.isDisable(existUser.getStatus())) {
+681:                invalidateUserSessions(existUser.getId(), "Excel 覆盖导入禁用");
+682-            }
+683-            respVO.getUpdateUsernames().add(importUser.getUsername());
+684-        });
+685-        return respVO;
+686-    }
+687-
+package cn.zszj.module.system.dal.mysql.oauth2;
+
+import cn.hutool.core.collection.CollUtil;
+import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
+import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Mapper
+public interface OAuth2RefreshTokenMapper extends BaseMapperX<OAuth2RefreshTokenDO> {
+
+    default int deleteByRefreshToken(String refreshToken) {
+        return delete(new LambdaQueryWrapperX<OAuth2RefreshTokenDO>()
+                .eq(OAuth2RefreshTokenDO::getRefreshToken, refreshToken));
+    }
+
+    @TenantIgnore // 获取 token 的时候，需要忽略租户编号。原因是：一些场景下，可能不会传�?tenant-id 请求头，例如说文件上传、积木报表等�?    default OAuth2RefreshTokenDO selectByRefreshToken(String refreshToken) {
+        return selectOne(OAuth2RefreshTokenDO::getRefreshToken, refreshToken);
+    }
+
+    /**
+     * ZS-LOGIN-002：以「行锁」方式查询刷新令牌（生成 {@code SELECT ... FOR UPDATE}）�?     *
+     * <p>用途：把「同一会话（同一 refreshToken）」的刷新与退出串行化。调用方<b>必须</b>处于事务�?     * （{@code @Transactional}），否则语句一结束即自动提交、锁立即释放，串行化失效�?     *
+     * <p>选型说明（见开发计�?§3.3「优先行锁」）�?     * <ul>
+     *     <li>行锁�?PG / MySQL / H2（MVStore）均为原生语义，无需新增 DB 列（避开 Flyway 迁移�?ZS-DB-019.B 耦合）；</li>
+     *     <li>相比乐观锁「条件领取」（{@code UPDATE ... WHERE version=?}）不依赖版本号列�?/li>
+     *     <li>这里刻意使用 MyBatis-Plus �?Wrapper + {@code last("FOR UPDATE")} 而非�?{@code @Select}�?     *         �?SQL 需要手�?resultMap（{@code user_info} �?JSON 列依�?autoResultMap �?JacksonTypeHandler），
+     *         �?{@code deleted = 0} �?PG �?boolean 列上不成立；�?Wrapper 由框架统一处理逻辑删除�?     *         字段映射与多方言�?/li>
+     * </ul>
+     *
+     * <p>锁序约定：{@code refreshAccessToken} �?{@code removeAccessToken} 均遵�?     * �?b>先锁刷新令牌行，再处理访问令�?/b>」，避免两条路径交叉加锁导致死锁�?     *
+     * @param refreshToken 刷新令牌�?     * @return 刷新令牌；不存在（含已被退出删除）时返�?{@code null}，此时不会持有任何行�?     */
+    @TenantIgnore // �?selectByRefreshToken 保持一致：退�?刷新可能不携�?tenant-id 请求�?    default OAuth2RefreshTokenDO selectByRefreshTokenForUpdate(String refreshToken) {
+        LambdaQueryWrapperX<OAuth2RefreshTokenDO> wrapper = new LambdaQueryWrapperX<>();
+        wrapper.eq(OAuth2RefreshTokenDO::getRefreshToken, refreshToken);
+        wrapper.last("FOR UPDATE");
+        // �?selectList 而非 selectOne：FOR UPDATE 需要明确的行集合语义，且历史上可能残留同串的软删除�?        List<OAuth2RefreshTokenDO> list = selectList(wrapper);
+        return CollUtil.isEmpty(list) ? null : list.get(0);
+    }
+
+    /**
+     * ZS-LOGIN-003：按「用�?+ 用户类型」直查该用户名下�?b>全部</b>刷新令牌�?     *
+     * <p>背景：此�?{@code OAuth2TokenServiceImpl#removeAccessToken(Long, Integer)} 的刷新凭据集�?     * 完全�?access-token 记录<b>反推</b>，于是「无 Access 记录但仍�?Refresh」的孤立刷新凭据
+     * 永远不会被撤销 —�?它仍可用�?{@code refreshAccessToken} 换出全新访问令牌（会话复活）�?     * 本方法提供与 {@code OAuth2AccessTokenMapper#selectListByUserIdAndUserType} 对称的直查能力，
+     * 使撤销可以取「access-token 反推 �?refresh-token 直查」的<b>全集</b>�?     *
+     * <p>租户：撤销是安全操作，可能在无租户上下文（定时任务 / MQ 消费）或跨租户运维场景下发起�?     * �?{@link #selectByRefreshToken(String)}、{@link #selectByRefreshTokenForUpdate(String)} 保持一致忽略租户�?     * 调用方（{@code OAuth2TokenServiceImpl}）另�?{@code TenantUtils#executeIgnore} 包裹整个撤销体作为主保障�?     *
+     * @param userId   用户编号
+     * @param userType 用户类型
+     * @return 该用户名下的全部刷新令牌；无会话时返回空集合
+     */
+    @TenantIgnore // �?selectByRefreshToken 保持一致：撤销可能不携�?tenant-id 请求�?    default List<OAuth2RefreshTokenDO> selectListByUserIdAndUserType(Long userId, Integer userType) {
+        return selectList(OAuth2RefreshTokenDO::getUserId, userId,
+                OAuth2RefreshTokenDO::getUserType, userType);
+    }
+
+    /**
+     * 物理删除指定过期时间之前的刷新令�?     *
+     * @param expiresTime 最大时�?     * @param limit       删除条数，防止一次删除太�?     * @return 删除条数
+     */
+    @Delete("DELETE FROM system_oauth2_refresh_token WHERE id IN (SELECT id FROM system_oauth2_refresh_token WHERE expires_time < #{expiresTime} LIMIT #{limit})")
+    Integer deleteByExpiresTimeLt(@Param("expiresTime") LocalDateTime expiresTime, @Param("limit") Integer limit);
+}
+package cn.zszj.module.system.dal.mysql.oauth2;
+
+import cn.zszj.framework.common.pojo.PageResult;
+import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
+import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenPageReqVO;
+import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Mapper
+public interface OAuth2AccessTokenMapper extends BaseMapperX<OAuth2AccessTokenDO> {
+
+    @TenantIgnore // 获取 token 的时候，需要忽略租户编号。原因是：一些场景下，可能不会传�?tenant-id 请求头，例如说文件上传、积木报表等�?    default OAuth2AccessTokenDO selectByAccessToken(String accessToken) {
+        return selectOne(OAuth2AccessTokenDO::getAccessToken, accessToken);
+    }
+
+    default List<OAuth2AccessTokenDO> selectListByRefreshToken(String refreshToken) {
+        return selectList(OAuth2AccessTokenDO::getRefreshToken, refreshToken);
+    }
+
+    default PageResult<OAuth2AccessTokenDO> selectPage(OAuth2AccessTokenPageReqVO reqVO) {
+        return selectPage(reqVO, new LambdaQueryWrapperX<OAuth2AccessTokenDO>()
+                .eqIfPresent(OAuth2AccessTokenDO::getUserId, reqVO.getUserId())
+                .eqIfPresent(OAuth2AccessTokenDO::getUserType, reqVO.getUserType())
+                .likeIfPresent(OAuth2AccessTokenDO::getClientId, reqVO.getClientId())
+                .gt(OAuth2AccessTokenDO::getExpiresTime, LocalDateTime.now())
+                .orderByDesc(OAuth2AccessTokenDO::getId));
+    }
+
+    default List<OAuth2AccessTokenDO> selectListByUserIdAndUserType(Long userId, Integer userType) {
+        return selectList(OAuth2AccessTokenDO::getUserId, userId,
+                OAuth2AccessTokenDO::getUserType, userType);
+    }
+
+    /**
+     * 物理删除指定过期时间之前的访问令�?     *
+     * @param expiresTime 最大时�?     * @param limit       删除条数，防止一次删除太�?     * @return 删除条数
+     */
+    @Delete("DELETE FROM system_oauth2_access_token WHERE id IN (SELECT id FROM system_oauth2_access_token WHERE expires_time < #{expiresTime} LIMIT #{limit})")
+    Integer deleteByExpiresTimeLt(@Param("expiresTime") LocalDateTime expiresTime, @Param("limit") Integer limit);
+
+}
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'OAuth2GrantService|AdminUserService|@Lazy|@Transactional' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/auth/AdminAuthServiceImpl.java services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission; rg -n 'cluster:|nodes:|allow-circular-references|isolation|redis:' services/zhongshu-core/zszj-server/src/main/resources services/zhongshu-core/zszj-module-system/src/test/resources; rg -n 'LOGIN-003|882e0ca5|codex r1' --glob '*.md'" in E:\zszj-wt-login-003
+ exited 1 in 0ms:
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/auth/AdminAuthServiceImpl.java:28:import cn.zszj.module.system.service.user.AdminUserService;
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/auth/AdminAuthServiceImpl.java:57:    private AdminUserService userService;
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/auth/AdminAuthServiceImpl.java:348:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\MenuServiceImpl.java:47:    @Lazy // 延迟，避免循环依赖报错
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\MenuServiceImpl.java:89:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\MenuServiceImpl.java:108:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\PermissionServiceImpl.java:25:import cn.zszj.module.system.service.user.AdminUserService;
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\PermissionServiceImpl.java:68:    private AdminUserService userService;
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\PermissionServiceImpl.java:173:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\RoleServiceImpl.java:55:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\RoleServiceImpl.java:108:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission\RoleServiceImpl.java:126:    @Transactional(rollbackFor = Exception.class)
+services/zhongshu-core/zszj-module-system/src/test/resources\application-unit-test.yaml:25:    redis:
+services/zhongshu-core/zszj-server/src/main/resources\application-dev.yaml:55:    redis:
+services/zhongshu-core/zszj-server/src/main/resources\application.yaml:9:    allow-circular-references: true # 允许循环依赖，因为项目是三层架构，无法避免这个情况。
+services/zhongshu-core/zszj-server/src/main/resources\application.yaml:29:    redis:
+services/zhongshu-core/zszj-server/src/main/resources\application.yaml:93:    redis:
+services/zhongshu-core/zszj-server/src/main/resources\application.yaml:151:      redis:
+services/zhongshu-core/zszj-server/src/main/resources\application-local.yaml:55:    redis:
+services/zhongshu-core/zszj-server/src/main/resources\db\migration\V20260909.001__system_infra_baseline.sql:3259:INSERT INTO system_menu (id, name, permission, type, sort, parent_id, path, icon, component, component_name, status, visible, keep_alive, always_show, creator, create_time, updater, update_time, deleted) VALUES (1066, '获得 Redis 监控信息', 'infra:redis:get-monitor-info', 3, 1, 113, '', '', '', NULL, 0, '1', '1', '1', '', '2021-01-26 01:02:31', '', '2022-04-20 17:03:10', '0');
+services/zhongshu-core/zszj-server/src/main/resources\db\migration\V20260909.001__system_infra_baseline.sql:3260:INSERT INTO system_menu (id, name, permission, type, sort, parent_id, path, icon, component, component_name, status, visible, keep_alive, always_show, creator, create_time, updater, update_time, deleted) VALUES (1067, '获得 Redis Key 列表', 'infra:redis:get-key-list', 3, 2, 113, '', '', '', NULL, 0, '1', '1', '1', '', '2021-01-26 01:02:52', '', '2022-04-20 17:03:10', '0');
+
+codex
+已发现一个确定的遗漏：用户没有 Access/Refresh 会话时，撤销方法会提前返回，新增的授权码删除不会执行。我还在核对兑换与禁用/改密的并发时序，以及墓碑是否覆盖刷新产生的旧令牌；现有测试尚未覆盖这些交错场景。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n -C 12 'sortedRefreshTokens.isEmpty|revokeTarget|revokeWithTombstone|millisUntil|selectByRefreshTokenForUpdate' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java; rg -n -C 8 'redis:' services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml; rg -n 'class BaseDbAndRedisUnitTest|class BaseRedisUnitTest|class RedisTestConfiguration|jedis|embedded-redis|redis-server' services/zhongshu-core/zszj-framework" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+105-     * ZS-LOGIN-002：刷新访问令牌。
+106-     *
+107-     * <p><b>并发合同（本底座决策，见开发计划 §3.3）</b>：沿用原 refresh token（<b>不轮换</b>，以不破坏 ZS-LOGIN-001 门控
+108-     * 与前端刷新契约）+ 会话代际号（session generation）+ 重放检测。任一时刻，同一刷新凭据下<b>恰好 1 个</b>有效访问令牌。
+109-     *
+110-     * <p><b>修复前的失控面</b>：原实现首句为无锁的 {@code selectByRefreshToken}——
+111-     * <ol>
+112-     *     <li>N 个并发刷新读到同一条刷新令牌，各自插入访问令牌 → 最终 N 个同时有效的失控会话；</li>
+113-     *     <li>与 {@link #removeAccessToken(String)} 并发时，晚到的刷新已持有旧的 refreshTokenDO 快照，
+114-     *         退出提交后仍插入新访问令牌 → 「复活」已退出的会话（孤儿令牌）。</li>
+115-     * </ol>
+116-     *
+117:     * <p><b>修复手法</b>：首句改为 {@link OAuth2RefreshTokenMapper#selectByRefreshTokenForUpdate(String)}
+118-     * （{@code SELECT ... FOR UPDATE} 行锁）。行锁在<b>事务提交/回滚时</b>才释放，因此本方法的
+119-     * 「读刷新令牌 → 校验 Client → 删旧访问令牌 → 插新访问令牌 → 登记代际」整体成为同一会话上的临界区，
+120-     * 并发刷新被串行化：后一个请求获锁后重读，必然看到前一个已提交的新访问令牌并把它删除，
+121-     * 于是「有效访问令牌恒为 1」「会话代际号 == 成功刷新次数」（无丢失更新）。
+122-     *
+123-     * <p><b>重放（旧代际）拒绝</b>：旧代际访问令牌在刷新时被同时从 DB（逻辑删除）与 Redis 撤销，
+124-     * 重放旧令牌 → {@link #getAccessToken(String)} 返回 null → {@link #checkAccessToken(String)} 抛既有
+125-     * 401「访问令牌不存在」。此处<b>刻意不新增业务错误码</b>：前端与网关的「401 → 跳登录」契约不可破。
+126-     * 代际标识（Redis）仅用于审计定位「某令牌属于第几代会话」，旧代际标识保留至自然过期。
+127-     *
+128-     * <p><b>锁序</b>：与 {@link #removeAccessToken(String)} 一致——先锁刷新令牌行，再处理访问令牌。
+129-     * 退出侧在获锁后会<b>重读</b>该刷新令牌下的访问令牌，把并发刷新已提交的新代际一并撤销，
+130-     * 因此「晚到刷新」不可能在退出之后留下存活令牌。
+131-     *
+132-     * <p><b>不加 DB 列</b>：代际/重放状态只存 Redis（{@link OAuth2AccessTokenRedisDAO}），避免 Flyway 迁移
+133-     * 与 ZS-DB-019.B 的 PG 回归耦合；代际登记为 best-effort，Redis 抖动不阻断合法刷新
+134-     * （令牌 DB/缓存一致性恢复归 ZS-LOGIN-005.A）。
+135-     */
+136-    @Override
+137-    @Transactional(noRollbackFor = ServiceException.class)
+138-    public OAuth2AccessTokenDO refreshAccessToken(String refreshToken, String clientId) {
+139-        // 查询刷新令牌（ZS-LOGIN-002：行锁，串行化同一会话的刷新与退出）
+140:        OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+141-        if (refreshTokenDO == null) {
+142-            // 读不到刷新令牌：可能从未存在，也可能已被并发/先行的退出删除。
+143-            // 因为处在同一锁序内，晚到的刷新在此必然读不到 → 不会复活会话。
+144-            throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "无效的刷新令牌");
+145-        }
+146-
+147-        // 校验 Client 匹配
+148-        OAuth2ClientDO clientDO = oauth2ClientService.validOAuthClientFromCache(clientId);
+149-        if (ObjectUtil.notEqual(clientId, refreshTokenDO.getClientId())) {
+150-            throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "刷新令牌的客户端编号不正确");
+151-        }
+152-
+--
+238-     * 需要额外的 accessToken → refreshToken 反查（含软删行），归 ZS-LOGIN-005.A / codex 评审决策。
+239-     */
+240-    @Override
+241-    @Transactional(rollbackFor = Exception.class)
+242-    public OAuth2AccessTokenDO removeAccessToken(String accessToken) {
+243-        // 删除访问令牌
+244-        OAuth2AccessTokenDO accessTokenDO = oauth2AccessTokenMapper.selectByAccessToken(accessToken);
+245-        if (accessTokenDO == null) {
+246-            return null;
+247-        }
+248-        // ZS-LOGIN-002：行锁 + 获锁后重读，撤销并发刷新可能已提交的新代际访问令牌
+249-        String refreshToken = accessTokenDO.getRefreshToken();
+250:        oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+251-        for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
+252-            oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+253:            revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+254-        }
+255-        // 删除刷新令牌
+256-        OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+257-        oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+258-        // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
+259-        // 撤销时同样落墓碑（TTL 取刷新令牌剩余有效期，删除前读取），堵住并发门控路径从旧 DB 快照回填复活
+260:        revokeWithTombstone(refreshToken, refreshTokenDO != null ? refreshTokenDO.getExpiresTime()
+261-                : accessTokenDO.getExpiresTime());
+262-        // ZS-LOGIN-002：会话终结，清理代际键（访问令牌侧的代际标识保留至自然过期，供审计定位）
+263-        deleteSessionGenerationQuietly(refreshToken);
+264-        return accessTokenDO;
+265-    }
+266-
+267-    /**
+268-     * ZS-LOGIN-002：按用户维度批量撤销令牌（用户被禁用/删除/改密等）。
+269-     *
+270-     * <p>与 {@link #removeAccessToken(String)} 同样遵循「先锁刷新令牌行，再撤销访问令牌」的锁序，
+271-     * 并在获锁后重读，避免与并发刷新互相复活。
+272-     *
+--
+328-        }
+329-        // ZS-LOGIN-003：refresh-token 直查补齐「孤立刷新凭据」（无 access-token 记录，反推发现不了）
+330-        int orphanCount = 0;
+331-        for (OAuth2RefreshTokenDO refreshTokenDO : refreshTokens) {
+332-            String refreshToken = refreshTokenDO.getRefreshToken();
+333-            if (StrUtil.isEmpty(refreshToken)) {
+334-                continue;
+335-            }
+336-            if (sortedRefreshTokens.add(refreshToken)) {
+337-                orphanCount++;
+338-            }
+339-        }
+340:        if (sortedRefreshTokens.isEmpty()) {
+341-            return; // 该用户无任何会话，无害空操作（不加锁、不写日志）
+342-        }
+343-        // 2. 按稳定顺序逐个锁定并撤销
+344-        for (String refreshToken : sortedRefreshTokens) {
+345-            // ZS-LOGIN-002：行锁 + 获锁后重读
+346:            oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+347-            // 找到该 refresh-token 对应的任一 access-token 作为 fallback；孤立刷新凭据没有 fallback（为 null）
+348-            OAuth2AccessTokenDO fallback = null;
+349-            for (OAuth2AccessTokenDO at : accessTokens) {
+350-                if (refreshToken.equals(at.getRefreshToken())) {
+351-                    fallback = at;
+352-                    break;
+353-                }
+354-            }
+355-            // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
+356-            for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
+357-                oauth2AccessTokenMapper.deleteById(aliveToken.getId());
+358:                revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+359-            }
+360-            // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
+361-            // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
+362:            OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+363-            // 删除刷新令牌
+364-            oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
+365-            // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
+366-            // key 即 refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时机
+367:            revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
+368-            // ZS-LOGIN-002：会话终结，清理代际键
+369-            deleteSessionGenerationQuietly(refreshToken);
+370-        }
+371-        // ZS-LOGIN-003 codex r1 P1：一并失效未消费的 OAuth2 授权码——禁用/改密前签发的 code 若残留，
+372-        // 有效期内仍可经 grantAuthorizationCodeForAccessToken 兑换出新会话（撤销后复活）
+373-        int revokedCodes = oauth2CodeMapper.deleteByUserIdAndUserType(userId, userType);
+374-        if (revokedCodes > 0 && log.isInfoEnabled()) {
+375-            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的未消费授权码已一并失效：数量({})]", userType, userId, revokedCodes);
+376-        }
+377-        // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识）
+378-        if (log.isInfoEnabled()) {
+379-            log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的全部会话已撤销：会话数({})，其中孤立刷新凭据({})]",
+--
+447-            return aliveTokens;
+448-        }
+449-        return fallback == null ? Collections.emptyList() : Collections.singletonList(fallback);
+450-    }
+451-
+452-    /**
+453-     * ZS-LOGIN-002：推进会话代际号，并把新访问令牌登记到该代际（审计可定位标识）。
+454-     *
+455-     * <p>best-effort：Redis 抖动<b>不得</b>阻断合法刷新，故整体 try/catch 降级为告警。
+456-     * 真正的重放拒绝由「刷新时撤销旧代际访问令牌（DB + Redis）」保证，与本登记无关。
+457-     * 代际状态只存 Redis、<b>不新增 DB 列</b>（避开 Flyway 迁移与 ZS-DB-019.B 耦合）。
+458-     *
+459:     * <p>ZS-LOGIN-002 P2-B（codex r0 修复）：改用毫秒精度 TTL（{@link #millisUntil}），
+460-     * 对正的亚秒剩余时间仍设有限 TTL（而非误当"无限期"），对已过期条目跳过写入。
+461-     */
+462-    private void recordSessionGeneration(OAuth2RefreshTokenDO refreshTokenDO, OAuth2AccessTokenDO accessTokenDO) {
+463-        String refreshToken = refreshTokenDO.getRefreshToken();
+464-        try {
+465-            long generation = oauth2AccessTokenRedisDAO.nextSessionGeneration(refreshToken,
+466:                    millisUntil(refreshTokenDO.getExpiresTime()));
+467-            oauth2AccessTokenRedisDAO.setAccessTokenGeneration(accessTokenDO.getAccessToken(), generation,
+468:                    millisUntil(accessTokenDO.getExpiresTime()));
+469-            if (log.isInfoEnabled()) {
+470-                log.info("[recordSessionGeneration][ZS-LOGIN-002 会话(user={}/{}, refresh={}) 刷新至代际({})，"
+471-                                + "旧代际访问令牌已撤销，新访问令牌({})]",
+472-                        refreshTokenDO.getUserType(), refreshTokenDO.getUserId(), maskToken(refreshToken),
+473-                        generation, maskToken(accessTokenDO.getAccessToken()));
+474-            }
+475-        } catch (Exception ex) {
+476-            log.warn("[recordSessionGeneration][ZS-LOGIN-002 会话(refresh={}) 代际登记失败，降级为不登记；"
+477-                    + "不影响本次刷新结果，但审计侧将缺失该代际标识]", maskToken(refreshToken), ex);
+478-        }
+479-    }
+480-
+481-    /**
+482-     * ZS-LOGIN-003 codex r1 P1：撤销缓存凭据前先落「撤销墓碑」，再删除缓存。
+483-     *
+484-     * <p>竞态背景：{@link #getAccessToken} 缓存未命中时从 DB 回源并回填缓存。若「读 DB 旧快照 →
+485-     * 本方撤销提交并删缓存 → 旧快照回填」交错，旧凭据会在 Redis 复活，后续缓存命中不再校验
+486-     * 用户状态，被禁用/删除用户的旧凭据（含 gate 开启时的合成凭据）继续有效。墓碑以
+487-     * 「查墓碑 + 写缓存」的 Lua 原子门闩拒绝该回填；TTL 取凭据剩余有效期，自清理。
+488-     */
+489:    private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
+490:        oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
+491-        oauth2AccessTokenRedisDAO.delete(token);
+492-    }
+493-
+494-    /**
+495-     * ZS-LOGIN-002：清理会话代际键（best-effort，失败只告警，不影响退出主流程）。
+496-     */
+497-    private void deleteSessionGenerationQuietly(String refreshToken) {
+498-        try {
+499-            oauth2AccessTokenRedisDAO.deleteSessionGeneration(refreshToken);
+500-        } catch (Exception ex) {
+501-            log.warn("[deleteSessionGenerationQuietly][ZS-LOGIN-002 会话(refresh={}) 代际键清理失败，"
+502-                    + "将随 TTL 自然过期]", maskToken(refreshToken), ex);
+503-        }
+504-    }
+505-
+506-    /**
+507-     * ZS-LOGIN-002 P2-B：返回到期剩余毫秒数。
+508-     * <p>返回值 <= 0 表示已过期或无到期时间（调用方应跳过写入，避免创建永不过期的键）。
+509-     * <p>相比原 {@code secondsUntil}（截断为秒、亚秒返回 0 被误当"无限期"），毫秒精度确保
+510-     * 配置 1 秒 access-token 生命周期的客户端每次刷新都得到有限 TTL 的代际键。
+511-     */
+512:    private static long millisUntil(LocalDateTime expiresTime) {
+513-        if (expiresTime == null) {
+514-            return -1L;
+515-        }
+516-        return Duration.between(LocalDateTime.now(), expiresTime).toMillis();
+517-    }
+518-
+519-    /**
+520-     * 令牌脱敏：仅保留前 8 位，避免日志泄露完整凭据。
+521-     */
+522-    private static String maskToken(String token) {
+523-        if (StrUtil.isEmpty(token)) {
+524-            return "";
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-47-      primary: master
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-48-      datasource:
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-49-        master:
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-50-          url: ${ZSZJ_APPLICATION_DEV_DATASOURCE_URL} # 目标库名以 ZS-DB-002 环境核验为准
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-51-          username: ${ZSZJ_APPLICATION_DEV_DATASOURCE_USERNAME}
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-52-          password: "${ZSZJ_APPLICATION_DEV_DATASOURCE_PASSWORD}" # 按环境注入
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-53-  # Redis 配置。Redisson 默认的配置足够使用，一般不需要进行调优
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-54-  data:
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml:55:    redis:
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-56-      host: ${ZSZJ_APPLICATION_DEV_REDIS_HOST:127.0.0.1} # 地址（上游演示地址已移除）
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-57-      port: 6379 # 端口
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-58-      database: 1 # 数据库索引
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-59-#    password: 按环境注入，勿写入演示口令
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-60-
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-61---- #################### 定时任务相关配置 ####################
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-62-
+services/zhongshu-core/zszj-server/src/main/resources/application-dev.yaml-63-# Quartz 配置项，对应 QuartzProperties 配置类
+--
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-17-      async-init: true # 单元测试，异步初始化 Druid 连接池，提升启动速度
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-18-      initial-size: 1 # 单元测试，配置为 1，提升启动速度
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-19-  sql:
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-20-    init:
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-21-      schema-locations: classpath:/sql/create_tables.sql
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-22-
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-23-  # Redis 配置。Redisson 默认的配置足够使用，一般不需要进行调优
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-24-  data:
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml:25:    redis:
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-26-      host: 127.0.0.1 # 地址
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-27-      port: 16379 # 端口（单元测试，使用 16379 端口）
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-28-      database: 0 # 数据库索引
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-29-
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-30-mybatis:
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-31-  lazy-initialization: true # 单元测试，设置 MyBatis Mapper 延迟加载，加速每个单元测试
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-32-
+services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml-33---- #################### 定时任务相关配置 ####################
+services/zhongshu-core/zszj-framework\zszj-spring-boot-starter-test\src\main\java\cn\zszj\framework\test\config\RedisTestConfiguration.java:3:import com.github.fppt.jedismock.RedisServer;
+services/zhongshu-core/zszj-framework\zszj-spring-boot-starter-test\src\main\java\cn\zszj\framework\test\config\RedisTestConfiguration.java:20:public class RedisTestConfiguration {
+services/zhongshu-core/zszj-framework\zszj-spring-boot-starter-test\pom.xml:52:            <artifactId>jedis-mock</artifactId>
+services/zhongshu-core/zszj-framework\zszj-spring-boot-starter-test\src\main\java\cn\zszj\framework\test\core\ut\BaseRedisUnitTest.java:21:public class BaseRedisUnitTest {
+services/zhongshu-core/zszj-framework\zszj-spring-boot-starter-test\src\main\java\cn\zszj\framework\test\core\ut\BaseDbAndRedisUnitTest.java:30:public class BaseDbAndRedisUnitTest {
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n -C 6 'OAuth2CodeMapper|OAuth2CodeService|@Import|@MockBean|@Transactional|testRemoveAccessTokenByUser_tombstone|seedRefreshToken|seedAccessToken' services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplOrphanRevokeTest.java; Get-ChildItem services/zhongshu-core/zszj-module-system/target -ErrorAction SilentlyContinue; rg -n 'tombstone|markRevoked|revokedCodes|deleteByUserIdAndUserType' services/zhongshu-core/zszj-module-system/src/test; rg -n -C 5 'UserType|tenant|authorizationCode|AuthorizationCode|Transactional' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/oauth2/OAuth2OpenController.java" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+65- * Redis 缓存凭据（含合成条目）与会话代际键。
+66- *
+67- * <p><b>范围边界</b>：仅技术账号闭环（B03），不涉及任职撤销（B07 / D-09 后）。
+68- *
+69- * @author ZS-LOGIN-003
+70- */
+71:@Import({OAuth2TokenServiceImpl.class, OAuth2AccessTokenRedisDAO.class})
+72-@TestPropertySource(properties = "zszj.security.refresh-token-as-access-token-enabled=false")
+73-public class OAuth2TokenServiceImplOrphanRevokeTest extends BaseDbAndRedisUnitTest {
+74-
+75-    /**
+76-     * 并发任务的硬超时（秒）：避免死锁 / 连接池耗尽时无限挂起 CI。
+77-     */
+--
+128-    @Test
+129-    public void testRemoveAccessTokenByUser_orphanRefreshToken_shouldLeaveNoResidualPrivilege() {
+130-        // 准备：只有刷新令牌，没有任何访问令牌（孤立刷新凭据）
+131-        String clientId = randomString();
+132-        Long userId = randomLongId();
+133-        mockClient(clientId, 0L);
+134:        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
+135-        String refreshToken = refreshTokenDO.getRefreshToken();
+136-        // 额外污染：LOGIN-001 兼容路径会把「合成访问令牌」写进 Redis（key = refreshToken 串）
+137-        cacheSyntheticAccessToken(refreshToken, userId, clientId);
+138-        // 额外污染：留下会话代际键
+139-        oauth2AccessTokenRedisDAO.nextSessionGeneration(refreshToken, 60_000L);
+140-        // 前置断言
+--
+168-    public void testRemoveAccessTokenByUser_orphanRefreshToken_shouldRejectSubsequentRefresh() {
+169-        // 准备
+170-        String clientId = randomString();
+171-        Long userId = randomLongId();
+172-        mockClient(clientId, 0L);
+173-        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
+174:        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
+175-        String refreshToken = refreshTokenDO.getRefreshToken();
+176-
+177-        // 调用
+178-        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+179-
+180-        // 断言：刷新被拒绝，且不产生任何访问令牌
+--
+190-    @Test
+191-    public void testRemoveAccessTokenByUser_orphanRefreshToken_shouldFailCheckAccessToken() {
+192-        // 准备
+193-        String clientId = randomString();
+194-        Long userId = randomLongId();
+195-        mockClient(clientId, 0L);
+196:        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
+197-        String refreshToken = refreshTokenDO.getRefreshToken();
+198-        cacheSyntheticAccessToken(refreshToken, userId, clientId);
+199-
+200-        // 调用
+201-        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+202-
+--
+218-        // 准备
+219-        String clientId = randomString();
+220-        Long userId = randomLongId();
+221-        mockClient(clientId, 0L);
+222-        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
+223-        // 会话 A：正常（refresh + access）
+224:        OAuth2RefreshTokenDO normalRefresh = seedRefreshToken(clientId, userId);
+225:        OAuth2AccessTokenDO normalAccess = seedAccessToken(normalRefresh.getRefreshToken(), userId, clientId);
+226-        // 会话 B：孤立（只有 refresh）
+227:        OAuth2RefreshTokenDO orphanRefresh = seedRefreshToken(clientId, userId);
+228-
+229-        // 调用
+230-        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+231-
+232-        // 断言：两个会话都被撤销
+233-        assertNull(oauth2AccessTokenMapper.selectByAccessToken(normalAccess.getAccessToken()), "正常会话的访问令牌应被撤销");
+--
+249-        // 准备
+250-        String clientId = randomString();
+251-        Long targetUserId = randomLongId();
+252-        Long otherUserId = randomLongId();
+253-        mockClient(clientId, 0L);
+254-        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
+255:        OAuth2RefreshTokenDO targetRefresh = seedRefreshToken(clientId, targetUserId);
+256:        seedAccessToken(targetRefresh.getRefreshToken(), targetUserId, clientId);
+257:        OAuth2RefreshTokenDO otherRefresh = seedRefreshToken(clientId, otherUserId);
+258:        OAuth2AccessTokenDO otherAccess = seedAccessToken(otherRefresh.getRefreshToken(), otherUserId, clientId);
+259-
+260-        // 调用
+261-        oauth2TokenService.removeAccessToken(targetUserId, UserTypeEnum.ADMIN.getValue());
+262-
+263-        // 断言：目标用户被清空，其他用户不受影响
+264-        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(targetRefresh.getRefreshToken()));
+--
+295-    public void testRemoveAccessTokenByUser_orphanRefreshToken_concurrentWithRefresh_shouldNotRevive() {
+296-        // 准备：孤立刷新凭据
+297-        String clientId = randomString();
+298-        Long userId = randomLongId();
+299-        mockClient(clientId, RACE_WINDOW_MILLIS);
+300-        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
+301:        OAuth2RefreshTokenDO refreshTokenDO = seedRefreshToken(clientId, userId);
+302-        String refreshToken = refreshTokenDO.getRefreshToken();
+303-
+304-        // 调用：撤销 与 晚到刷新 并发
+305-        List<Callable<Object>> tasks = new ArrayList<>();
+306-        tasks.add(() -> {
+307-            oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+--
+330-        // 准备：插入序 zzz → aaa，字母序 aaa → zzz
+331-        String clientId = randomString();
+332-        Long userId = randomLongId();
+333-        mockClient(clientId, 0L);
+334-        String rZzz = "zzz-" + randomString();
+335-        String rAaa = "aaa-" + randomString();
+336:        seedRefreshToken(rZzz, clientId, userId);
+337:        seedRefreshToken(rAaa, clientId, userId);
+338-
+339-        // 调用：两个并发撤销
+340-        List<Callable<Object>> tasks = new ArrayList<>();
+341-        tasks.add(() -> {
+342-            oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+343-            return null;
+--
+369-    public void testRemoveAccessTokenByUser_shouldEmitAuditLog() {
+370-        // 准备：1 个正常会话 + 1 个孤立刷新凭据
+371-        String clientId = randomString();
+372-        Long userId = randomLongId();
+373-        mockClient(clientId, 0L);
+374-        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
+375:        OAuth2RefreshTokenDO normalRefresh = seedRefreshToken(clientId, userId);
+376:        seedAccessToken(normalRefresh.getRefreshToken(), userId, clientId);
+377:        seedRefreshToken(clientId, userId);
+378-
+379-        // 调用
+380-        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+381-
+382-        // 断言：审计日志包含 ZS-LOGIN-003 标记、用户编号与撤销会话数
+383-        String auditLog = findAuditLog(userId);
+--
+406-     *
+407-     * <p>竞态：{@code getAccessToken} 缓存未命中时从 DB 回源；若「读 DB 旧快照 → 撤销提交并删缓存 →
+408-     * 旧快照回填」交错，旧凭据在 Redis 复活且后续命中不再校验用户状态。修复后撤销先落墓碑，
+409-     * {@code set()} 以「查墓碑 + 写缓存」Lua 门闩拒绝回填。
+410-     */
+411-    @Test
+412:    public void testRemoveAccessTokenByUser_tombstoneBlocksStaleSnapshotBackfill() {
+413-        // 准备
+414-        String clientId = randomString();
+415-        Long userId = randomLongId();
+416-        mockClient(clientId, 0L);
+417-        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
+418:        OAuth2RefreshTokenDO refresh = seedRefreshToken(clientId, userId);
+419:        OAuth2AccessTokenDO access = seedAccessToken(refresh.getRefreshToken(), userId, clientId);
+420-
+421-        // 撤销（写墓碑 + 删缓存 + 删 DB 行）
+422-        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+423-        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()), "撤销后缓存应被清除");
+424-
+425-        // 模拟并发鉴权遗留的旧快照回填（该快照在撤销提交前读取，仍带未过期 expiresTime）
+--
+436-    @Test
+437-    public void testAccessTokenCache_setWithoutTombstone_shouldSucceed() {
+438-        String clientId = randomString();
+439-        Long userId = randomLongId();
+440-        mockClient(clientId, 0L);
+441-        when(adminUserService.getUser(org.mockito.ArgumentMatchers.anyLong())).thenReturn(randomPojo(AdminUserDO.class));
+442:        OAuth2RefreshTokenDO refresh = seedRefreshToken(clientId, userId);
+443:        OAuth2AccessTokenDO access = seedAccessToken(refresh.getRefreshToken(), userId, clientId);
+444-
+445-        oauth2AccessTokenRedisDAO.delete(access.getAccessToken()); // 先清缓存
+446-        oauth2AccessTokenRedisDAO.set(access);                     // 无墓碑时回填
+447-
+448-        assertNotNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+449-                "无撤销墓碑时缓存回填必须正常工作");
+450-    }
+451-
+452:    private OAuth2RefreshTokenDO seedRefreshToken(String clientId, Long userId) {
+453:        return seedRefreshToken(randomString(), clientId, userId);
+454-    }
+455-
+456-    /**
+457-     * 插入一条未过期的刷新令牌（显式设置 tenantId，避免依赖 ThreadLocal 在子线程中丢失）。
+458-     */
+459:    private OAuth2RefreshTokenDO seedRefreshToken(String refreshToken, String clientId, Long userId) {
+460-        OAuth2RefreshTokenDO refreshTokenDO = randomPojo(OAuth2RefreshTokenDO.class, o -> o
+461-                .setRefreshToken(refreshToken)
+462-                .setUserId(userId)
+463-                .setUserType(UserTypeEnum.ADMIN.getValue())
+464-                .setClientId(clientId)
+465-                .setExpiresTime(LocalDateTime.now().plusDays(1))
+--
+468-        return refreshTokenDO;
+469-    }
+470-
+471-    /**
+472-     * 插入一条挂在指定刷新令牌下的有效访问令牌，并写入 Redis 缓存。
+473-     */
+474:    private OAuth2AccessTokenDO seedAccessToken(String refreshToken, Long userId, String clientId) {
+475-        OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class, o -> o
+476-                .setRefreshToken(refreshToken)
+477-                .setUserId(userId)
+478-                .setUserType(UserTypeEnum.ADMIN.getValue())
+479-                .setClientId(clientId)
+480-                .setExpiresTime(LocalDateTime.now().plusMinutes(30))
+
+
+    Ŀ¼: E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\target
+
+
+Mode                 LastWriteTime         Length Name                                                                 
+----                 -------------         ------ ----                                                                 
+d-----         2026/9/13     13:36                classes                                                              
+d-----         2026/9/13     18:10                generated-sources                                                    
+d-----         2026/9/13     18:10                generated-test-sources                                               
+d-----         2026/9/13     13:36                maven-status                                                         
+d-----         2026/9/13     14:49                surefire-reports                                                     
+d-----         2026/9/13     13:36                test-classes                                                         
+services/zhongshu-core/zszj-module-system/src/test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplOrphanRevokeTest.java:412:    public void testRemoveAccessTokenByUser_tombstoneBlocksStaleSnapshotBackfill() {
+2-
+3-import cn.hutool.core.lang.Assert;
+4-import cn.hutool.core.util.ArrayUtil;
+5-import cn.hutool.core.util.ObjectUtil;
+6-import cn.hutool.core.util.StrUtil;
+7:import cn.zszj.framework.common.enums.UserTypeEnum;
+8-import cn.zszj.framework.common.pojo.CommonResult;
+9-import cn.zszj.framework.common.util.http.HttpUtils;
+10-import cn.zszj.framework.common.util.json.JsonUtils;
+11-import cn.zszj.module.system.controller.admin.oauth2.vo.open.OAuth2OpenAccessTokenRespVO;
+12-import cn.zszj.module.system.controller.admin.oauth2.vo.open.OAuth2OpenAuthorizeInfoRespVO;
+--
+121-
+122-        // 2. 根据授权模式，获取访问令牌
+123-        OAuth2AccessTokenDO accessTokenDO;
+124-        switch (grantTypeEnum) {
+125-            case AUTHORIZATION_CODE:
+126:                accessTokenDO = oauth2GrantService.grantAuthorizationCodeForAccessToken(client.getClientId(), code, redirectUri, state);
+127-                break;
+128-            case PASSWORD:
+129-                accessTokenDO = oauth2GrantService.grantPassword(username, password, client.getClientId(), scopes);
+130-                break;
+131-            case CLIENT_CREDENTIALS:
+--
+186-        // 0. 校验用户已经登录。通过 Spring Security 实现
+187-
+188-        // 1. 获得 Client 客户端的信息
+189-        OAuth2ClientDO client = oauth2ClientService.validOAuthClientFromCache(clientId);
+190-        // 2. 获得用户已经授权的信息
+191:        List<OAuth2ApproveDO> approves = oauth2ApproveService.getApproveList(getLoginUserId(), getUserType(), clientId);
+192-        // 拼接返回
+193-        return success(OAuth2OpenConvert.INSTANCE.convert(client, approves));
+194-    }
+195-
+196-    /**
+--
+231-                grantTypeEnum.getGrantType(), scopes.keySet(), redirectUri);
+232-
+233-        // 2.1 假设 approved 为 null，说明是场景一
+234-        if (Boolean.TRUE.equals(autoApprove)) {
+235-            // 如果无法自动授权通过，则返回空 url，前端不进行跳转
+236:            if (!oauth2ApproveService.checkForPreApproval(getLoginUserId(), getUserType(), clientId, scopes.keySet())) {
+237-                return success(null);
+238-            }
+239-        } else { // 2.2 假设 approved 非 null，说明是场景二
+240-            // 如果计算后不通过，则跳转一个错误链接
+241:            if (!oauth2ApproveService.updateAfterApproval(getLoginUserId(), getUserType(), clientId, scopes)) {
+242-                return success(OAuth2Utils.buildUnsuccessfulRedirect(redirectUri, responseType, state,
+243-                        "access_denied", "User denied access"));
+244-            }
+245-        }
+246-
+247-        // 3.1 如果是 code 授权码模式，则发放 code 授权码，并重定向
+248-        List<String> approveScopes = convertList(scopes.entrySet(), Map.Entry::getKey, Map.Entry::getValue);
+249-        if (grantTypeEnum == OAuth2GrantTypeEnum.AUTHORIZATION_CODE) {
+250:            return success(getAuthorizationCodeRedirect(getLoginUserId(), client, approveScopes, redirectUri, state));
+251-        }
+252-        // 3.2 如果是 token 则是 implicit 简化模式，则发送 accessToken 访问令牌，并重定向
+253-        return success(getImplicitGrantRedirect(getLoginUserId(), client, approveScopes, redirectUri, state));
+254-    }
+255-
+--
+264-    }
+265-
+266-    private String getImplicitGrantRedirect(Long userId, OAuth2ClientDO client,
+267-                                            List<String> scopes, String redirectUri, String state) {
+268-        // 1. 创建 access token 访问令牌
+269:        OAuth2AccessTokenDO accessTokenDO = oauth2GrantService.grantImplicit(userId, getUserType(), client.getClientId(), scopes);
+270-        Assert.notNull(accessTokenDO, "访问令牌不能为空"); // 防御性检查
+271-        // 2. 拼接重定向的 URL
+272-        // noinspection unchecked
+273-        return OAuth2Utils.buildImplicitRedirectUri(redirectUri, accessTokenDO.getAccessToken(), state, accessTokenDO.getExpiresTime(),
+274-                scopes, JsonUtils.parseObject(client.getAdditionalInformation(), Map.class));
+275-    }
+276-
+277:    private String getAuthorizationCodeRedirect(Long userId, OAuth2ClientDO client,
+278-                                                List<String> scopes, String redirectUri, String state) {
+279-        // 1. 创建 code 授权码
+280:        String authorizationCode = oauth2GrantService.grantAuthorizationCodeForCode(userId, getUserType(), client.getClientId(), scopes,
+281-                redirectUri, state);
+282-        // 2. 拼接重定向的 URL
+283:        return OAuth2Utils.buildAuthorizationCodeRedirectUri(redirectUri, authorizationCode, state);
+284-    }
+285-
+286:    private Integer getUserType() {
+287:        return UserTypeEnum.ADMIN.getValue();
+288-    }
+289-
+290-    private String[] obtainBasicAuthorization(HttpServletRequest request) {
+291-        String[] clientIdAndSecret = HttpUtils.obtainBasicAuthorization(request);
+292-        if (ArrayUtil.isEmpty(clientIdAndSecret) || clientIdAndSecret.length != 2) {
+
+
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n '<testsuite |testcase name=\"testRemoveAccessTokenByUser_tombstone|testcase name=\"testGrantAuthorizationCodeForAccessToken_disabled|testcase name=\"testImportUserList_disableExisting' services/zhongshu-core/zszj-module-system/target/surefire-reports --glob '*.xml'; rg -n -C 4 'class BaseDbAndRedisUnitTest|class RedisTestConfiguration|RedisServer|@AfterEach|@BeforeEach' services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java; rg -n -C 5 'public void test|inOrder|verify|CountDownLatch|sleep' services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+rg: name=testGrantAuthorizationCodeForAccessToken_disabled|testcase name=testImportUserList_disableExisting services/zhongshu-core/zszj-module-system/target/surefire-reports --glob *.xml: IO error for operation on name=testGrantAuthorizationCodeForAccessToken_disabled|testcase name=testImportUserList_disableExisting services/zhongshu-core/zszj-module-system/target/surefire-reports --glob *.xml: 文件名、目录名或卷标语法不正确。 (os error 123)
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-1-package cn.zszj.framework.test.config;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-2-
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java:3:import com.github.fppt.jedismock.RedisServer;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-4-import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-5-import org.springframework.boot.context.properties.EnableConfigurationProperties;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-6-import org.springframework.context.annotation.Bean;
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-7-import org.springframework.context.annotation.Configuration;
+--
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-16- */
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-17-@Configuration(proxyBeanMethods = false)
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-18-@Lazy(false) // 禁止延迟加载
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-19-@EnableConfigurationProperties(RedisProperties.class)
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java:20:public class RedisTestConfiguration {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-21-
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-22-    /**
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-23-     * 创建模拟的 Redis Server 服务器
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-24-     */
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-25-    @Bean
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java:26:    public RedisServer redisServer(RedisProperties properties) throws IOException {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java:27:        RedisServer redisServer = new RedisServer(properties.getPort());
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-28-        // 一次执行多个单元测试时，貌似创建多个 spring 容器，导致不进行 stop。这样，就导致端口被占用，无法启动。。。
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-29-        try {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-30-            redisServer.start();
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/config/RedisTestConfiguration.java-31-        } catch (Exception ignore) {}
+--
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-26- */
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-27-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, classes = BaseDbAndRedisUnitTest.Application.class)
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-28-@ActiveProfiles("unit-test") // 设置使用 application-unit-test 配置文件
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-29-@Sql(scripts = "/sql/clean.sql", executionPhase = Sql.ExecutionPhase.AFTER_TEST_METHOD) // 每个单元测试结束后，清理 DB
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java:30:public class BaseDbAndRedisUnitTest {
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-31-
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-32-    @Import({
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-33-            // DB 配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-34-            ZszjDataSourceAutoConfiguration.class, // 自己的 DB 配置类
+--
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-40-            ZszjMybatisAutoConfiguration.class, // 自己的 MyBatis 配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-41-            MybatisPlusAutoConfiguration.class, // MyBatis 的自动配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-42-
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-43-            // Redis 配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java:44:            RedisTestConfiguration.class, // Redis 测试配置类，用于启动 RedisServer
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-45-            ZszjRedisAutoConfiguration.class, // 自己的 Redis 配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-46-            RedisAutoConfiguration.class, // Spring Redis 自动配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-47-            RedissonAutoConfigurationV2.class, // Redisson 自动配置类
+services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java-48-
+19-import java.util.concurrent.atomic.AtomicBoolean;
+20-
+21-import static org.junit.jupiter.api.Assertions.assertFalse;
+22-import static org.junit.jupiter.api.Assertions.assertTrue;
+23-import static org.mockito.ArgumentMatchers.anyString;
+24:import static org.mockito.Mockito.inOrder;
+25-import static org.mockito.Mockito.mock;
+26-import static org.mockito.Mockito.never;
+27-import static org.mockito.Mockito.times;
+28:import static org.mockito.Mockito.verify;
+29-import static org.mockito.Mockito.when;
+30-
+31-/**
+32- * ZS-LOGIN-003：用户维度撤销（{@code removeAccessToken(userId, userType)}）的锁序 / 去重 / 租户上下文单元测试。
+33- *
+--
+84-        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of());
+85-
+86-        service.removeAccessToken(userId, USER_TYPE);
+87-
+88-        // 断言：先锁刷新令牌行（复用 ZS-LOGIN-002 行锁，不新造锁）
+89:        verify(refreshTokenMapper, times(1)).selectByRefreshTokenForUpdate(orphan);
+90-        // 断言：刷新令牌被撤销
+91:        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
+92-        // 断言：Redis 中以 refreshToken 串为 key 的「已缓存转换凭据」被清除
+93:        verify(redisDAO, times(1)).delete(orphan);
+94-        // 断言：会话代际键被清理
+95:        verify(redisDAO, times(1)).deleteSessionGeneration(orphan);
+96-    }
+97-
+98-    /**
+99-     * 孤立刷新凭据下若被并发刷新插入了访问令牌，获锁后重读必须把它们一并撤销。
+100-     */
+--
+108-                .thenReturn(List.of(makeRefreshToken(orphan, userId)));
+109-        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of(alive));
+110-
+111-        service.removeAccessToken(userId, USER_TYPE);
+112-
+113:        verify(accessTokenMapper, times(1)).deleteById(alive.getId());
+114:        verify(redisDAO, times(1)).delete("at-alive");
+115:        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
+116:        verify(redisDAO, times(1)).delete(orphan);
+117-    }
+118-
+119-    /**
+120-     * 混合来源（access-token 反推 + refresh-token 直查）时，锁获取顺序必须仍是 refresh-token 自然序。
+121-     *
+--
+133-                .thenReturn(List.of(makeRefreshToken(rZzz, userId), makeRefreshToken(rAaa, userId)));
+134-        when(accessTokenMapper.selectListByRefreshToken(anyString())).thenReturn(List.of());
+135-
+136-        service.removeAccessToken(userId, USER_TYPE);
+137-
+138:        InOrder lockOrder = inOrder(refreshTokenMapper);
+139:        lockOrder.verify(refreshTokenMapper).selectByRefreshTokenForUpdate(rAaa);
+140:        lockOrder.verify(refreshTokenMapper).selectByRefreshTokenForUpdate(rZzz);
+141:        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(rAaa);
+142:        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(rZzz);
+143-    }
+144-
+145-    /**
+146-     * 两个来源命中同一 refresh-token 时必须去重，只加一次锁、只删一次。
+147-     */
+--
+155-                .thenReturn(List.of(makeRefreshToken(shared, userId)));
+156-        when(accessTokenMapper.selectListByRefreshToken(shared)).thenReturn(List.of());
+157-
+158-        service.removeAccessToken(userId, USER_TYPE);
+159-
+160:        verify(refreshTokenMapper, times(1)).selectByRefreshTokenForUpdate(shared);
+161:        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(shared);
+162:        verify(redisDAO, times(1)).deleteSessionGeneration(shared);
+163-    }
+164-
+165-    /**
+166-     * 两个来源都为空时，不得加任何锁（无害空操作）。
+167-     */
+--
+171-        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
+172-        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
+173-
+174-        service.removeAccessToken(userId, USER_TYPE);
+175-
+176:        verify(refreshTokenMapper, never()).selectByRefreshTokenForUpdate(anyString());
+177:        verify(refreshTokenMapper, never()).deleteByRefreshToken(anyString());
+178-    }
+179-
+180-    /**
+181-     * 撤销是安全操作，必须在「忽略租户」作用域内执行，不得被调用方 ThreadLocal 租户上下文静默收窄。
+182-     *
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n -C 4 'jedis-mock|surefire|maven.test.skip' services/zhongshu-core/pom.xml services/zhongshu-core/zszj-dependencies/pom.xml; rg -n 'OAuth2GrantService' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service; rg -n -C 4 'private .*Service|@Lazy' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/PermissionServiceImpl.java; rg -n -C 6 'CREATE TABLE.*system_oauth2_code|CREATE TABLE.*system_oauth2_refresh_token|CREATE TABLE.*system_users' services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260909.001__system_infra_baseline.sql; Get-Command java,jshell,python,mvn -ErrorAction SilentlyContinue | Select-Object Name,Source" in E:\zszj-wt-login-003
+ exited 1 in 26ms:
+
+Name       Source                               
+----       ------                               
+python.exe C:\Program Files\Python311\python.exe
+
+
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "@'
+from pathlib import Path
+import xml.etree.ElementTree as ET
+import json
+root = Path('services/zhongshu-core/zszj-module-system/target/surefire-reports')
+for p in sorted(root.glob('TEST-*.xml')):
+    if any(s in p.name for s in ('GrantServiceImplTest','OrphanRevokeTest','SessionInvalidateTest','TtlTest','LockOrderUnitTest')):
+        x=ET.parse(p).getroot()
+        print(json.dumps({'file':p.name,'suite':{k:x.get(k) for k in ('tests','errors','failures','skipped','timestamp')},'new_tests':[t.get('name') for t in x.findall('testcase') if any(s in t.get('name','') for s in ('tombstone','WithoutTombstone','disabledUser','deletedUser','ImportUserList'))]},ensure_ascii=True))
+'@ | python -" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+{"file": "TEST-cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDaoTtlTest.xml", "suite": {"tests": "4", "errors": "0", "failures": "0", "skipped": "0", "timestamp": null}, "new_tests": []}
+{"file": "TEST-cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest.xml", "suite": {"tests": "9", "errors": "0", "failures": "0", "skipped": "0", "timestamp": null}, "new_tests": ["testGrantAuthorizationCodeForAccessToken_deletedUser_shouldReject", "testGrantAuthorizationCodeForAccessToken_disabledUser_shouldReject"]}
+{"file": "TEST-cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest.xml", "suite": {"tests": "3", "errors": "0", "failures": "0", "skipped": "0", "timestamp": null}, "new_tests": []}
+{"file": "TEST-cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest.xml", "suite": {"tests": "11", "errors": "0", "failures": "0", "skipped": "0", "timestamp": null}, "new_tests": ["testRemoveAccessTokenByUser_tombstoneBlocksStaleSnapshotBackfill", "testAccessTokenCache_setWithoutTombstone_shouldSucceed"]}
+{"file": "TEST-cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.xml", "suite": {"tests": "6", "errors": "0", "failures": "0", "skipped": "0", "timestamp": null}, "new_tests": []}
+{"file": "TEST-cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest.xml", "suite": {"tests": "14", "errors": "0", "failures": "0", "skipped": "0", "timestamp": null}, "new_tests": ["testImportUserList_keepEnabledExistingUser_shouldNotRevokeSessions", "testImportUserList_disableExistingUser_shouldRevokeAllSessions"]}
+
+codex
+授权码兑换的状态检查没有与发令牌放在同一受锁事务内，仍可能在检查通过、禁用/改密提交后创建新会话。墓碑也未覆盖刷新时被删除的旧代际令牌。现有测试报告显示新增用例通过，但它们只验证顺序执行的部分路径；本轮受只读环境限制，未重新运行测试。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n -C 10 'AdminUserDO existUser|updateUser.setId|CommonStatusEnum.isDisable\\(updateUser' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java; rg -n -C 3 'consumeAuthorizationCode|getUser\\(codeDO|createAccessToken\\(codeDO|@Transactional' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java; rg -n -C 2 'expires_time|refresh_token|tenant_id' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/dataobject/oauth2/OAuth2CodeDO.java; git diff --check e7d44c34..882e0ca5" in E:\zszj-wt-login-003
+ succeeded in 0ms:
+652-            // 2.1.2 校验，判断是否有不符合的原因
+653-            try {
+654-                validateUserForCreateOrUpdate(null, null, importUser.getMobile(), importUser.getEmail(),
+655-                        importUser.getDeptId(), null);
+656-            } catch (ServiceException ex) {
+657-                respVO.getFailureUsernames().put(importUser.getUsername(), ex.getMessage());
+658-                return;
+659-            }
+660-
+661-            // 2.2.1 判断如果不存在，在进行插入
+662:            AdminUserDO existUser = userMapper.selectByUsername(importUser.getUsername());
+663-            if (existUser == null) {
+664-                userMapper.insert(BeanUtils.toBean(importUser, AdminUserDO.class)
+665-                        .setPassword(encodePassword(initPassword)).setPostIds(new HashSet<>())); // 设置默认密码及空岗位编号数组
+666-                respVO.getCreateUsernames().add(importUser.getUsername());
+667-                return;
+668-            }
+669-            // 2.2.2 如果存在，判断是否允许更新
+670-            if (!isUpdateSupport) {
+671-                respVO.getFailureUsernames().put(importUser.getUsername(), USER_USERNAME_EXISTS.getMsg());
+672-                return;
+673-            }
+674-            AdminUserDO updateUser = BeanUtils.toBean(importUser, AdminUserDO.class);
+675:            updateUser.setId(existUser.getId());
+676-            userMapper.updateById(updateUser);
+677-            // ZS-LOGIN-003 codex r1 P1：覆盖导入把已有账号置为禁用时，同事务内失效其全部登录会话——
+678-            // 此前该禁用入口未接统一撤销，旧 Access/Refresh/合成凭据在导入禁用后仍然可用
+679:            if (CommonStatusEnum.isDisable(updateUser.getStatus())
+680-                    && !CommonStatusEnum.isDisable(existUser.getStatus())) {
+681-                invalidateUserSessions(existUser.getId(), "Excel 覆盖导入禁用");
+682-            }
+683-            respVO.getUpdateUsernames().add(importUser.getUsername());
+684-        });
+685-        return respVO;
+686-    }
+687-
+688-    @Override
+689-    public List<AdminUserDO> getUserListByStatus(Integer status) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-52-    @Override
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-53-    public OAuth2AccessTokenDO grantAuthorizationCodeForAccessToken(String clientId, String code,
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-54-                                                                    String redirectUri, String state) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java:55:        OAuth2CodeDO codeDO = oauth2CodeService.consumeAuthorizationCode(code);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-56-        Assert.notNull(codeDO, "授权码不能为空"); // 防御性编程
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-57-        // 校验 clientId 是否匹配
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-58-        if (!StrUtil.equals(clientId, codeDO.getClientId())) {
+--
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-72-        // 不校验则撤销完成后仍能凭旧 code 换出可用新会话（撤销后复活）。技术账号（ADMIN）先闭环，
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-73-        // 会员（MEMBER）兑换状态校验归其模块任务。
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-74-        if (UserTypeEnum.ADMIN.getValue().equals(codeDO.getUserType())) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java:75:            AdminUserDO user = adminUserService.getUser(codeDO.getUserId());
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-76-            if (user == null || CommonStatusEnum.isDisable(user.getStatus())) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-77-                throw exception(ErrorCodeConstants.USER_NOT_EXISTS);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-78-            }
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-79-        }
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-80-
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-81-        // 创建访问令牌
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java:82:        return oauth2TokenService.createAccessToken(codeDO.getUserId(), codeDO.getUserType(),
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-83-                codeDO.getClientId(), codeDO.getScopes());
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-84-    }
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java-85-
+--
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java-44-    }
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java-45-
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java-46-    @Override
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java:47:    public OAuth2CodeDO consumeAuthorizationCode(String code) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java-48-        OAuth2CodeDO codeDO = oauth2CodeMapper.selectByCode(code);
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java-49-        if (codeDO == null) {
+services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2CodeServiceImpl.java-50-            throw exception(OAUTH2_CODE_NOT_EXISTS);
+
+codex
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java:373",
+      "issue": "授权码删除被第 340–342 行的空会话提前返回跳过。例如用户取得 code 后退出登录，再由管理员重置密码，此时没有 Access/Refresh 记录，旧 code 不会被删除；账号仍启用，兑换状态检查通过，旧凭据可重新建立会话。",
+      "suggestion": "确保无会话时也执行授权码删除；补充仅有未消费 code、无 Access/Refresh 记录的改密撤销及兑换拒绝测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java:75",
+      "issue": "账号状态检查与令牌创建没有共同事务和用户行锁。兑换可先消费 code、读到启用状态，随后禁用或改密完成撤销，最后 createAccessToken 创建新的 Access/Refresh。已消费的 code 不再能被批量删除，刷新令牌行锁也无法约束尚未创建的新会话。",
+      "suggestion": "在同一事务中取得与账号生命周期变更共用的用户行锁，然后重读并原子消费 code、校验状态、创建令牌，统一锁序。用屏障控制并发，验证撤销完成后不会遗留新会话；现有状态 mock 测试无法验证此时序。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java:358",
+      "issue": "墓碑只覆盖撤销时仍能查询到的访问令牌。refreshAccessToken 第 154–157 行删除旧令牌 A 时仍未写墓碑：鉴权先读取 A 快照，刷新删除 A 并生成 B，用户禁用再撤销 B/R，最后旧快照回填 A。Lua 只检查 A 的墓碑，因此允许回填，后续请求仍能通过鉴权。",
+      "suggestion": "刷新淘汰旧访问令牌时也按其到期时间写墓碑并删除缓存。补充“读取 A→刷新→用户撤销→回填 A”的确定性测试，并覆盖刷新令牌串作为合成凭据的回填。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:679",
+      "issue": "是否撤销依赖未加锁读取的 existUser.status。导入先读到禁用状态，并发管理员启用账号且用户成功登录，随后导入将账号重新置禁用，却因旧快照显示已禁用而跳过撤销，留下可用会话。",
+      "suggestion": "与 updateUserStatus 保持一致，只要覆盖导入写入禁用状态就撤销会话，移除旧状态条件；补充读取旧状态后并发启用并登录的测试。"
+    }
+  ]
+}
+tokens used
+70,573
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java:373",
+      "issue": "授权码删除被第 340–342 行的空会话提前返回跳过。例如用户取得 code 后退出登录，再由管理员重置密码，此时没有 Access/Refresh 记录，旧 code 不会被删除；账号仍启用，兑换状态检查通过，旧凭据可重新建立会话。",
+      "suggestion": "确保无会话时也执行授权码删除；补充仅有未消费 code、无 Access/Refresh 记录的改密撤销及兑换拒绝测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2GrantServiceImpl.java:75",
+      "issue": "账号状态检查与令牌创建没有共同事务和用户行锁。兑换可先消费 code、读到启用状态，随后禁用或改密完成撤销，最后 createAccessToken 创建新的 Access/Refresh。已消费的 code 不再能被批量删除，刷新令牌行锁也无法约束尚未创建的新会话。",
+      "suggestion": "在同一事务中取得与账号生命周期变更共用的用户行锁，然后重读并原子消费 code、校验状态、创建令牌，统一锁序。用屏障控制并发，验证撤销完成后不会遗留新会话；现有状态 mock 测试无法验证此时序。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java:358",
+      "issue": "墓碑只覆盖撤销时仍能查询到的访问令牌。refreshAccessToken 第 154–157 行删除旧令牌 A 时仍未写墓碑：鉴权先读取 A 快照，刷新删除 A 并生成 B，用户禁用再撤销 B/R，最后旧快照回填 A。Lua 只检查 A 的墓碑，因此允许回填，后续请求仍能通过鉴权。",
+      "suggestion": "刷新淘汰旧访问令牌时也按其到期时间写墓碑并删除缓存。补充“读取 A→刷新→用户撤销→回填 A”的确定性测试，并覆盖刷新令牌串作为合成凭据的回填。"
+    },
+    {
+      "severity": "P1",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/user/AdminUserServiceImpl.java:679",
+      "issue": "是否撤销依赖未加锁读取的 existUser.status。导入先读到禁用状态，并发管理员启用账号且用户成功登录，随后导入将账号重新置禁用，却因旧快照显示已禁用而跳过撤销，留下可用会话。",
+      "suggestion": "与 updateUserStatus 保持一致，只要覆盖导入写入禁用状态就撤销会话，移除旧状态条件；补充读取旧状态后并发启用并登录的测试。"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< cn.zszj:zszj-module-system >---------------------
+[INFO] Building zszj-module-system 2026.08-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (enforce-jdk17-baseline) @ zszj-module-system ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ zszj-module-system ---
+[INFO] Copying 37 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- flatten:1.7.2:flatten (flatten) @ zszj-module-system ---
+[INFO] Generating flattened POM of project cn.zszj:zszj-module-system:jar:2026.08-SNAPSHOT...
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ zszj-module-system ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 421 source files with javac [target 17] to target\classes
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/framework/justauth/core/AuthRequestFactory.java: E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\framework\justauth\core\AuthRequestFactory.java使用或覆盖了已过时的 API。
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/framework/justauth/core/AuthRequestFactory.java: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/oauth2/OAuth2OpenController.java: E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2OpenController.java使用了未经检查或不安全的操作。
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/oauth2/OAuth2OpenController.java: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+[INFO] -------------------------------------------------------------
+[WARNING] COMPILATION WARNING : 
+[INFO] -------------------------------------------------------------
+[WARNING] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/convert/auth/AuthConvert.java:[82,26] Unmapped target property: "socialType".
+[WARNING] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/convert/auth/AuthConvert.java:[84,23] Unmapped target property: "createIp".
+[INFO] 2 warnings 
+[INFO] -------------------------------------------------------------
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java:[393,13] 已在方法 doRemoveAccessTokenByUser(java.lang.Long,java.lang.Integer)中定义了变量 revokedCodes
+[INFO] 1 error
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  9.572 s
+[INFO] Finished at: 2026-09-13T18:21:06+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.14.0:compile (default-compile) on project zszj-module-system: Compilation failure
+[ERROR] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java:[393,13] 已在方法 doRemoveAccessTokenByUser(java.lang.Long,java.lang.Integer)中定义了变量 revokedCodes
+[ERROR] 
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

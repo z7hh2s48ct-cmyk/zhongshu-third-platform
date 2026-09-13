@@ -1,0 +1,91 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< cn.zszj:zszj-module-system >---------------------
+[INFO] Building zszj-module-system 2026.08-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (enforce-jdk17-baseline) @ zszj-module-system ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ zszj-module-system ---
+[INFO] Copying 37 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- flatten:1.7.2:flatten (flatten) @ zszj-module-system ---
+[INFO] Generating flattened POM of project cn.zszj:zszj-module-system:jar:2026.08-SNAPSHOT...
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ zszj-module-system ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 421 source files with javac [target 17] to target\classes
+[WARNING] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/convert/auth/AuthConvert.java:[82,26] Unmapped target property: "socialType".
+[WARNING] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/convert/auth/AuthConvert.java:[84,23] Unmapped target property: "createIp".
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/framework/justauth/core/AuthRequestFactory.java: E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\framework\justauth\core\AuthRequestFactory.java使用或覆盖了已过时的 API。
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/framework/justauth/core/AuthRequestFactory.java: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/oauth2/OAuth2OpenController.java: E:\zszj-wt-login-003\services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\controller\admin\oauth2\OAuth2OpenController.java使用了未经检查或不安全的操作。
+[INFO] /E:/zszj-wt-login-003/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/oauth2/OAuth2OpenController.java: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ zszj-module-system ---
+[INFO] Copying 4 resources from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.14.0:testCompile (default-testCompile) @ zszj-module-system ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 64 source files with javac [target 17] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.3:test (default-test) @ zszj-module-system ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2CodeServiceImplTest
+18:11:01,036 |-WARN in Logger[org.jboss.logging] - No appenders present in context [default] for logger [org.jboss.logging].
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.588 s -- in cn.zszj.module.system.service.oauth2.OAuth2CodeServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.528 s -- in cn.zszj.module.system.service.oauth2.OAuth2GrantServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.346 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchLockOrderUnitTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchRevokeLockOrderTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.044 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplBatchRevokeLockOrderTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplCompatTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.399 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplCompatTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.511 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplOrphanRevokeTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplRefreshConcurrencyTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.817 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplRefreshConcurrencyTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplSyntheticCredentialRevokeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.055 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplSyntheticCredentialRevokeTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.251 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplTest
+[INFO] Running cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in cn.zszj.module.system.service.oauth2.OAuth2TokenServiceImplUserRevokeLockOrderUnitTest
+[INFO] Running cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        null 
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.019 s -- in cn.zszj.module.system.service.user.AdminUserServiceImplSessionInvalidateTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 78, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  21.314 s
+[INFO] Finished at: 2026-09-13T18:11:09+08:00
+[INFO] ------------------------------------------------------------------------

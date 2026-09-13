@@ -1,0 +1,904 @@
+Reading additional input from stdin...
+OpenAI Codex v0.154.0
+--------
+workdir: E:\zszj-wt-login-005-a
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a09ac7-4291-7da3-b1c6-dba576c27bbe
+--------
+user
+ZS-LOGIN-005.A 第 3 轮评审（收敛验证）：r1 的 2×P2+P3 已修复：①checkAccessToken count=0 自愈改用 revokeWithTombstone（墓碑/删除各自容错）；②失效与发布统一注册到 afterCompletion 单次执行（COMMITTED→失效/发布，否则→保守清理；消除 afterCommit+afterCompletion 双跑）；③新增 3 测试：长事务内 T2 他连接撤销后 T1 重核验拒绝（flushCache 绕一级缓存）、前序 afterCommit 回调异常后 afterCompletion 兜底仍失效、墓碑失败不中断删缓存与后续步骤。请 git diff b155d307..HEAD 验证修复正确、无新引入风险（afterCompletion 时序：连接已释放后执行 Redis 操作的影响、幂等性、测试真实性），输出 JSON：{"verdict":"PASS|FAIL","findings":[]}。
+2026-09-13T12:39:10.102853Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit
+codex
+我会检查指定范围的差异、事务回调时序和新增测试，重点验证兜底、幂等性及并发测试是否覆盖真实路径。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git status --short; git diff --stat b155d307..HEAD; rg --files -g AGENTS.md' in E:\zszj-wt-login-005-a
+ exited 1 in 46ms:
+ .../service/oauth2/OAuth2TokenServiceImpl.java     | 29 ++++---
+ .../OAuth2TokenServiceImplAuthorityUnitTest.java   | 19 +++++
+ ...OAuth2TokenServiceImplCacheConsistencyTest.java | 88 ++++++++++++++++++++++
+ 3 files changed, 120 insertions(+), 16 deletions(-)
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "git diff b155d307..HEAD; rg --files -g pom.xml -g '*OAuth2TokenServiceImpl*' -g '*OAuth2AccessTokenMapper*' -g '*OAuth2AccessTokenRedisDAO*' -g '*OAuth2RefreshTokenMapper*'" in E:\zszj-wt-login-005-a
+ succeeded in 0ms:
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
+index f10a0735..365044e8 100644
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java
+@@ -242,8 +242,9 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+                     ? oauth2RefreshTokenMapper.selectAuthorityCountByRefreshToken(accessToken)
+                     : oauth2AccessTokenMapper.selectAuthorityCountByAccessToken(accessToken);
+             if (count <= 0) {
+-                oauth2AccessTokenRedisDAO.markRevoked(accessToken, millisUntil(accessTokenDO.getExpiresTime()));
+-                oauth2AccessTokenRedisDAO.delete(accessToken);
++                // 自愈复用 revokeWithTombstone（墓碑/删除各自容错，codex r1 P2：避免墓碑失败中断删除、
++                // Redis 异常被误记为 DB 核验异常）；随后仍按 401 拒绝
++                revokeWithTombstone(accessToken, accessTokenDO.getExpiresTime());
+                 throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌不存在");
+             }
+         } catch (ServiceException ex) {
+@@ -580,15 +581,13 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+             }
+         };
+         if (TransactionSynchronizationManager.isSynchronizationActive()) {
++            // ZS-LOGIN-005.A codex r1 P3：单次执行于事务结束后（afterCompletion 覆盖全部结束状态）——
++            // COMMITTED 即「提交后失效」；ROLLED_BACK / STATUS_UNKNOWN 为幂等兜底（回滚补偿 +
++            // 前序同步回调异常跳过 afterCommit 的情形一并覆盖），且避免 afterCommit+afterCompletion 双跑翻倍
+             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+-                @Override
+-                public void afterCommit() {
+-                    safeAll.run();
+-                }
+-
+                 @Override
+                 public void afterCompletion(int status) {
+-                    safeAll.run(); // 幂等兜底：回滚 / STATUS_UNKNOWN / afterCommit 被前序回调异常跳过
++                    safeAll.run();
+                 }
+             });
+         } else {
+@@ -610,17 +609,15 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
+             }
+         };
+         if (TransactionSynchronizationManager.isSynchronizationActive()) {
++            // ZS-LOGIN-005.A：与失效动作一致，单次执行于事务结束后——COMMITTED 才发布；
++            // ROLLED_BACK / STATUS_UNKNOWN（提交/回滚异常）按保守清理处理：误清缓存只损失可用性
++            // （miss 回源重建），残留幽灵发布则是安全缺口
+             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+-                @Override
+-                public void afterCommit() {
+-                    safePublish.run();
+-                }
+-
+                 @Override
+                 public void afterCompletion(int status) {
+-                    // ZS-LOGIN-005.A codex r0 P2：STATUS_UNKNOWN（提交/回滚异常）按保守清理处理——
+-                    // 误清缓存只损失可用性（miss 回源重建），残留幽灵发布则是安全缺口
+-                    if (status != TransactionSynchronization.STATUS_COMMITTED) {
++                    if (status == TransactionSynchronization.STATUS_COMMITTED) {
++                        safePublish.run();
++                    } else {
+                         try {
+                             rollbackCleanup.run();
+                         } catch (Exception ex) {
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplAuthorityUnitTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplAuthorityUnitTest.java
+index c21baa8d..6f5fbd4f 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplAuthorityUnitTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplAuthorityUnitTest.java
+@@ -117,6 +117,25 @@ public class OAuth2TokenServiceImplAuthorityUnitTest {
+         verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
+     }
+ 
++    @Test
++    void batchRevoke_tombstoneFails_deleteAndLaterStepsStillRun() {
++        // codex r1 P2：墓碑写入失败后，删缓存与后续步骤（代际键清理）必须继续执行——逐项隔离
++        Long userId = 480L;
++        String orphan = "fff-orphan-refresh";
++        when(accessTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()))
++                .thenReturn(List.of());
++        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, UserTypeEnum.ADMIN.getValue()))
++                .thenReturn(List.of(makeRefreshToken(orphan, userId)));
++        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of());
++        doThrow(new RuntimeException("tombstone down")).when(redisDAO).markRevoked(anyString(), anyLong());
++
++        assertDoesNotThrow(() -> service.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue()));
++
++        verify(redisDAO, times(1)).delete(orphan); // 墓碑失败不中断删缓存
++        verify(redisDAO, times(1)).deleteSessionGeneration(orphan); // 后续步骤继续
++        verify(refreshTokenMapper, times(1)).deleteByRefreshToken(orphan);
++    }
++
+     private static cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO makeRefreshToken(
+             String refreshToken, Long userId) {
+         cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO rt =
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java
+index 1becbb9f..57976c1d 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java
+@@ -32,6 +32,7 @@ import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
+ import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
+ import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
+ import static org.mockito.ArgumentMatchers.anyLong;
+ import static org.mockito.Mockito.when;
+ 
+@@ -241,4 +242,91 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
+         assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
+                 "回滚补偿仍须清缓存（miss 回源重建，避免撤销态不一致）");
+     }
++
++    // ========== ④ codex r1：前序同步回调异常跳过 afterCommit 后，事务结束兜底仍完成失效 ==========
++
++    /**
++     * 前序同步回调在 afterCommit 抛异常会跳过同事务内后续 afterCommit 回调；
++     * afterCompletion 兜底必须仍完成缓存失效（修复前若只挂 afterCommit 则失效被跳过）。
++     */
++    @Test
++    public void testRemoveAccessTokenByUser_priorCallbackThrows_fallbackStillInvalidates() {
++        String clientId = randomString();
++        mockClient(clientId);
++        Long userId = randomLongId();
++        OAuth2AccessTokenDO access = seedSession(clientId, userId);
++        assertNotNull(oauth2TokenService.getAccessToken(access.getAccessToken()), "前置：预热缓存条目存在");
++
++        try {
++            transactionTemplate.executeWithoutResult(status -> {
++                // 故意先注册一个 afterCommit 抛异常的同步回调（先于 service 内部注册的回调执行）
++                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
++                        new org.springframework.transaction.support.TransactionSynchronization() {
++                            @Override
++                            public void afterCommit() {
++                                throw new RuntimeException("前序回调异常");
++                            }
++                        });
++                oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
++            });
++        } catch (RuntimeException ignored) {
++            // Spring 语义：afterCommit 回调异常在事务已提交后向外传播；事务仍已提交，afterCompletion 仍会执行
++        }
++
++        assertNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
++                "前序 afterCommit 异常跳过后，事务结束兜底必须仍完成缓存失效");
++    }
++
++    // ========== ⑤ codex r1：flushCache 权威核验绕开 MyBatis SESSION 一级缓存旧快照 ==========
++
++    /**
++     * 长事务内（同 - SqlSession 复用）：T1 首次权威核验通过后，T2 在另一连接撤销并提交，
++     * T1 再次核验必须拒绝——普通 select 会命中一级缓存旧快照放行，flushCache=TRUE count 必须回源。
++     */
++    @Test
++    public void testCheckAccessToken_withinOpenTx_recheckAfterExternalRevoke_rejects() throws Exception {
++        String clientId = randomString();
++        mockClient(clientId);
++        Long userId = randomLongId();
++        OAuth2AccessTokenDO access = seedSession(clientId, userId);
++        assertNotNull(oauth2TokenService.getAccessToken(access.getAccessToken()), "前置：预热缓存条目存在");
++
++        java.util.concurrent.CountDownLatch t1Checked = new java.util.concurrent.CountDownLatch(1);
++        java.util.concurrent.CountDownLatch t2Committed = new java.util.concurrent.CountDownLatch(1);
++        AtomicReference<Throwable> t2Error = new AtomicReference<>();
++
++        Thread t2 = new Thread(() -> {
++            try {
++                assertTrue(t1Checked.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T1 首次核验超时");
++                transactionTemplate.executeWithoutResult(status ->
++                        oauth2TokenService.removeAccessToken(access.getAccessToken()));
++            } catch (Throwable ex) {
++                t2Error.set(ex);
++            } finally {
++                t2Committed.countDown();
++            }
++        });
++        t2.start();
++
++        transactionTemplate.executeWithoutResult(status -> {
++            try {
++                // T1 首次核验：行存在，通过
++                oauth2TokenService.checkAccessToken(access.getAccessToken());
++            } catch (Exception ex) {
++                throw new RuntimeException("T1 首次核验不应失败", ex);
++            }
++            t1Checked.countDown();
++            try {
++                assertTrue(t2Committed.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T2 撤销提交超时");
++            } catch (InterruptedException ex) {
++                Thread.currentThread().interrupt();
++                throw new RuntimeException(ex);
++            }
++            // T1 同事务内再次核验：T2 已在另一连接撤销并提交——flushCache=TRUE 必须回源拒绝
++            assertServiceException(() -> oauth2TokenService.checkAccessToken(access.getAccessToken()),
++                    new ErrorCode(401, "访问令牌不存在"));
++        });
++
++        assertNull(t2Error.get(), "T2 撤销不得失败: " + t2Error.get());
++    }
+ }
+services\zhongshu-core\pom.xml
+services\zhongshu-core\zszj-server\pom.xml
+reference\donors\zhongshu-design\yudao-server\pom.xml
+reference\donors\zhongshu-design\pom.xml
+reference\donors\zhongshu-design\yudao-module-commerce\pom.xml
+reference\donors\zhongshu-design\yudao-module-identity\pom.xml
+reference\donors\zhongshu-design\yudao-module-design\pom.xml
+services\zhongshu-core\zszj-module-mp\pom.xml
+reference\donors\zhongshu-design\yudao-module-ai-orchestration\pom.xml
+services\zhongshu-core\zszj-module-crm\pom.xml
+services\zhongshu-core\zszj-dependencies\pom.xml
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplUserRevokeLockOrderUnitTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplSyntheticCredentialRevokeTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplRefreshConcurrencyTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplOrphanRevokeTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplCompatTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplCacheConsistencyTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplCacheConsistencyGateOnTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplBatchRevokeLockOrderTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplBatchLockOrderUnitTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImplAuthorityUnitTest.java
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-gateway\pom.xml
+services\zhongshu-core\zszj-module-erp\pom.xml
+services\zhongshu-core\zszj-module-wms\pom.xml
+services\zhongshu-core\zszj-module-ai\pom.xml
+services\zhongshu-core\zszj-module-pms\pom.xml
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\oauth2\OAuth2TokenServiceImpl.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-websocket\pom.xml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-core\pom.xml
+services\zhongshu-core\zszj-module-bpm\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\pom.xml
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\redis\oauth2\OAuth2AccessTokenRedisDAO.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-test\pom.xml
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2RefreshTokenMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\oauth2\OAuth2AccessTokenMapper.java
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-biz\pom.xml
+services\zhongshu-core\zszj-module-iot\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-security\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-redis\pom.xml
+services\zhongshu-core\zszj-module-pay\pom.xml
+services\zhongshu-core\zszj-module-im\pom.xml
+services\zhongshu-core\zszj-module-system\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-monitor\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-protection\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-job\pom.xml
+services\zhongshu-core\zszj-module-infra\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-mybatis\pom.xml
+services\zhongshu-core\zszj-module-report\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-excel\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-mq\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-data-permission\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\pom.xml
+services\zhongshu-core\zszj-module-mes\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-ip\pom.xml
+services\zhongshu-core\zszj-framework\zszj-common\pom.xml
+services\zhongshu-core\zszj-framework\pom.xml
+services\zhongshu-core\zszj-module-hrm\pom.xml
+services\zhongshu-core\zszj-module-member\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-promotion\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-product\pom.xml
+services\zhongshu-core\zszj-module-mall\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-trade-api\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-statistics\pom.xml
+services\zhongshu-core\zszj-module-fms\pom.xml
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Content services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java' in E:\zszj-wt-login-005-a
+ succeeded in 7ms:
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Content -Encoding utf8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/redis/oauth2/OAuth2AccessTokenRedisDAO.java; Get-Content -Encoding utf8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2AccessTokenMapper.java; Get-Content -Encoding utf8 services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/oauth2/OAuth2RefreshTokenMapper.java' in E:\zszj-wt-login-005-a
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -Encoding utf8 services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java; Get-Content -Encoding utf8 services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplAuthorityUnitTest.java; rg -n 'enableTransactionSupport|setEnableTransactionSupport|transaction-isolation|isolation:|class BaseDbAndRedis|class BaseRedis|spring-boot.version|spring.version' services/zhongshu-core" in E:\zszj-wt-login-005-a
+ succeeded in 0ms:
+package cn.zszj.module.system.dal.redis.oauth2;
+
+import cn.hutool.core.date.LocalDateTimeUtil;
+import cn.zszj.framework.common.util.collection.CollectionUtils;
+import cn.zszj.framework.common.util.json.JsonUtils;
+import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.stereotype.Repository;
+
+import jakarta.annotation.Resource;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_SESSION_GENERATION;
+import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE;
+import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_ACCESS_TOKEN;
+import static cn.zszj.module.system.dal.redis.RedisKeyConstants.OAUTH2_REFRESH_SESSION_GENERATION;
+
+/**
+ * {@link OAuth2AccessTokenDO} �� RedisDAO
+ *
+ * @author ���Դ��
+ */
+@Repository
+public class OAuth2AccessTokenRedisDAO {
+
+    /**
+     * ZS-LOGIN-003 codex r1 P1������д��ĳ������š���Ĺ��������ܾ����
+     * Lua ��֤����Ĺ�� + д���桹ԭ�ӣ���ס������ DB ���� �� �����ύɾ���� �� �ɿ��ջ�����̬��
+     */
+    private static final DefaultRedisScript<Long> SET_IF_NOT_REVOKED_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end "
+                    + "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1", Long.class);
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    public OAuth2AccessTokenDO get(String accessToken) {
+        String redisKey = formatKey(accessToken);
+        return JsonUtils.parseObject(stringRedisTemplate.opsForValue().get(redisKey), OAuth2AccessTokenDO.class);
+    }
+
+    public void set(OAuth2AccessTokenDO accessTokenDO) {
+        String redisKey = formatKey(accessTokenDO.getAccessToken());
+        // ���������ֶΣ����⻺��
+        accessTokenDO.setUpdater(null).setUpdateTime(null).setCreateTime(null).setCreator(null).setDeleted(null);
+        long time = LocalDateTimeUtil.between(LocalDateTime.now(), accessTokenDO.getExpiresTime(), ChronoUnit.SECONDS);
+        if (time > 0) {
+            // ZS-LOGIN-003 codex r1 P1��Ĺ�����ڣ���ƾ�ݴ��ѱ���������ܾ������ֹ�ɿ��ո����ѳ����Ự
+            stringRedisTemplate.execute(SET_IF_NOT_REVOKED_SCRIPT,
+                    java.util.Arrays.asList(redisKey, formatTombstoneKey(accessTokenDO.getAccessToken())),
+                    JsonUtils.toJsonString(accessTokenDO), String.valueOf(time));
+        }
+    }
+
+    /**
+     * ZS-LOGIN-003 codex r1 P1��д�볷��Ĺ����SETNX ���壩�����������Ը�ƾ�ݴ����κλ�����
+     *
+     * @param token     ��������ƾ�ݴ����������ƴ�����䵱�ϳ�ƾ�� key ��ˢ�����ƴ���
+     * @param ttlMillis Ĺ������������ȡ������ƾ�ݵ�ʣ����Ч�ڣ�<= 0���ѹ��ڣ�����Ĺ��
+     */
+    public void markRevoked(String token, long ttlMillis) {
+        if (ttlMillis <= 0) {
+            return; // �ѹ���ƾ�ݲ������������Ĺ��
+        }
+        stringRedisTemplate.opsForValue().setIfAbsent(formatTombstoneKey(token), "1", ttlMillis, TimeUnit.MILLISECONDS);
+    }
+
+    public void delete(String accessToken) {
+        String redisKey = formatKey(accessToken);
+        stringRedisTemplate.delete(redisKey);
+    }
+
+    public void deleteList(Collection<String> accessTokens) {
+        List<String> redisKeys = CollectionUtils.convertList(accessTokens, OAuth2AccessTokenRedisDAO::formatKey);
+        stringRedisTemplate.delete(redisKeys);
+    }
+
+    // ========== ZS-LOGIN-002���Ự���ʣ�session generation���Ǽ� ==========
+    //
+    // ���ȡ�ᣨ�������ƻ� ��3.3 �롸DB �ֶα����ʾ������������ˢ�²��á�����ԭ refresh token + �Ự���ʺ� + �طż�⡹��
+    // ����/�ط�״̬<b>ֻ�� Redis</b>�������� DB �У������� ZS-DB-019.B �� PG �ع鼰 Flyway Ǩ�Ʋ�����ϡ�
+    // ���ʵǼ��ǡ���ƿɶ�λ���롸�طſɱ�ʶ���ĸ����㣻�������طžܾ���ˢ��ʱɾ���ɷ������ƣ�DB + Redis����֤��
+    // ������з�����Ϊ best-effort�����÷��������ݴ���Redis ����������ϺϷ�ˢ�£�һ���Իָ��� ZS-LOGIN-005.A����
+
+    /**
+     * ԭ���ƽ��Ự���ʺţ��������´��ʡ�
+     *
+     * <p>ZS-LOGIN-002 P2-B��codex r0 �޸�����������Ϊ���뾫�� TTL��
+     * ����������ʣ��ʱ���������� TTL�����뼶�������ѹ��ڣ�<= 0�������ƽ���
+     * ���ⴴ���������ڵĴ��ʼ���ԭʵ�� ttlSeconds==0 ʱ���� EXPIRE �� ���ü�й©����
+     *
+     * @param refreshToken ˢ�����ƣ��Ự��ʶ�����ò��ֻ����ʿ����Ự������
+     * @param ttlMillis    ���ʼ��Ĵ���������һ��ȡˢ������ʣ����Ч�ڣ�<= 0 ʱ�����ƽ����ѹ��ڣ�
+     * @return �´��ʺţ��� 1 ��ʼ�������������������򷵻� 0
+     */
+    public long nextSessionGeneration(String refreshToken, long ttlMillis) {
+        if (ttlMillis <= 0) {
+            // ZS-LOGIN-002 P2-B���ѹ��ڻ���ʣ��ʱ�䣬���ƽ����ʣ����ⴴ�����ü���
+            return 0L;
+        }
+        String redisKey = formatSessionGenerationKey(refreshToken);
+        Long generation = stringRedisTemplate.opsForValue().increment(redisKey);
+        if (generation != null) {
+            stringRedisTemplate.expire(redisKey, ttlMillis, TimeUnit.MILLISECONDS);
+        }
+        return generation == null ? 0L : generation;
+    }
+
+    /**
+     * ��ûỰ��ǰ���ʺţ�������ʱ���� {@code null}������Ự���˳�������ʼ��ѹ��ڣ���
+     */
+    public Long getSessionGeneration(String refreshToken) {
+        return parseGeneration(stringRedisTemplate.opsForValue().get(formatSessionGenerationKey(refreshToken)));
+    }
+
+    /**
+     * �ǼǷ������������ĻỰ���ʣ���Ϊ���ɶ�λ�ĻỰ���ʡ���Ʊ�ʶ��
+     *
+     * <p>ZS-LOGIN-002 P2-B��codex r0 �޸�����������Ϊ���뾫�� TTL��
+     * ����������ʣ��ʱ��ʹ�ú��� TTL ������������"������"д���ü�����
+     * ���ѹ�����Ŀ��<= 0������д�롣access-generation ���ڵǳ�ʱ���ⲻɾ��
+     * �ʱ���ȷ��ÿ������������ TTL������������ۻ���
+     *
+     * @param accessToken ��������
+     * @param generation  �������ʺ�
+     * @param ttlMillis   ����������һ��ȡ��������ʣ����Ч�ڣ�<= 0 ʱ����д�루�ѹ��ڣ�
+     */
+    public void setAccessTokenGeneration(String accessToken, long generation, long ttlMillis) {
+        if (ttlMillis <= 0) {
+            // ZS-LOGIN-002 P2-B���ѹ��ڣ�����д�룬���ⴴ���������ڵ� access-generation ��
+            return;
+        }
+        String redisKey = formatAccessGenerationKey(accessToken);
+        stringRedisTemplate.opsForValue().set(redisKey, String.valueOf(generation), ttlMillis, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * ����������������ĻỰ���ʣ�������ʱ���� {@code null}��
+     * <p>ע�⣺�ɴ��ʷ������Ʊ�ˢ��ȡ���󣬱���ʶ<b>�Ա�������Ȼ����</b>���Ա���ƶ�λ��ĳ�������ڵڼ����Ự����
+     */
+    public Long getAccessTokenGeneration(String accessToken) {
+        return parseGeneration(stringRedisTemplate.opsForValue().get(formatAccessGenerationKey(accessToken)));
+    }
+
+    /**
+     * �����Ự���ʼ����Ự�˳�ʱ���ã����������Ʋ�Ĵ��ʱ�ʶ��������Ȼ���ڣ�����ƶ�λ��
+     */
+    public void deleteSessionGeneration(String refreshToken) {
+        stringRedisTemplate.delete(formatSessionGenerationKey(refreshToken));
+    }
+
+    private static Long parseGeneration(String value) {
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        try {
+            return Long.valueOf(value);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static String formatKey(String accessToken) {
+        return String.format(OAUTH2_ACCESS_TOKEN, accessToken);
+    }
+
+    private static String formatTombstoneKey(String token) {
+        return String.format(OAUTH2_ACCESS_TOKEN_REVOKE_TOMBSTONE, token);
+    }
+
+    private static String formatSessionGenerationKey(String refreshToken) {
+        return String.format(OAUTH2_REFRESH_SESSION_GENERATION, refreshToken);
+    }
+
+    private static String formatAccessGenerationKey(String accessToken) {
+        return String.format(OAUTH2_ACCESS_SESSION_GENERATION, accessToken);
+    }
+
+}
+package cn.zszj.module.system.dal.mysql.oauth2;
+
+import cn.zszj.framework.common.pojo.PageResult;
+import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
+import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenPageReqVO;
+import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
+import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Mapper
+public interface OAuth2AccessTokenMapper extends BaseMapperX<OAuth2AccessTokenDO> {
+
+    /**
+     * ZS-LOGIN-005.A����ȨȨ�������Ժ��顪��{@code flushCache=TRUE} ǿ�ƻ�Դ���ƹ� MyBatis SESSION
+     * һ�����棨�������ڸ��� SqlSession ���������ǰ�ľɿ��գ��������⻧����ȨȨ�����⻧����
+     * ��ͳ��δɾ���У��߼�ɾ�����ѳ�������
+     */
+    @TenantIgnore
+    @Select("SELECT COUNT(1) FROM system_oauth2_access_token WHERE access_token = #{accessToken} AND deleted = 0")
+    @Options(flushCache = Options.FlushCachePolicy.TRUE)
+    int selectAuthorityCountByAccessToken(@Param("accessToken") String accessToken);
+
+    @TenantIgnore // ��ȡ token ��ʱ����Ҫ�����⻧��š�ԭ���ǣ�һЩ�����£����ܲ��ᴫ�� tenant-id ����ͷ������˵�ļ��ϴ�����ľ�����ȵ�
+    default OAuth2AccessTokenDO selectByAccessToken(String accessToken) {
+        return selectOne(OAuth2AccessTokenDO::getAccessToken, accessToken);
+    }
+
+    default List<OAuth2AccessTokenDO> selectListByRefreshToken(String refreshToken) {
+        return selectList(OAuth2AccessTokenDO::getRefreshToken, refreshToken);
+    }
+
+    default PageResult<OAuth2AccessTokenDO> selectPage(OAuth2AccessTokenPageReqVO reqVO) {
+        return selectPage(reqVO, new LambdaQueryWrapperX<OAuth2AccessTokenDO>()
+                .eqIfPresent(OAuth2AccessTokenDO::getUserId, reqVO.getUserId())
+                .eqIfPresent(OAuth2AccessTokenDO::getUserType, reqVO.getUserType())
+                .likeIfPresent(OAuth2AccessTokenDO::getClientId, reqVO.getClientId())
+                .gt(OAuth2AccessTokenDO::getExpiresTime, LocalDateTime.now())
+                .orderByDesc(OAuth2AccessTokenDO::getId));
+    }
+
+    default List<OAuth2AccessTokenDO> selectListByUserIdAndUserType(Long userId, Integer userType) {
+        return selectList(OAuth2AccessTokenDO::getUserId, userId,
+                OAuth2AccessTokenDO::getUserType, userType);
+    }
+
+    /**
+     * ����ɾ��ָ������ʱ��֮ǰ�ķ�������
+     *
+     * @param expiresTime ���ʱ��
+     * @param limit       ɾ����������ֹһ��ɾ��̫��
+     * @return ɾ������
+     */
+    @Delete("DELETE FROM system_oauth2_access_token WHERE id IN (SELECT id FROM system_oauth2_access_token WHERE expires_time < #{expiresTime} LIMIT #{limit})")
+    Integer deleteByExpiresTimeLt(@Param("expiresTime") LocalDateTime expiresTime, @Param("limit") Integer limit);
+
+}
+package cn.zszj.module.system.dal.mysql.oauth2;
+
+import cn.hutool.core.collection.CollUtil;
+import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
+import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+import cn.zszj.framework.tenant.core.aop.TenantIgnore;
+import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Mapper
+public interface OAuth2RefreshTokenMapper extends BaseMapperX<OAuth2RefreshTokenDO> {
+
+    default int deleteByRefreshToken(String refreshToken) {
+        return delete(new LambdaQueryWrapperX<OAuth2RefreshTokenDO>()
+                .eq(OAuth2RefreshTokenDO::getRefreshToken, refreshToken));
+    }
+
+    @TenantIgnore // ��ȡ token ��ʱ����Ҫ�����⻧��š�ԭ���ǣ�һЩ�����£����ܲ��ᴫ�� tenant-id ����ͷ������˵�ļ��ϴ�����ľ�����ȵ�
+    default OAuth2RefreshTokenDO selectByRefreshToken(String refreshToken) {
+        return selectOne(OAuth2RefreshTokenDO::getRefreshToken, refreshToken);
+    }
+
+    /**
+     * ZS-LOGIN-002���ԡ���������ʽ��ѯˢ�����ƣ����� {@code SELECT ... FOR UPDATE}����
+     *
+     * <p>��;���ѡ�ͬһ�Ự��ͬһ refreshToken������ˢ�����˳����л������÷�<b>����</b>����������
+     * ��{@code @Transactional}�����������һ�������Զ��ύ���������ͷţ����л�ʧЧ��
+     *
+     * <p>ѡ��˵�����������ƻ� ��3.3����������������
+     * <ul>
+     *     <li>������ PG / MySQL / H2��MVStore����Ϊԭ�����壬�������� DB �У��ܿ� Flyway Ǩ���� ZS-DB-019.B ��ϣ���</li>
+     *     <li>����ֹ�����������ȡ����{@code UPDATE ... WHERE version=?}���������汾���У�</li>
+     *     <li>�������ʹ�� MyBatis-Plus �� Wrapper + {@code last("FOR UPDATE")} ������ {@code @Select}��
+     *         �� SQL ��Ҫ��д resultMap��{@code user_info} �� JSON ������ autoResultMap �� JacksonTypeHandler����
+     *         �� {@code deleted = 0} �� PG �� boolean ���ϲ��������� Wrapper �ɿ��ͳһ�����߼�ɾ����
+     *         �ֶ�ӳ����෽�ԡ�</li>
+     * </ul>
+     *
+     * <p>����Լ����{@code refreshAccessToken} �� {@code removeAccessToken} ����ѭ
+     * ��<b>����ˢ�������У��ٴ�����������</b>������������·�������������������
+     *
+     * @param refreshToken ˢ�����ƴ�
+     * @return ˢ�����ƣ������ڣ����ѱ��˳�ɾ����ʱ���� {@code null}����ʱ��������κ�����
+     */
+    /**
+     * ZS-LOGIN-005.A����ȨȨ�������Ժ��飨gate �ϳ����ƣ�����{@code flushCache=TRUE} ǿ�ƻ�Դ��
+     * �ƹ� MyBatis SESSION һ�����棻�����⻧����ͳ��δɾ���С�
+     */
+    @TenantIgnore
+    @Select("SELECT COUNT(1) FROM system_oauth2_refresh_token WHERE refresh_token = #{refreshToken} AND deleted = 0")
+    @Options(flushCache = Options.FlushCachePolicy.TRUE)
+    int selectAuthorityCountByRefreshToken(@Param("refreshToken") String refreshToken);
+
+    @TenantIgnore // �� selectByRefreshToken ����һ�£��˳�/ˢ�¿��ܲ�Я�� tenant-id ����ͷ
+    default OAuth2RefreshTokenDO selectByRefreshTokenForUpdate(String refreshToken) {
+        LambdaQueryWrapperX<OAuth2RefreshTokenDO> wrapper = new LambdaQueryWrapperX<>();
+        wrapper.eq(OAuth2RefreshTokenDO::getRefreshToken, refreshToken);
+        wrapper.last("FOR UPDATE");
+        // �� selectList ���� selectOne��FOR UPDATE ��Ҫ��ȷ���м������壬����ʷ�Ͽ��ܲ���ͬ������ɾ����
+        List<OAuth2RefreshTokenDO> list = selectList(wrapper);
+        return CollUtil.isEmpty(list) ? null : list.get(0);
+    }
+
+    /**
+     * ZS-LOGIN-003�������û� + �û����͡�ֱ����û����µ�<b>ȫ��</b>ˢ�����ơ�
+     *
+     * <p>��������ǰ {@code OAuth2TokenServiceImpl#removeAccessToken(Long, Integer)} ��ˢ��ƾ�ݼ���
+     * ��ȫ�� access-token ��¼<b>����</b>�����ǡ��� Access ��¼������ Refresh���Ĺ���ˢ��ƾ��
+     * ��Զ���ᱻ���� ���� ���Կ����� {@code refreshAccessToken} ����ȫ�·������ƣ��Ự�����
+     * �������ṩ�� {@code OAuth2AccessTokenMapper#selectListByUserIdAndUserType} �ԳƵ�ֱ��������
+     * ʹ��������ȡ��access-token ���� �� refresh-token ֱ�项��<b>ȫ��</b>��
+     *
+     * <p>�⻧�������ǰ�ȫ���������������⻧�����ģ���ʱ���� / MQ ���ѣ�����⻧��ά�����·���
+     * �� {@link #selectByRefreshToken(String)}��{@link #selectByRefreshTokenForUpdate(String)} ����һ�º����⻧��
+     * ���÷���{@code OAuth2TokenServiceImpl}������ {@code TenantUtils#executeIgnore} ����������������Ϊ�����ϡ�
+     *
+     * @param userId   �û����
+     * @param userType �û�����
+     * @return ���û����µ�ȫ��ˢ�����ƣ��޻Ựʱ���ؿռ���
+     */
+    @TenantIgnore // �� selectByRefreshToken ����һ�£��������ܲ�Я�� tenant-id ����ͷ
+    default List<OAuth2RefreshTokenDO> selectListByUserIdAndUserType(Long userId, Integer userType) {
+        return selectList(OAuth2RefreshTokenDO::getUserId, userId,
+                OAuth2RefreshTokenDO::getUserType, userType);
+    }
+
+    /**
+     * ����ɾ��ָ������ʱ��֮ǰ��ˢ������
+     *
+     * @param expiresTime ���ʱ��
+     * @param limit       ɾ����������ֹһ��ɾ��̫��
+     * @return ɾ������
+     */
+    @Delete("DELETE FROM system_oauth2_refresh_token WHERE id IN (SELECT id FROM system_oauth2_refresh_token WHERE expires_time < #{expiresTime} LIMIT #{limit})")
+    Integer deleteByExpiresTimeLt(@Param("expiresTime") LocalDateTime expiresTime, @Param("limit") Integer limit);
+}
+
+ succeeded in 120ms:
+services/zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\src\main\resources\banner.txt:3:Spring Boot Version: ${spring-boot.version}
+services/zhongshu-core\zszj-framework\zszj-spring-boot-starter-test\src\main\java\cn\zszj\framework\test\core\ut\BaseRedisUnitTest.java:21:public class BaseRedisUnitTest {
+services/zhongshu-core\zszj-framework\zszj-spring-boot-starter-test\src\main\java\cn\zszj\framework\test\core\ut\BaseDbAndRedisUnitTest.java:30:public class BaseDbAndRedisUnitTest {
+services/zhongshu-core\zszj-dependencies\pom.xml:37:        <rocketmq-spring.version>2.3.6</rocketmq-spring.version>
+services/zhongshu-core\zszj-dependencies\pom.xml:323:                <version>${rocketmq-spring.version}</version>
+
+codex
+新增的长事务测试可能在重新执行权威 count 前，就因 Redis 已被 T2 删除、DB 回源查无记录而返回 401。我会继续核对这条路径，以及 Spring 的资源清理顺序，确认测试能否证明 `flushCache` 生效。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java -TotalCount 140; Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test/src/main/java/cn/zszj/framework/test/core/ut/BaseDbAndRedisUnitTest.java; Get-Content services/zhongshu-core/zszj-module-system/src/test/resources/application-unit-test.yaml; rg -n 'spring-boot|local-cache-scope|TransactionManager|StringRedisTemplate' services/zhongshu-core/zszj-dependencies/pom.xml services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-test; rg --files -g '*surefire*' -g '*CacheConsistencyTest*' -g '*spring-tx*' -g AGENTS.md --hidden" in E:\zszj-wt-login-005-a
+ succeeded in 11ms:
+web search: 
+web search: https://raw.githubusercontent.com/spring-projects/spring-framework/v6.2.8/spring-tx/src/main/java/org/springframework/transaction/support/AbstractPlatformTransactionManager.java
+web search: 
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git diff --check b155d307..HEAD; git show HEAD:services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java | Select-Object -Skip 295 -First 50; Get-Content services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-redis/src/main/java/cn/zszj/framework/redis/config/ZszjRedisAutoConfiguration.java; Get-Content services/zhongshu-core/zszj-dependencies/pom.xml -TotalCount 110' in E:\zszj-wt-login-005-a
+ succeeded in 32ms:
+package cn.zszj.framework.redis.config;
+
+import cn.hutool.core.util.ReflectUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.redisson.spring.starter.RedissonAutoConfigurationV2;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.RedisSerializer;
+
+/**
+ * Redis 配置�? */
+@AutoConfiguration(before = RedissonAutoConfigurationV2.class) // 目的：使用自己定义的 RedisTemplate Bean
+public class ZszjRedisAutoConfiguration {
+
+    /**
+     * 创建 RedisTemplate Bean，使�?JSON 序列化方�?     */
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory) {
+        // 创建 RedisTemplate 对象
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        // 设置 RedisConnection 工厂。�?它就是实现多�?Java Redis 客户端接入的秘密工厂。感兴趣的胖友，可以自己去撸下�?        template.setConnectionFactory(factory);
+        // 使用 String 序列化方式，序列�?KEY �?        template.setKeySerializer(RedisSerializer.string());
+        template.setHashKeySerializer(RedisSerializer.string());
+        // 使用 JSON 序列化方式，序列�?VALUE
+        RedisSerializer<?> redisSerializer = buildRedisSerializer();
+        template.setValueSerializer(redisSerializer);
+        template.setHashValueSerializer(redisSerializer);
+        return template;
+    }
+
+    public static RedisSerializer<?> buildRedisSerializer() {
+        RedisSerializer<Object> json = RedisSerializer.json();
+        // 解决 LocalDateTime 的序列化
+        ObjectMapper objectMapper = (ObjectMapper) ReflectUtil.getFieldValue(json, "mapper");
+        objectMapper.registerModules(new JavaTimeModule());
+        return json;
+    }
+
+}
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>cn.zszj</groupId>
+    <artifactId>zszj-dependencies</artifactId>
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>基础 bom 文件，管理整个项目的依赖版本</description>
+    <url>https://github.com/YunaiV/ruoyi-vue-pro</url>
+
+    <properties>
+        <revision>2026.08-SNAPSHOT</revision>
+        <flatten-maven-plugin.version>1.7.2</flatten-maven-plugin.version>
+        <!-- 统一依赖管理 -->
+        <spring.boot.version>3.5.15</spring.boot.version>
+        <!-- Web 相关 -->
+        <springdoc.version>2.8.17</springdoc.version>
+        <knife4j.version>4.5.0</knife4j.version>
+        <!-- DB 相关 -->
+        <druid.version>1.2.28</druid.version>
+        <mybatis.version>3.5.19</mybatis.version>
+        <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <mybatis-plus-join.version>1.5.9</mybatis-plus-join.version>
+        <dynamic-datasource.version>4.5.0</dynamic-datasource.version>
+        <easy-trans.version>3.1.8</easy-trans.version>
+        <redisson.version>4.7.0</redisson.version>
+        <dm8.jdbc.version>8.1.3.140</dm8.jdbc.version>
+        <kingbase.jdbc.version>9.0.1.jre7</kingbase.jdbc.version>
+        <opengauss.jdbc.version>7.0.0-RC3-og</opengauss.jdbc.version>
+        <taos.version>3.9.0</taos.version>
+        <!-- 消息队列 -->
+        <rocketmq-spring.version>2.3.6</rocketmq-spring.version>
+        <!-- 服务保障相关 -->
+        <lock4j.version>2.2.7</lock4j.version>
+        <!-- 监控相关 -->
+        <skywalking.version>9.6.0</skywalking.version>
+        <spring-boot-admin.version>3.5.9</spring-boot-admin.version>
+        <opentelemetry.version>1.65.0</opentelemetry.version>
+        <!-- Test 测试相关 -->
+        <h2.version>2.3.232</h2.version>
+        <podam.version>8.0.2.RELEASE</podam.version>
+        <jedis-mock.version>1.1.18</jedis-mock.version>
+        <mockito-inline.version>5.2.0</mockito-inline.version>
+        <!-- Bpm 工作流相�?-->
+        <flowable.version>8.0.0</flowable.version>
+        <!-- 工具类相�?-->
+        <anji-plus-captcha.version>1.4.0</anji-plus-captcha.version>
+        <jsoup.version>1.23.2</jsoup.version>
+        <sensitive-word.version>0.29.5</sensitive-word.version>
+        <pinyin4j.version>2.5.1</pinyin4j.version>
+        <lombok.version>1.18.46</lombok.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+        <hutool-5.version>5.8.47</hutool-5.version>
+        <hutool-6.version>6.0.0-M22</hutool-6.version>
+        <fastexcel.version>1.3.0</fastexcel.version>
+        <aviator.version>5.4.4</aviator.version>
+        <velocity.version>2.4.1</velocity.version>
+        <fastjson2.version>2.0.64</fastjson2.version>
+        <guava.version>33.7.1-jre</guava.version>
+        <transmittable-thread-local.version>2.14.5</transmittable-thread-local.version>
+        <commons-net.version>3.13.0</commons-net.version>
+        <commons-lang3.version>3.20.0</commons-lang3.version>
+        <jsch.version>2.28.7</jsch.version>
+        <tika-core.version>3.3.1</tika-core.version>
+        <ip2region.version>2.7.0</ip2region.version>
+        <bizlog-sdk.version>3.0.6</bizlog-sdk.version>
+        <netty.version>4.2.17.Final</netty.version>
+        <mqtt.version>1.2.5</mqtt.version>
+        <vertx.version>4.5.26</vertx.version>
+        <okhttp.version>4.12.0</okhttp.version>
+        <californium.version>3.14.0</californium.version>
+        <j2mod.version>3.3.0</j2mod.version>
+        <!-- 三方云服务相�?-->
+        <awssdk.version>2.54.7</awssdk.version>
+        <justauth.version>1.16.7</justauth.version>
+        <justauth-starter.version>1.4.0</justauth-starter.version>
+        <jimureport.version>2.5.1</jimureport.version>
+        <jimubi.version>2.5.0</jimubi.version>
+        <weixin-java.version>4.8.6-20260825.155844</weixin-java.version>
+        <bouncycastle.version>1.80</bouncycastle.version>
+        <alipay-sdk-java.version>4.40.978.ALL</alipay-sdk-java.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 统一依赖管理 -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring.boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- 业务组件 -->
+            <dependency>
+                <groupId>io.github.mouzt</groupId>
+                <artifactId>bizlog-sdk</artifactId>
+
+web search: 
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n -A 43 -B 4 'Thread t2 = new Thread' services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java; rg -n 'afterCommit|afterCompletion|selectAuthorityCountByAccessToken|if \\(accessTokenDO == null\\)' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImpl.java; Get-Item E:/AGENTS.md,E:/zszj-wt-login-005-a/AGENTS.md -ErrorAction SilentlyContinue" in E:\zszj-wt-login-005-a
+ exited 1 in 0ms:
+294-        java.util.concurrent.CountDownLatch t1Checked = new java.util.concurrent.CountDownLatch(1);
+295-        java.util.concurrent.CountDownLatch t2Committed = new java.util.concurrent.CountDownLatch(1);
+296-        AtomicReference<Throwable> t2Error = new AtomicReference<>();
+297-
+298:        Thread t2 = new Thread(() -> {
+299-            try {
+300-                assertTrue(t1Checked.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T1 首次核验超时");
+301-                transactionTemplate.executeWithoutResult(status ->
+302-                        oauth2TokenService.removeAccessToken(access.getAccessToken()));
+303-            } catch (Throwable ex) {
+304-                t2Error.set(ex);
+305-            } finally {
+306-                t2Committed.countDown();
+307-            }
+308-        });
+309-        t2.start();
+310-
+311-        transactionTemplate.executeWithoutResult(status -> {
+312-            try {
+313-                // T1 首次核验：行存在，通过
+314-                oauth2TokenService.checkAccessToken(access.getAccessToken());
+315-            } catch (Exception ex) {
+316-                throw new RuntimeException("T1 首次核验不应失败", ex);
+317-            }
+318-            t1Checked.countDown();
+319-            try {
+320-                assertTrue(t2Committed.await(10, java.util.concurrent.TimeUnit.SECONDS), "等待 T2 撤销提交超时");
+321-            } catch (InterruptedException ex) {
+322-                Thread.currentThread().interrupt();
+323-                throw new RuntimeException(ex);
+324-            }
+325-            // T1 同事务内再次核验：T2 已在另一连接撤销并提交——flushCache=TRUE 必须回源拒绝
+326-            assertServiceException(() -> oauth2TokenService.checkAccessToken(access.getAccessToken()),
+327-                    new ErrorCode(401, "访问令牌不存在"));
+328-        });
+329-
+330-        assertNull(t2Error.get(), "T2 撤销不得失败: " + t2Error.get());
+331-    }
+332-}
+227:        if (accessTokenDO == null) {
+243:                    : oauth2AccessTokenMapper.selectAuthorityCountByAccessToken(accessToken);
+281:        if (accessTokenDO == null) {
+570:        // afterCompletion 对【所有】结束状态幂等兜底（提交/回滚/UNKNOWN）：失效动作幂等（墓碑+删除），
+571:        // 覆盖 STATUS_UNKNOWN（提交/回滚异常）与前序同步回调抛异常导致 afterCommit 被跳过的情形
+584:            // ZS-LOGIN-005.A codex r1 P3：单次执行于事务结束后（afterCompletion 覆盖全部结束状态）——
+586:            // 前序同步回调异常跳过 afterCommit 的情形一并覆盖），且避免 afterCommit+afterCompletion 双跑翻倍
+589:                public void afterCompletion(int status) {
+617:                public void afterCompletion(int status) {
+
+codex
+生产代码的两处修复未发现新增缺陷。时序上需澄清：Spring JDBC 的 `afterCompletion` 在连接归还前执行；这里仅操作独立 Redis，不依赖已结束的 DB 事务，但 Redis 等待仍会延迟连接归还。[Spring 源码](https://github.com/spring-projects/spring-framework/blob/v6.2.8/spring-tx/src/main/java/org/springframework/transaction/support/AbstractPlatformTransactionManager.java)
+
+已确认长事务测试存在假阳性路径，无法证明 `flushCache` 修复有效。当前环境只读，未运行会写入构建产物的 Maven 测试；结论基于差异与调用路径审查。
+codex
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "priority": "P2",
+      "title": "长事务测试在权威 count 前短路，无法验证 flushCache",
+      "file": "services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java",
+      "lines": [301, 302],
+      "body": "T2 调用 removeAccessToken，事务完成时已删除 Redis 缓存，随后才释放 t2Committed。T1 再次核验时缓存未命中，selectByAccessToken 查询已撤销记录返回 null，直接在 checkAccessToken 入口抛出 401，不会再次执行权威 count。因此即使移除 flushCache=TRUE，该测试仍可通过。应让 T2 仅通过 mapper 撤销 DB 行并提交，保留 Redis 旧条目；重核验前断言缓存仍存在，并验证移除 flushCache 后测试失败。"
+    }
+  ]
+}
+tokens used
+60,348
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "priority": "P2",
+      "title": "长事务测试在权威 count 前短路，无法验证 flushCache",
+      "file": "services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/oauth2/OAuth2TokenServiceImplCacheConsistencyTest.java",
+      "lines": [301, 302],
+      "body": "T2 调用 removeAccessToken，事务完成时已删除 Redis 缓存，随后才释放 t2Committed。T1 再次核验时缓存未命中，selectByAccessToken 查询已撤销记录返回 null，直接在 checkAccessToken 入口抛出 401，不会再次执行权威 count。因此即使移除 flushCache=TRUE，该测试仍可通过。应让 T2 仅通过 mapper 撤销 DB 行并提交，保留 Redis 旧条目；重核验前断言缓存仍存在，并验证移除 flushCache 后测试失败。"
+    }
+  ]
+}

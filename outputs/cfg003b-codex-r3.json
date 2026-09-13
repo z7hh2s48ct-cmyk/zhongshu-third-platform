@@ -1,0 +1,1360 @@
+Reading additional input from stdin...
+OpenAI Codex v0.154.0
+--------
+workdir: E:\zszj-wt-cfg-003-b
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a09b49-6021-7553-841b-e18d727f4261
+--------
+user
+ZS-CFG-003.B 第 4 轮评审（收敛验证）：r2 的 2×P1+P2 已修复：①updateTenant 在套餐行锁后增加 tenantMapper.selectByIdForUpdate 锁定读绑定，收敛判断与写回以锁内数据为准；②updateTenantPackage 在 validate 前先锁本套餐行，菜单变化比较基准取锁定读；③createTenant/updateTenant 授权使用锁定套餐返回的最新菜单（null 拒绝）。既有测试已补真实租户/套餐行。请 git diff 94f6a141..HEAD 验证锁内读纪律完备、无新问题，输出 JSON：{"verdict":"PASS|FAIL","findings":[]}。
+codex
+我会检查该区间的 diff 和相关调用路径，重点验证锁内读取、套餐菜单授权及并发写回是否一致。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git status --short; git diff --stat 94f6a141..HEAD; git diff 94f6a141..HEAD' in E:\zszj-wt-cfg-003-b
+ succeeded in 37ms:
+ .../service/tenant/TenantPackageServiceImpl.java     |  3 +++
+ .../system/service/tenant/TenantServiceImpl.java     | 20 +++++++++++++++-----
+ .../system/service/tenant/TenantServiceImplTest.java |  6 ++++++
+ 3 files changed, 24 insertions(+), 5 deletions(-)
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java
+index 2da056f0..3a45962a 100755
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java
+@@ -72,6 +72,9 @@ public class TenantPackageServiceImpl implements TenantPackageService {
+     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
+         // 校验菜单不得启用关闭模块（ZS-CFG-003.A）
+         validateTenantPackageMenus(updateReqVO.getMenuIds());
++        // ZS-CFG-003.B codex r2 P1：先取本套餐行锁再读取——并发套餐更新用锁前旧值判断"菜单未变化"
++        // 跳过收敛的交错必须串行化；比较基准一律取锁定读
++        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getId());
+         // 校验存在
+         TenantPackageDO tenantPackage = validateTenantPackageExists(updateReqVO.getId());
+         // 校验套餐名是否重复
+diff --git a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java
+index a3932554..6e5378f7 100755
+--- a/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java
++++ b/services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java
+@@ -164,18 +164,28 @@ public class TenantServiceImpl implements TenantService {
+         // 校验租户域名是否重复
+         validTenantWebsiteDuplicate(updateReqVO.getWebsites(), updateReqVO.getId());
+         // 校验套餐被禁用
+-        TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
++        tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
+         // ZS-CFG-003.B codex r1 P1：先取【目标套餐行锁】再动租户绑定——与 updateTenantPackage（套餐→租户锁序）
+         // 统一，堵「换套餐换入正在收缩的套餐、逃过该租户的收敛」的交错；换出套餐由其自身收缩流程在
+         // 锁内重查绑定后跳过（见 TenantPackageServiceImpl）
+-        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
++        // codex r2 P2：使用锁定查询返回的套餐（收缩/扩大后的最新菜单）完成授权
++        TenantPackageDO tenantPackage = tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
++        if (tenantPackage == null) {
++            throw exception(TENANT_PACKAGE_NOT_EXISTS);
++        }
++        // codex r2 P1：锁租户行后读取【当前绑定】——并发换绑提交后，锁前快照已失效，
++        // 收敛判断与绑定写回必须以锁内数据为准
++        TenantDO lockedTenant = tenantMapper.selectByIdForUpdate(updateReqVO.getId());
++        if (lockedTenant == null) {
++            throw exception(TENANT_NOT_EXISTS);
++        }
+ 
+         // 更新租户
+         TenantDO updateObj = BeanUtils.toBean(updateReqVO, TenantDO.class);
+         tenantMapper.updateById(updateObj);
+-        // 如果套餐发生变化，则修改其角色的权限
+-        if (ObjectUtil.notEqual(tenant.getPackageId(), updateReqVO.getPackageId())) {
+-            updateTenantRoleMenu(tenant.getId(), tenantPackage.getMenuIds());
++        // 如果套餐发生变化（以锁内绑定为准），则修改其角色的权限
++        if (ObjectUtil.notEqual(lockedTenant.getPackageId(), updateReqVO.getPackageId())) {
++            updateTenantRoleMenu(lockedTenant.getId(), tenantPackage.getMenuIds());
+         }
+     }
+ 
+diff --git a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/tenant/TenantServiceImplTest.java b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/tenant/TenantServiceImplTest.java
+index 9129c642..e5a7bf80 100644
+--- a/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/tenant/TenantServiceImplTest.java
++++ b/services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/tenant/TenantServiceImplTest.java
+@@ -12,6 +12,7 @@ import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
+ import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
+ import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+ import cn.zszj.module.system.dal.mysql.tenant.TenantMapper;
++import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
+ import cn.zszj.module.system.enums.permission.RoleCodeEnum;
+ import cn.zszj.module.system.enums.permission.RoleTypeEnum;
+ import cn.zszj.module.system.service.permission.MenuService;
+@@ -60,6 +61,8 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
+ 
+     @Resource
+     private TenantMapper tenantMapper;
++    @Resource
++    private TenantPackageMapper tenantPackageMapper;
+ 
+     @MockitoBean
+     private TenantProperties tenantProperties;
+@@ -191,6 +194,9 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
+         TenantPackageDO tenantPackage = randomPojo(TenantPackageDO.class,
+                 o -> o.setMenuIds(asSet(200L, 201L)));
+         when(tenantPackageService.validTenantPackage(eq(reqVO.getPackageId()))).thenReturn(tenantPackage);
++        // ZS-CFG-003.B：updateTenant 现以【套餐行锁内的锁定读】取最新菜单——需真实套餐行
++        tenantPackageMapper.insert(randomPojo(TenantPackageDO.class, o -> o.setId(reqVO.getPackageId())
++                .setMenuIds(asSet(200L, 201L)).setStatus(CommonStatusEnum.ENABLE.getStatus())));
+         // mock 所有角色
+         RoleDO role100 = randomPojo(RoleDO.class, o -> o.setId(100L).setCode(RoleCodeEnum.TENANT_ADMIN.getCode()));
+         role100.setTenantId(dbTenant.getId());
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg --files -g AGENTS.md -g '*Tenant*ServiceImpl*' -g '*Tenant*Mapper*' -g '*CFG-003*' -g 'pom.xml' -g 'application*.yaml' -g 'application*.yml'" in E:\zszj-wt-cfg-003-b
+ succeeded in 0ms:
+services\zhongshu-core\zszj-dependencies\pom.xml
+services\zhongshu-core\zszj-module-hrm\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-bpm\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-server\src\main\resources\application.yaml
+services\zhongshu-core\zszj-server\src\main\resources\application-local.yaml
+services\zhongshu-core\zszj-server\src\main\resources\application-dev.yaml
+services\zhongshu-core\zszj-server\pom.xml
+services\zhongshu-core\zszj-module-wms\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\script\config\application-prod.yaml
+services\zhongshu-core\pom.xml
+services\zhongshu-core\zszj-module-crm\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-fms\src\test\resources\application-unit-test.yaml
+reference\donors\zhongshu-design\yudao-server\src\main\resources\application.yaml
+reference\donors\zhongshu-design\yudao-server\src\main\resources\application-zsdev.yaml
+reference\donors\zhongshu-design\yudao-server\src\main\resources\application-pg.yaml
+reference\donors\zhongshu-design\yudao-server\pom.xml
+services\zhongshu-core\zszj-module-wms\pom.xml
+services\zhongshu-core\zszj-module-system\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\tenant\TenantServiceImplTest.java
+services\zhongshu-core\zszj-module-system\src\test\java\cn\zszj\module\system\service\tenant\TenantPackageServiceImplTest.java
+services\zhongshu-core\zszj-module-bpm\pom.xml
+reference\donors\zhongshu-design\yudao-module-identity\pom.xml
+services\zhongshu-core\zszj-module-fms\pom.xml
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantServiceImpl.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\service\tenant\TenantPackageServiceImpl.java
+reference\donors\zhongshu-design\yudao-module-design\pom.xml
+services\zhongshu-core\zszj-module-crm\pom.xml
+reference\donors\zhongshu-design\pom.xml
+reference\donors\zhongshu-design\yudao-module-commerce\pom.xml
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\tenant\TenantPackageMapper.java
+services\zhongshu-core\zszj-module-system\src\main\java\cn\zszj\module\system\dal\mysql\tenant\TenantMapper.java
+services\zhongshu-core\zszj-module-ai\pom.xml
+services\zhongshu-core\zszj-module-erp\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-websocket\pom.xml
+services\zhongshu-core\zszj-module-hrm\pom.xml
+reference\donors\zhongshu-design\yudao-module-ai-orchestration\pom.xml
+services\zhongshu-core\zszj-module-system\pom.xml
+services\zhongshu-core\zszj-module-report\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-protection\pom.xml
+services\zhongshu-core\zszj-module-report\pom.xml
+services\zhongshu-core\zszj-module-pms\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-web\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-test\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-mybatis\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-mq\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-security\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-monitor\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-redis\pom.xml
+services\zhongshu-core\zszj-module-mes\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-job\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-excel\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\test\resources\application-fixture.yaml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\src\main\java\cn\zszj\framework\tenant\core\service\TenantFrameworkServiceImpl.java
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-tenant\pom.xml
+services\zhongshu-core\zszj-module-pms\pom.xml
+services\zhongshu-core\zszj-module-pay\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-ip\pom.xml
+services\zhongshu-core\zszj-framework\pom.xml
+services\zhongshu-core\zszj-framework\zszj-spring-boot-starter-biz-data-permission\pom.xml
+services\zhongshu-core\zszj-module-mes\pom.xml
+services\zhongshu-core\zszj-framework\zszj-common\pom.xml
+services\zhongshu-core\zszj-module-member\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-mp\pom.xml
+services\zhongshu-core\zszj-module-pay\pom.xml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-gateway\src\main\resources\application.yaml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-gateway\pom.xml
+services\zhongshu-core\zszj-module-iot\pom.xml
+services\zhongshu-core\zszj-module-im\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-im\pom.xml
+services\zhongshu-core\zszj-module-member\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-trade-api\pom.xml
+services\zhongshu-core\zszj-module-infra\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-core\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-biz\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-infra\pom.xml
+services\zhongshu-core\zszj-module-iot\zszj-module-iot-biz\pom.xml
+services\zhongshu-core\zszj-module-mall\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-statistics\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-promotion\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-promotion\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-mall\zszj-module-product\src\test\resources\application-unit-test.yaml
+services\zhongshu-core\zszj-module-mall\zszj-module-trade\pom.xml
+services\zhongshu-core\zszj-module-mall\zszj-module-product\pom.xml
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java' | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in E:\zszj-wt-cfg-003-b
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java' | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in E:\zszj-wt-cfg-003-b
+ succeeded in 60ms:
+   1: package cn.zszj.module.system.service.tenant;
+   2: 
+   3: import cn.hutool.core.collection.CollUtil;
+   4: import cn.hutool.core.util.StrUtil;
+   5: import lombok.extern.slf4j.Slf4j;
+   6: import org.springframework.transaction.annotation.Transactional;
+   7: import cn.zszj.framework.common.enums.CommonStatusEnum;
+   8: import cn.zszj.framework.common.pojo.PageResult;
+   9: import cn.zszj.framework.common.catalog.ModuleCatalog;
+  10: import cn.zszj.framework.common.util.object.BeanUtils;
+  11: import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackagePageReqVO;
+  12: import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackageSaveReqVO;
+  13: import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
+  14: import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
+  15: import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+  16: import cn.zszj.module.system.dal.mysql.tenant.TenantMapper;
+  17: import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
+  18: import cn.zszj.module.system.service.permission.MenuService;
+  19: import com.baomidou.dynamic.datasource.annotation.DSTransactional;
+  20: import com.google.common.annotations.VisibleForTesting;
+  21: import jakarta.annotation.Resource;
+  22: import org.springframework.context.annotation.Lazy;
+  23: import org.springframework.stereotype.Service;
+  24: import org.springframework.validation.annotation.Validated;
+  25: 
+  26: import java.util.List;
+  27: import java.util.Objects;
+  28: import java.util.Set;
+  29: 
+  30: import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
+  31: import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
+  32: 
+  33: /**
+  34:  * 租户套餐 Service 实现�? *
+  35:  * @author 芋道源码
+  36:  */
+  37: @Service
+  38: @Validated
+  39: @Slf4j
+  40: public class TenantPackageServiceImpl implements TenantPackageService {
+  41: 
+  42:     @Resource
+  43:     private TenantPackageMapper tenantPackageMapper;
+  44:     @Resource
+  45:     private TenantMapper tenantMapper;
+  46: 
+  47:     @Resource
+  48:     @Lazy // 避免循环依赖的报�?    private TenantService tenantService;
+  49: 
+  50:     @Resource
+  51:     @Lazy // 避免循环依赖的报�?    private MenuService menuService;
+  52: 
+  53:     @Override
+  54:     public Long createTenantPackage(TenantPackageSaveReqVO createReqVO) {
+  55:         // 校验菜单不得启用关闭模块（ZS-CFG-003.A�?        validateTenantPackageMenus(createReqVO.getMenuIds());
+  56:         // 校验套餐名是否重�?        validateTenantPackageNameUnique(null, createReqVO.getName());
+  57:         // 插入
+  58:         TenantPackageDO tenantPackage = BeanUtils.toBean(createReqVO, TenantPackageDO.class);
+  59:         tenantPackageMapper.insert(tenantPackage);
+  60:         // 返回
+  61:         return tenantPackage.getId();
+  62:     }
+  63: 
+  64:     @Override
+  65:     // ZS-PERM-004.A codex r0 P1：改�?Spring @Transactional（同 TenantServiceImpl——统一事务生命周期，驱逐与提交同序�?    @Transactional(rollbackFor = Exception.class)
+  66:     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
+  67:         // 校验菜单不得启用关闭模块（ZS-CFG-003.A�?        validateTenantPackageMenus(updateReqVO.getMenuIds());
+  68:         // ZS-CFG-003.B codex r2 P1：先取本套餐行锁再读取——并发套餐更新用锁前旧值判�?菜单未变�?
+  69:         // 跳过收敛的交错必须串行化；比较基准一律取锁定�?        tenantPackageMapper.selectByIdForUpdate(updateReqVO.getId());
+  70:         // 校验存在
+  71:         TenantPackageDO tenantPackage = validateTenantPackageExists(updateReqVO.getId());
+  72:         // 校验套餐名是否重�?        validateTenantPackageNameUnique(updateReqVO.getId(), updateReqVO.getName());
+  73:         // 更新
+  74:         TenantPackageDO updateObj = BeanUtils.toBean(updateReqVO, TenantPackageDO.class);
+  75:         tenantPackageMapper.updateById(updateObj);
+  76:         // 如果菜单发生变化，则修改每个租户的菜�?        if (!CollUtil.isEqualList(tenantPackage.getMenuIds(), updateReqVO.getMenuIds())) {
+  77:             List<TenantDO> tenants = tenantService.getTenantListByPackageId(tenantPackage.getId());
+  78:             // ZS-CFG-003.B codex r0 P1：按租户 id 排序后收敛——多租户行锁获取顺序确定，避免并发套餐更新死�?            tenants.sort(java.util.Comparator.comparing(TenantDO::getId));
+  79:             tenants.forEach(tenant -> {
+  80:                 // ZS-CFG-003.B codex r1 P1：锁内重查绑定——并发「换套餐」可能在枚举快照后把租户换入/换出本套餐，
+  81:                 // 已不再绑定本套餐的租户跳过收敛（其授权由换入套餐的锁序约束），防止收敛到错误套餐的菜�?                TenantDO locked = tenantMapper.selectByIdForUpdate(tenant.getId());
+  82:                 if (locked == null || !Objects.equals(locked.getPackageId(), tenantPackage.getId())) {
+  83:                     log.info("[updateTenantPackage][租户({}) 已换绑套餐，跳过本套餐收敛]", tenant.getId());
+  84:                     return;
+  85:                 }
+  86:                 tenantService.updateTenantRoleMenu(tenant.getId(), updateReqVO.getMenuIds());
+  87:             });
+  88:         }
+  89:     }
+  90: 
+  91:     @Override
+  92:     public void deleteTenantPackage(Long id) {
+  93:         // 校验存在
+  94:         validateTenantPackageExists(id);
+  95:         // 校验正在使用
+  96:         validateTenantUsed(id);
+  97:         // 删除
+  98:         tenantPackageMapper.deleteById(id);
+  99:     }
+ 100: 
+ 101:     @Override
+ 102:     public void deleteTenantPackageList(List<Long> ids) {
+ 103:         // 1. 校验是否有租户正在使用该套餐
+ 104:         for (Long id : ids) {
+ 105:             if (tenantService.getTenantCountByPackageId(id) > 0) {
+ 106:                 throw exception(TENANT_PACKAGE_USED);
+ 107:             }
+ 108:         }
+ 109: 
+ 110:         // 2. 批量删除
+ 111:         tenantPackageMapper.deleteByIds(ids);
+ 112:     }
+ 113: 
+ 114:     private TenantPackageDO validateTenantPackageExists(Long id) {
+ 115:         TenantPackageDO tenantPackage = tenantPackageMapper.selectById(id);
+ 116:         if (tenantPackage == null) {
+ 117:             throw exception(TENANT_PACKAGE_NOT_EXISTS);
+ 118:         }
+ 119:         return tenantPackage;
+ 120:     }
+ 121: 
+ 122:     private void validateTenantUsed(Long id) {
+ 123:         if (tenantService.getTenantCountByPackageId(id) > 0) {
+ 124:             throw exception(TENANT_PACKAGE_USED);
+ 125:         }
+ 126:     }
+ 127: 
+ 128:     @Override
+ 129:     public TenantPackageDO getTenantPackage(Long id) {
+ 130:         return tenantPackageMapper.selectById(id);
+ 131:     }
+ 132: 
+ 133:     @Override
+ 134:     public PageResult<TenantPackageDO> getTenantPackagePage(TenantPackagePageReqVO pageReqVO) {
+ 135:         return tenantPackageMapper.selectPage(pageReqVO);
+ 136:     }
+ 137: 
+ 138:     @Override
+ 139:     public TenantPackageDO validTenantPackage(Long id) {
+ 140:         TenantPackageDO tenantPackage = tenantPackageMapper.selectById(id);
+ 141:         if (tenantPackage == null) {
+ 142:             throw exception(TENANT_PACKAGE_NOT_EXISTS);
+ 143:         }
+ 144:         if (tenantPackage.getStatus().equals(CommonStatusEnum.DISABLE.getStatus())) {
+ 145:             throw exception(TENANT_PACKAGE_DISABLE, tenantPackage.getName());
+ 146:         }
+ 147:         return tenantPackage;
+ 148:     }
+ 149: 
+ 150:     @Override
+ 151:     public List<TenantPackageDO> getTenantPackageListByStatus(Integer status) {
+ 152:         return tenantPackageMapper.selectListByStatus(status);
+ 153:     }
+ 154: 
+ 155: 
+ 156:     /**
+ 157:      * ZS-CFG-003.A：套餐菜单不得包含未启用模块的功能入口�?     * 无法归属模块的菜单（纯目录容器等）放行；归属到未启用模块的菜单拒绝�?     */
+ 158:     @VisibleForTesting
+ 159:     void validateTenantPackageMenus(Set<Long> menuIds) {
+ 160:         if (CollUtil.isEmpty(menuIds)) {
+ 161:             return;
+ 162:         }
+ 163:         for (MenuDO menu : menuService.getMenuList(menuIds)) {
+ 164:             String module = ModuleCatalog.moduleOfMenu(menu.getPermission(), menu.getComponent(), menu.getPath());
+ 165:             if (module != null && !ModuleCatalog.ENABLED_MODULES.contains(module)) {
+ 166:                 throw exception(TENANT_PACKAGE_MENU_MODULE_DISABLED, menu.getName(), module);
+ 167:             }
+ 168:         }
+ 169:     }
+ 170: 
+ 171:     @VisibleForTesting
+ 172:     void validateTenantPackageNameUnique(Long id, String name) {
+ 173:         if (StrUtil.isBlank(name)) {
+ 174:             return;
+ 175:         }
+ 176:         TenantPackageDO tenantPackage = tenantPackageMapper.selectByName(name);
+ 177:         if (tenantPackage == null) {
+ 178:             return;
+ 179:         }
+ 180:         // 如果 id 为空，说明不用比较是否为相同 id 的用�?        if (id == null) {
+ 181:             throw exception(TENANT_PACKAGE_NAME_DUPLICATE);
+ 182:         }
+ 183:         if (!tenantPackage.getId().equals(id)) {
+ 184:             throw exception(TENANT_PACKAGE_NAME_DUPLICATE);
+ 185:         }
+ 186:     }
+ 187: 
+ 188: }
+
+ succeeded in 28ms:
+ 133:         Long userId = userService.createUser(TenantConvert.INSTANCE.convert02(createReqVO));
+ 134:         // 分配角色
+ 135:         permissionService.assignUserRole(userId, singleton(roleId));
+ 136:         return userId;
+ 137:     }
+ 138: 
+ 139:     private Long createRole(TenantPackageDO tenantPackage) {
+ 140:         // 创建角色
+ 141:         RoleSaveReqVO reqVO = new RoleSaveReqVO();
+ 142:         reqVO.setName(RoleCodeEnum.TENANT_ADMIN.getName()).setCode(RoleCodeEnum.TENANT_ADMIN.getCode())
+ 143:                 .setSort(0).setRemark("系统自动生成");
+ 144:         Long roleId = roleService.createRole(reqVO, RoleTypeEnum.SYSTEM.getType());
+ 145:         // 分配权限
+ 146:         permissionService.assignRoleMenu(roleId, tenantPackage.getMenuIds());
+ 147:         return roleId;
+ 148:     }
+ 149: 
+ 150:     @Override
+ 151:     // ZS-PERM-004.A codex r0 P1：改�?Spring @Transactional——外�?@DSTransactional �?DS ConnectionProxy.commit()
+ 152:     // 为空操作，内�?Spring 事务提交驱逐缓存�?DB 要等外层 DS 结束才提交，留有「他连接回填旧授权、外层提交后无最终驱逐」窗口；
+ 153:     // system 模块单库，统一 Spring 事务生命周期
+ 154:     @Transactional(rollbackFor = Exception.class)
+ 155:     public void updateTenant(TenantSaveReqVO updateReqVO) {
+ 156:         // 校验存在
+ 157:         TenantDO tenant = validateUpdateTenant(updateReqVO.getId());
+ 158:         // 校验租户名称是否重复
+ 159:         validTenantNameDuplicate(updateReqVO.getName(), updateReqVO.getId());
+ 160:         // 校验租户域名是否重复
+ 161:         validTenantWebsiteDuplicate(updateReqVO.getWebsites(), updateReqVO.getId());
+ 162:         // 校验套餐被禁�?        tenantPackageService.validTenantPackage(updateReqVO.getPackageId());
+ 163:         // ZS-CFG-003.B codex r1 P1：先取【目标套餐行锁】再动租户绑定——与 updateTenantPackage（套餐→租户锁序�?        // 统一，堵「换套餐换入正在收缩的套餐、逃过该租户的收敛」的交错；换出套餐由其自身收缩流程在
+ 164:         // 锁内重查绑定后跳过（�?TenantPackageServiceImpl�?        // codex r2 P2：使用锁定查询返回的套餐（收�?扩大后的最新菜单）完成授权
+ 165:         TenantPackageDO tenantPackage = tenantPackageMapper.selectByIdForUpdate(updateReqVO.getPackageId());
+ 166:         if (tenantPackage == null) {
+ 167:             throw exception(TENANT_PACKAGE_NOT_EXISTS);
+ 168:         }
+ 169:         // codex r2 P1：锁租户行后读取【当前绑定】——并发换绑提交后，锁前快照已失效�?        // 收敛判断与绑定写回必须以锁内数据为准
+ 170:         TenantDO lockedTenant = tenantMapper.selectByIdForUpdate(updateReqVO.getId());
+ 171:         if (lockedTenant == null) {
+ 172:             throw exception(TENANT_NOT_EXISTS);
+ 173:         }
+ 174: 
+ 175:         // 更新租户
+ 176:         TenantDO updateObj = BeanUtils.toBean(updateReqVO, TenantDO.class);
+ 177:         tenantMapper.updateById(updateObj);
+ 178:         // 如果套餐发生变化（以锁内绑定为准），则修改其角色的权�?        if (ObjectUtil.notEqual(lockedTenant.getPackageId(), updateReqVO.getPackageId())) {
+ 179:             updateTenantRoleMenu(lockedTenant.getId(), tenantPackage.getMenuIds());
+ 180:         }
+ 181:     }
+ 182: 
+ 183:     private void validTenantNameDuplicate(String name, Long id) {
+ 184:         TenantDO tenant = tenantMapper.selectByName(name);
+ 185:         if (tenant == null) {
+ 186:             return;
+ 187:         }
+ 188:         // 如果 id 为空，说明不用比较是否为相同名字的租�?        if (id == null) {
+ 189:             throw exception(TENANT_NAME_DUPLICATE, name);
+ 190:         }
+ 191:         if (!tenant.getId().equals(id)) {
+ 192:             throw exception(TENANT_NAME_DUPLICATE, name);
+ 193:         }
+ 194:     }
+ 195: 
+ 196:     private void validTenantWebsiteDuplicate(List<String> websites, Long excludeId) {
+ 197:         if (CollUtil.isEmpty(websites)) {
+ 198:             return;
+ 199:         }
+ 200:         websites.forEach(website -> {
+ 201:             List<TenantDO> tenants = tenantMapper.selectListByWebsite(website);
+ 202:             if (excludeId != null) {
+ 203:                 tenants.removeIf(tenant -> tenant.getId().equals(excludeId));
+ 204:             }
+ 205:             if (CollUtil.isNotEmpty(tenants)) {
+ 206:                 throw exception(TENANT_WEBSITE_DUPLICATE, website);
+ 207:             }
+ 208:         });
+ 209:     }
+ 210: 
+ 211:     @Override
+ 212:     // ZS-PERM-004.A codex r0 P1：同上——统一 Spring 事务生命周期（本方法由套�?租户更新链调用，驱逐须与提交同序）
+ 213:     @Transactional(rollbackFor = Exception.class)
+ 214:     public void updateTenantRoleMenu(Long tenantId, Set<Long> menuIds) {
+ 215:         // ZS-CFG-003.B codex r0 P1：先取租户行锁（与授权入口同一把锁），收敛与套餐校�?授权写入串行�?        tenantMapper.selectByIdForUpdate(tenantId);
+ 216:         TenantUtils.execute(tenantId, () -> {
+ 217:             // 获得所有角�?            List<RoleDO> roles = roleService.getRoleList();
+ 218:             roles.forEach(role -> Assert.isTrue(tenantId.equals(role.getTenantId()), "角色({}/{}) 租户不匹�?,
+ 219:                     role.getId(), role.getTenantId(), tenantId)); // 兜底校验
+ 220:             // 重新分配每个角色的权�?            roles.forEach(role -> {
+ 221:                 // 如果是租户管理员，重新分配其权限为租户套餐的权限
+ 222:                 if (Objects.equals(role.getCode(), RoleCodeEnum.TENANT_ADMIN.getCode())) {
+ 223:                     permissionService.assignRoleMenu(role.getId(), menuIds);
+ 224:                     log.info("[updateTenantRoleMenu][租户管理�?{}/{}) 的权限修改为({})]", role.getId(), role.getTenantId(), menuIds);
+ 225:                     return;
+ 226:                 }
+ 227:                 // 如果是其他角色，则去掉超过套餐的权限
+ 228:                 Set<Long> roleMenuIds = permissionService.getRoleMenuListByRoleId(role.getId());
+ 229:                 roleMenuIds = CollUtil.intersectionDistinct(roleMenuIds, menuIds);
+ 230:                 permissionService.assignRoleMenu(role.getId(), roleMenuIds);
+ 231:                 log.info("[updateTenantRoleMenu][角色({}/{}) 的权限修改为({})]", role.getId(), role.getTenantId(), roleMenuIds);
+ 232:             });
+ 233:         });
+ 234:     }
+ 235: 
+ 236:     @Override
+ 237:     public void deleteTenant(Long id) {
+ 238:         // 校验存在
+ 239:         validateUpdateTenant(id);
+ 240:         // 删除
+ 241:         tenantMapper.deleteById(id);
+ 242:     }
+ 243: 
+ 244:     @Override
+ 245:     public void deleteTenantList(List<Long> ids) {
+ 246:         // 1. 校验存在
+ 247:         ids.forEach(this::validateUpdateTenant);
+ 248: 
+ 249:         // 2. 批量删除
+ 250:         tenantMapper.deleteByIds(ids);
+ 251:     }
+ 252: 
+ 253:     private TenantDO validateUpdateTenant(Long id) {
+ 254:         TenantDO tenant = tenantMapper.selectById(id);
+ 255:         if (tenant == null) {
+ 256:             throw exception(TENANT_NOT_EXISTS);
+ 257:         }
+ 258:         // 内置租户，不允许删除
+ 259:         if (isSystemTenant(tenant)) {
+ 260:             throw exception(TENANT_CAN_NOT_UPDATE_SYSTEM);
+ 261:         }
+ 262:         return tenant;
+ 263:     }
+ 264: 
+ 265:     @Override
+ 266:     public TenantDO getTenant(Long id) {
+ 267:         return tenantMapper.selectById(id);
+ 268:     }
+ 269: 
+ 270:     @Override
+ 271:     public PageResult<TenantDO> getTenantPage(TenantPageReqVO pageReqVO) {
+ 272:         return tenantMapper.selectPage(pageReqVO);
+ 273:     }
+ 274: 
+ 275:     @Override
+ 276:     public TenantDO getTenantByName(String name) {
+ 277:         return tenantMapper.selectByName(name);
+ 278:     }
+ 279: 
+ 280:     @Override
+ 281:     public TenantDO getTenantByWebsite(String website) {
+ 282:         List<TenantDO> tenants = tenantMapper.selectListByWebsite(website);
+ 283:         return CollUtil.getFirst(tenants);
+ 284:     }
+ 285: 
+ 286:     @Override
+ 287:     public Long getTenantCountByPackageId(Long packageId) {
+ 288:         return tenantMapper.selectCountByPackageId(packageId);
+ 289:     }
+ 290: 
+ 291:     @Override
+ 292:     public List<TenantDO> getTenantListByPackageId(Long packageId) {
+ 293:         return tenantMapper.selectListByPackageId(packageId);
+ 294:     }
+ 295: 
+ 296:     @Override
+ 297:     public List<TenantDO> getTenantListByStatus(Integer status) {
+ 298:         return tenantMapper.selectListByStatus(status);
+ 299:     }
+ 300: 
+ 301:     @Override
+ 302:     public void handleTenantInfo(TenantInfoHandler handler) {
+ 303:         // 如果禁用，则不执行逻辑
+ 304:         if (isTenantDisable()) {
+ 305:             return;
+ 306:         }
+ 307:         // 获得租户
+ 308:         TenantDO tenant = getTenant(TenantContextHolder.getRequiredTenantId());
+ 309:         // 执行处理�?        handler.handle(tenant);
+ 310:     }
+ 311: 
+ 312:     @Override
+ 313:     public void handleTenantMenu(TenantMenuHandler handler) {
+ 314:         // 如果禁用，则不执行逻辑
+ 315:         if (isTenantDisable()) {
+ 316:             return;
+ 317:         }
+ 318:         // 获得租户，然后获得菜�?        TenantDO tenant = getTenant(TenantContextHolder.getRequiredTenantId());
+ 319:         Set<Long> menuIds;
+ 320:         if (isSystemTenant(tenant)) { // 系统租户，菜单是全量�?            menuIds = CollectionUtils.convertSet(menuService.getMenuList(), MenuDO::getId);
+ 321:         } else {
+ 322:             menuIds = tenantPackageService.getTenantPackage(tenant.getPackageId()).getMenuIds();
+ 323:         }
+ 324:         // 执行处理�?        handler.handle(menuIds);
+ 325:     }
+ 326: 
+ 327:     private static boolean isSystemTenant(TenantDO tenant) {
+ 328:         return Objects.equals(tenant.getPackageId(), TenantDO.PACKAGE_ID_SYSTEM);
+ 329:     }
+ 330: 
+ 331:     private boolean isTenantDisable() {
+ 332:         return tenantProperties == null || Boolean.FALSE.equals(tenantProperties.getEnable());
+ 333:     }
+ 334: 
+ 335: }
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/tenant/TenantPackageMapper.java' | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in E:\zszj-wt-cfg-003-b
+ succeeded in 15ms:
+   5: import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+   6: import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackagePageReqVO;
+   7: import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+   8: import org.apache.ibatis.annotations.Mapper;
+   9: 
+  10: import java.util.List;
+  11: 
+  12: @Mapper
+  13: public interface TenantPackageMapper extends BaseMapperX<TenantPackageDO> {
+  14:     /**
+  15:      * ZS-CFG-003.B codex r1 P1：按套餐编号加行锁读取（SELECT ... FOR UPDATE）�?     * 套餐→租户统一锁序的起点：换套�?创建租户先锁目标套餐行，再动租户绑定与角色授权，
+  16:      * 与套餐收缩流程串行化�?     */
+  17:     default TenantPackageDO selectByIdForUpdate(Long id) {
+  18:         return selectOne(new LambdaQueryWrapperX<TenantPackageDO>()
+  19:                 .eq(TenantPackageDO::getId, id)
+  20:                 .last("FOR UPDATE"));
+  21:     }
+  22: 
+  23: 
+  24:     default PageResult<TenantPackageDO> selectPage(TenantPackagePageReqVO reqVO) {
+  25:         return selectPage(reqVO, new LambdaQueryWrapperX<TenantPackageDO>()
+  26:                 .likeIfPresent(TenantPackageDO::getName, reqVO.getName())
+  27:                 .eqIfPresent(TenantPackageDO::getStatus, reqVO.getStatus())
+  28:                 .likeIfPresent(TenantPackageDO::getRemark, reqVO.getRemark())
+  29:                 .betweenIfPresent(TenantPackageDO::getCreateTime, reqVO.getCreateTime())
+  30:                 .orderByDesc(TenantPackageDO::getId));
+  31:     }
+  32: 
+  33:     default List<TenantPackageDO> selectListByStatus(Integer status) {
+  34:         return selectList(TenantPackageDO::getStatus, status);
+  35:     }
+  36: 
+  37:     default TenantPackageDO selectByName(String name) {
+  38:         return selectOne(TenantPackageDO::getName, name);
+  39:     }
+  40: }
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/dal/mysql/tenant/TenantMapper.java' | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in E:\zszj-wt-cfg-003-b
+ succeeded in 0ms:
+   1: package cn.zszj.module.system.dal.mysql.tenant;
+   2: 
+   3: import cn.zszj.framework.common.pojo.PageResult;
+   4: import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
+   5: import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
+   6: import cn.zszj.framework.mybatis.core.util.MyBatisUtils;
+   7: import cn.zszj.module.system.controller.admin.tenant.vo.tenant.TenantPageReqVO;
+   8: import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
+   9: import org.apache.ibatis.annotations.Mapper;
+  10: 
+  11: import java.util.List;
+  12: 
+  13: @Mapper
+  14: public interface TenantMapper extends BaseMapperX<TenantDO> {
+  15: 
+  16:     /**
+  17:      * ZS-CFG-003.B codex r0 P1：按租户编号加行锁读取（SELECT ... FOR UPDATE）�?     * 作为「授权写�?�?套餐变更收敛 �?租户换套餐」的统一锁：堵住套餐校验到授权提交之间的 TOCTOU
+  18:      * （并发套餐收缩后仍能写入越界菜单）�?     *
+  19:      * @param id 租户编号
+  20:      * @return 租户；不存在时返�?{@code null}（不持有该行锁）
+  21:      */
+  22:     default TenantDO selectByIdForUpdate(Long id) {
+  23:         return selectOne(new LambdaQueryWrapperX<TenantDO>()
+  24:                 .eq(TenantDO::getId, id)
+  25:                 .last("FOR UPDATE"));
+  26:     }
+  27: 
+  28: 
+  29:     default PageResult<TenantDO> selectPage(TenantPageReqVO reqVO) {
+  30:         return selectPage(reqVO, new LambdaQueryWrapperX<TenantDO>()
+  31:                 .likeIfPresent(TenantDO::getName, reqVO.getName())
+  32:                 .likeIfPresent(TenantDO::getContactName, reqVO.getContactName())
+  33:                 .likeIfPresent(TenantDO::getContactMobile, reqVO.getContactMobile())
+  34:                 .eqIfPresent(TenantDO::getStatus, reqVO.getStatus())
+  35:                 .betweenIfPresent(TenantDO::getCreateTime, reqVO.getCreateTime())
+  36:                 .orderByDesc(TenantDO::getId));
+  37:     }
+  38: 
+  39:     default TenantDO selectByName(String name) {
+  40:         return selectOne(TenantDO::getName, name);
+  41:     }
+  42: 
+  43:     default List<TenantDO> selectListByWebsite(String website) {
+  44:         return selectList(new LambdaQueryWrapperX<TenantDO>()
+  45:                 .apply(MyBatisUtils.findInSet("websites"), website));
+  46:     }
+  47: 
+  48:     default Long selectCountByPackageId(Long packageId) {
+  49:         return selectCount(TenantDO::getPackageId, packageId);
+  50:     }
+  51: 
+  52:     default List<TenantDO> selectListByPackageId(Long packageId) {
+  53:         return selectList(TenantDO::getPackageId, packageId);
+  54:     }
+  55: 
+  56:     default List<TenantDO> selectListByStatus(Integer status) {
+  57:         return selectList(TenantDO::getStatus, status);
+  58:     }
+  59: 
+  60: }
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'isolation|REPEATABLE_READ|READ_COMMITTED|jdbc:(mysql|postgresql)|local-cache-scope|localCacheScope' services/zhongshu-core/zszj-server services/zhongshu-core/zszj-framework services/zhongshu-core/zszj-module-system/src/test/resources; rg -n 'assignRoleMenu|validateRoleMenu|selectByIdForUpdate|getMenuList\\(' services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/PermissionServiceImpl.java services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/MenuServiceImpl.java; git log -5 --oneline; Get-Content -Encoding utf8 services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImplTest.java" in E:\zszj-wt-cfg-003-b
+ succeeded in 92ms:
+788d80a1 fix(cfg-003-b): codex r0 1×P1+2×P2（授权/套餐变更/换套餐统一租户行锁堵 TOCTOU + updateTenantPackage 多租户按 id 排序锁序 + 缺租户/缺套餐记录拒绝不豁免 + 并发收缩×授权 FOR UPDATE 阻塞序列化测试）
+ebd1c066 feat(cfg-003-b): 套餐/角色权限交集——授权入口套餐子集校验（新错误码 1-002-016-005，堵套餐回收后租户管理员重新授予越界菜单）+ 5 契约测试（越界拒绝/许可内放行/系统租户全量/套餐收缩收敛+热路径拒绝/扩大不自动扩普通角色）[ZS-CFG-003.B]
+d0caf869 docs(perm-004-a): ZS-PERM-004.A 收口文档同步（四项修复 + codex r0→r3 四弧 8×P1 处置入库）+ 主卡转开发中 + docs/05 V1.33
+package cn.zszj.module.system.service.tenant;
+
+import cn.zszj.framework.common.enums.CommonStatusEnum;
+import cn.zszj.framework.common.pojo.PageResult;
+import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
+import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackagePageReqVO;
+import cn.zszj.module.system.controller.admin.tenant.vo.packages.TenantPackageSaveReqVO;
+import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
+import cn.zszj.module.system.dal.dataobject.tenant.TenantPackageDO;
+import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
+import cn.zszj.module.system.dal.mysql.tenant.TenantPackageMapper;
+import cn.zszj.module.system.service.permission.MenuService;
+import jakarta.annotation.Resource;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+import java.util.List;
+
+import static cn.zszj.framework.common.util.date.LocalDateTimeUtils.buildBetweenTime;
+import static cn.zszj.framework.common.util.date.LocalDateTimeUtils.buildTime;
+import static cn.zszj.framework.common.util.object.ObjectUtils.cloneIgnoreId;
+import static cn.zszj.framework.test.core.util.AssertUtils.assertPojoEquals;
+import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
+import static cn.zszj.framework.test.core.util.RandomUtils.*;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
+import static java.util.Arrays.asList;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+* {@link TenantPackageServiceImpl} �ĵ�Ԫ������
+*
+* @author ���Դ��
+*/
+@Import(TenantPackageServiceImpl.class)
+public class TenantPackageServiceImplTest extends BaseDbUnitTest {
+
+    @Resource
+    private TenantPackageServiceImpl tenantPackageService;
+
+    @Resource
+    private TenantPackageMapper tenantPackageMapper;
+    @Resource
+    private cn.zszj.module.system.dal.mysql.tenant.TenantMapper tenantMapper;
+
+    @MockitoBean
+    private TenantService tenantService;
+
+    @MockitoBean
+    private MenuService menuService;
+
+    @BeforeEach
+    public void setUpMenuService() {
+        // Ĭ��׮���˵��嵥Ϊ�� �� ģ��У����У�ZS-CFG-003.A У����ר�������е�����֤��
+        when(menuService.getMenuList(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
+    }
+
+    @Test
+    public void testCreateTenantPackage_menuModuleDisabled() {
+        // mock���ײͲ˵�����δ����ģ�飨bpm���Ĺ�����ڣ�ZS-CFG-003.A��
+        MenuDO menu = new MenuDO();
+        menu.setId(100200L);
+        menu.setName("�������˵�");
+        menu.setPermission("bpm:task:query");
+        when(menuService.getMenuList(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(menu));
+        // ׼������
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class, o -> { o.setId(null); o.setStatus(randomCommonStatus()); });
+        // ���ò�����
+        assertServiceException(() -> tenantPackageService.createTenantPackage(reqVO),
+                TENANT_PACKAGE_MENU_MODULE_DISABLED, menu.getName(), "bpm");
+    }
+
+    @Test
+    public void testCreateTenantPackage_menuModuleEnabled() {
+        // mock������ģ�飨system���Ĳ˵� �� У�����
+        MenuDO menu = new MenuDO();
+        menu.setId(100201L);
+        menu.setName("ϵͳ�˵�");
+        menu.setPermission("system:user:query");
+        when(menuService.getMenuList(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(menu));
+        // ׼������
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class, o -> { o.setId(null); o.setStatus(randomCommonStatus()); });
+        // ����
+        Long tenantPackageId = tenantPackageService.createTenantPackage(reqVO);
+        // ����
+        assertNotNull(tenantPackageId);
+    }
+
+    @Test
+    public void testCreateTenantPackage_success() {
+        // ׼������
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class,
+                o -> o.setStatus(randomCommonStatus()))
+                .setId(null); // ��ֹ id ����ֵ
+
+        // ����
+        Long tenantPackageId = tenantPackageService.createTenantPackage(reqVO);
+        // ����
+        assertNotNull(tenantPackageId);
+        // У���¼�������Ƿ���ȷ
+        TenantPackageDO tenantPackage = tenantPackageMapper.selectById(tenantPackageId);
+        assertPojoEquals(reqVO, tenantPackage, "id");
+    }
+
+    @Test
+    public void testUpdateTenantPackage_success() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class,
+                o -> o.setStatus(randomCommonStatus()));
+        tenantPackageMapper.insert(dbTenantPackage);// @Sql: �Ȳ����һ�����ڵ�����
+        // ׼������
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class, o -> {
+            o.setId(dbTenantPackage.getId()); // ���ø��µ� ID
+            o.setStatus(randomCommonStatus());
+        });
+        // mock ����
+        Long tenantId01 = randomLongId();
+        Long tenantId02 = randomLongId();
+        when(tenantService.getTenantListByPackageId(eq(reqVO.getId()))).thenReturn(
+                asList(randomPojo(TenantDO.class, o -> o.setId(tenantId01)),
+                        randomPojo(TenantDO.class, o -> o.setId(tenantId02))));
+        // ZS-CFG-003.B������ǰ�����ز�󶨡�������ʵ�⻧�У��󶨱��ײͣ��Ŵ��� updateTenantRoleMenu
+        tenantMapper.insert(randomPojo(TenantDO.class, o -> o.setId(tenantId01)
+                .setPackageId(reqVO.getId()).setStatus(CommonStatusEnum.ENABLE.getStatus())));
+        tenantMapper.insert(randomPojo(TenantDO.class, o -> o.setId(tenantId02)
+                .setPackageId(reqVO.getId()).setStatus(CommonStatusEnum.ENABLE.getStatus())));
+
+        // ����
+        tenantPackageService.updateTenantPackage(reqVO);
+        // У���Ƿ������ȷ
+        TenantPackageDO tenantPackage = tenantPackageMapper.selectById(reqVO.getId()); // ��ȡ���µ�
+        assertPojoEquals(reqVO, tenantPackage);
+        // У������⻧�Ĳ˵�
+        verify(tenantService).updateTenantRoleMenu(eq(tenantId01), eq(reqVO.getMenuIds()));
+        verify(tenantService).updateTenantRoleMenu(eq(tenantId02), eq(reqVO.getMenuIds()));
+    }
+
+    @Test
+    public void testUpdateTenantPackage_notExists() {
+        // ׼������
+        TenantPackageSaveReqVO reqVO = randomPojo(TenantPackageSaveReqVO.class);
+
+        // ����, �������쳣
+        assertServiceException(() -> tenantPackageService.updateTenantPackage(reqVO), TENANT_PACKAGE_NOT_EXISTS);
+    }
+
+    @Test
+    public void testDeleteTenantPackage_success() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class);
+        tenantPackageMapper.insert(dbTenantPackage);// @Sql: �Ȳ����һ�����ڵ�����
+        // ׼������
+        Long id = dbTenantPackage.getId();
+        // mock �⻧δʹ�ø��ײ�
+        when(tenantService.getTenantCountByPackageId(eq(id))).thenReturn(0L);
+
+        // ����
+        tenantPackageService.deleteTenantPackage(id);
+       // У�����ݲ�������
+       assertNull(tenantPackageMapper.selectById(id));
+    }
+
+    @Test
+    public void testDeleteTenantPackage_notExists() {
+        // ׼������
+        Long id = randomLongId();
+
+        // ����, �������쳣
+        assertServiceException(() -> tenantPackageService.deleteTenantPackage(id), TENANT_PACKAGE_NOT_EXISTS);
+    }
+
+    @Test
+    public void testDeleteTenantPackage_used() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class);
+        tenantPackageMapper.insert(dbTenantPackage);// @Sql: �Ȳ����һ�����ڵ�����
+        // ׼������
+        Long id = dbTenantPackage.getId();
+        // mock �⻧��ʹ�ø��ײ�
+        when(tenantService.getTenantCountByPackageId(eq(id))).thenReturn(1L);
+
+        // ����, �������쳣
+        assertServiceException(() -> tenantPackageService.deleteTenantPackage(id), TENANT_PACKAGE_USED);
+    }
+
+    @Test
+    public void testGetTenantPackagePage() {
+       // mock ����
+       TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class, o -> { // �Ȼ��ѯ��
+           o.setName("����֮��");
+           o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+           o.setRemark("Դ�����");
+           o.setCreateTime(buildTime(2022, 10, 10));
+       });
+       tenantPackageMapper.insert(dbTenantPackage);
+       // ���� name ��ƥ��
+       tenantPackageMapper.insert(cloneIgnoreId(dbTenantPackage, o -> o.setName("Դ��")));
+       // ���� status ��ƥ��
+       tenantPackageMapper.insert(cloneIgnoreId(dbTenantPackage, o -> o.setStatus(CommonStatusEnum.DISABLE.getStatus())));
+       // ���� remark ��ƥ��
+       tenantPackageMapper.insert(cloneIgnoreId(dbTenantPackage, o -> o.setRemark("����")));
+       // ���� createTime ��ƥ��
+       tenantPackageMapper.insert(cloneIgnoreId(dbTenantPackage, o -> o.setCreateTime(buildTime(2022, 11, 11))));
+       // ׼������
+       TenantPackagePageReqVO reqVO = new TenantPackagePageReqVO();
+       reqVO.setName("����֮��");
+       reqVO.setStatus(CommonStatusEnum.ENABLE.getStatus());
+       reqVO.setRemark("Դ��");
+       reqVO.setCreateTime(buildBetweenTime(2022, 10, 9, 2022, 10, 11));
+
+       // ����
+       PageResult<TenantPackageDO> pageResult = tenantPackageService.getTenantPackagePage(reqVO);
+       // ����
+       assertEquals(1, pageResult.getTotal());
+       assertEquals(1, pageResult.getList().size());
+       assertPojoEquals(dbTenantPackage, pageResult.getList().get(0));
+    }
+
+    @Test
+    public void testValidTenantPackage_success() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class,
+                o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        tenantPackageMapper.insert(dbTenantPackage);// @Sql: �Ȳ����һ�����ڵ�����
+
+        // ����
+        TenantPackageDO result = tenantPackageService.validTenantPackage(dbTenantPackage.getId());
+        // ����
+        assertPojoEquals(dbTenantPackage, result);
+    }
+
+    @Test
+    public void testValidTenantPackage_notExists() {
+        // ׼������
+        Long id = randomLongId();
+
+        // ����, �������쳣
+        assertServiceException(() -> tenantPackageService.validTenantPackage(id), TENANT_PACKAGE_NOT_EXISTS);
+    }
+
+    @Test
+    public void testValidTenantPackage_disable() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class,
+                o -> o.setStatus(CommonStatusEnum.DISABLE.getStatus()));
+        tenantPackageMapper.insert(dbTenantPackage);// @Sql: �Ȳ����һ�����ڵ�����
+
+        // ����, �������쳣
+        assertServiceException(() -> tenantPackageService.validTenantPackage(dbTenantPackage.getId()),
+                TENANT_PACKAGE_DISABLE, dbTenantPackage.getName());
+    }
+
+    @Test
+    public void testGetTenantPackage() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class);
+        tenantPackageMapper.insert(dbTenantPackage);// @Sql: �Ȳ����һ�����ڵ�����
+
+        // ����
+        TenantPackageDO result = tenantPackageService.getTenantPackage(dbTenantPackage.getId());
+        // ����
+        assertPojoEquals(result, dbTenantPackage);
+    }
+
+    @Test
+    public void testGetTenantPackageListByStatus() {
+        // mock ����
+        TenantPackageDO dbTenantPackage = randomPojo(TenantPackageDO.class,
+                o -> o.setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        tenantPackageMapper.insert(dbTenantPackage);
+        // ���� status ��ƥ��
+        tenantPackageMapper.insert(cloneIgnoreId(dbTenantPackage,
+                o -> o.setStatus(CommonStatusEnum.DISABLE.getStatus())));
+
+        // ����
+        List<TenantPackageDO> list = tenantPackageService.getTenantPackageListByStatus(
+                CommonStatusEnum.ENABLE.getStatus());
+        assertEquals(1, list.size());
+        assertPojoEquals(dbTenantPackage, list.get(0));
+    }
+
+}
+
+codex
+`updateTenant` 已使用锁定读返回的绑定和菜单；但 `createTenant` 仍丢弃套餐锁定读的返回值，继续传递锁前对象。我会继续核对授权校验和事务隔离，确认其实际影响。
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$p = '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/permission/PermissionServiceImpl.java'; "'$a = Get-Content -Encoding utf8 $p; 150..188 | ForEach-Object { '"'{0}: {1}' -f ("'$_ + 1), $a[$_] }; 415..477 | ForEach-Object { '"'{0}: {1}' -f ("'$_ + 1), $a[$_] }; $p = '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java'; "'$a = Get-Content -Encoding utf8 $p; 104..133 | ForEach-Object { '"'{0}: {1}' -f ("'$_ + 1), $a[$_] }; $p = '"'services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantPackageServiceImpl.java'; "'$a = Get-Content -Encoding utf8 $p; 67..106 | ForEach-Object { '"'{0}: {1}' -f ("'$_ + 1), $a[$_] }; rg -n '"'ZS-CFG-003.B|锁内读|隔离级别|PostgreSQL|READ_COMMITTED|REPEATABLE_READ' docs -g '*.md'" in E:\zszj-wt-cfg-003-b
+ succeeded in 188ms:
+151:     @Transactional(rollbackFor = Exception.class)
+152:     @Caching(evict = {
+153:             @CacheEvict(value = RedisKeyConstants.MENU_ROLE_ID_LIST,
+154:             allEntries = true),
+155:             @CacheEvict(value = RedisKeyConstants.PERMISSION_MENU_ID_LIST,
+156:             allEntries = true) // allEntries ������л��棬��Ҫһ�θ����漰���� menuIds �϶࣬�������������
+157:     })
+158:     public void assignRoleMenu(Long roleId, Set<Long> menuIds) {
+159:         // ZS-PERM-001.A������ǰУ���ɫ��������ֹ�۸����⻧��ɫ ID д�����
+160:         validateRoleForAssign(roleId);
+161:         // ZS-CFG-003.B���ײ�/��ɫȨ�޽��������⻧��ɫ�Ĳ˵���Ȩ���������ײͲ˵����Ӽ���������ؼ죬
+162:         // �ײͻ��պ��⻧����ԱҲ���ܾ���Ȩ��ڰ��ײ���˵����������κν�ɫ��
+163:         validateMenusInTenantPackage(roleId, menuIds);
+164:         // ��ý�ɫӵ�в˵����
+165:         Set<Long> dbMenuIds = convertSet(roleMenuMapper.selectListByRoleId(roleId), RoleMenuDO::getMenuId);
+166:         // ����������ɾ���Ĳ˵����
+167:         Set<Long> menuIdList = CollUtil.emptyIfNull(menuIds);
+168:         Collection<Long> createMenuIds = CollUtil.subtract(menuIdList, dbMenuIds);
+169:         Collection<Long> deleteMenuIds = CollUtil.subtract(dbMenuIds, menuIdList);
+170:         // ִ��������ɾ���������Ѿ���Ȩ�Ĳ˵����������κδ���
+171:         if (CollUtil.isNotEmpty(createMenuIds)) {
+172:             roleMenuMapper.insertBatch(CollectionUtils.convertList(createMenuIds, menuId -> {
+173:                 RoleMenuDO entity = new RoleMenuDO();
+174:                 entity.setRoleId(roleId);
+175:                 entity.setMenuId(menuId);
+176:                 return entity;
+177:             }));
+178:         }
+179:         if (CollUtil.isNotEmpty(deleteMenuIds)) {
+180:             roleMenuMapper.deleteListByRoleIdAndMenuIds(roleId, deleteMenuIds);
+181:         }
+182:     }
+183: 
+184:     @Override
+185:     @Transactional(rollbackFor = Exception.class)
+186:     @Caching(evict = {
+187:             @CacheEvict(value = RedisKeyConstants.MENU_ROLE_ID_LIST,
+188:                     allEntries = true), // allEntries ������л��棬�˴��޷������� roleId ��Ӧ�� menu ������
+189:             @CacheEvict(value = RedisKeyConstants.USER_ROLE_ID_LIST,
+416:     private void validateRoleForAssign(Long roleId) {
+417:         RoleDO role = roleService.getRole(roleId);
+418:         if (role == null) {
+419:             throw exception(ROLE_NOT_EXISTS);
+420:         }
+421:         validateTenantScope(role.getTenantId(), roleId, PERMISSION_ASSIGN_ROLE_OTHER_TENANT);
+422:     }
+423: 
+424:     /**
+425:      * ZS-CFG-003.B��У��˵���Ȩ�������⻧�ײ����ɣ��ײ�/��ɫȨ�޽����ġ�д��ջ�������
+426:      *
+427:      * <p>�ײͻ��գ���С���� {@code TenantServiceImpl#updateTenantRoleMenu} �Ѹ���ɫ�˵�����Ϊ
+428:      * ���ײ͵Ľ�����ص������������������Ϊ�Ӽ�����Ȼͨ��������У���ס���ǡ���Ȩ��ڡ���
+429:      * �ײͻ��պ��⻧����Ա���������ײ���˵����뱻�ܾ���"�ײͻ��պ�ֱ��Ҳ�ܾ�"��д����ߣ���
+430:      * ��·������Ȩ����һ�����ɽ�ɫ�˵������� + ZS-PERM-004.A ��������֤��
+431:      *
+432:      * <p>ϵͳ�⻧��{@link TenantDO#PACKAGE_ID_SYSTEM}��packageId=0���˵�ȫ���������ײ�Լ����
+433:      * �ײͼ�¼�����ڣ������ԣ����У��⻧����ʱǿ�ư��ײͣ���״̬�����ܳ�����ɾ����̬��
+434:      * �� deleteTenantPackage ��У��"�⻧����ʹ�ü��ܾ�ɾ��"��
+435:      */
+436:     private void validateMenusInTenantPackage(Long roleId, Set<Long> menuIds) {
+437:         if (CollUtil.isEmpty(menuIds)) {
+438:             return; // �ռ���=��Ȩ�������ײ�Լ��
+439:         }
+440:         RoleDO role = roleService.getRole(roleId);
+441:         // ZS-CFG-003.B codex r0 P1����ȡ�⻧������У�顪�����ײͱ��������updateTenantRoleMenu����
+442:         // �⻧���ײͣ�updateTenant������ͬһ���⻧��������ס��У��ͨ���������ײ���������д��Խ��˵����� TOCTOU��
+443:         // ���������� @Transactional �У����������ύ
+444:         TenantDO tenant = tenantMapper.selectByIdForUpdate(role.getTenantId());
+445:         if (tenant == null) {
+446:             throw exception(TENANT_NOT_EXISTS); // codex r0 P2��ȱ��¼�����⣨��ͨ��ɫ���ý�ȱʧ�������������Ȩ��
+447:         }
+448:         if (Objects.equals(tenant.getPackageId(), TenantDO.PACKAGE_ID_SYSTEM)) {
+449:             return; // ϵͳ�⻧��ʹ���ײͣ��˵�ȫ��
+450:         }
+451:         TenantPackageDO tenantPackage = tenantPackageMapper.selectById(tenant.getPackageId());
+452:         if (tenantPackage == null) {
+453:             throw exception(TENANT_PACKAGE_NOT_EXISTS); // codex r0 P2���ײ�ȱʧ�ܾ�������ͬ��ϵͳ�⻧����
+454:         }
+455:         Set<Long> packageMenuIds = CollUtil.emptyIfNull(tenantPackage.getMenuIds());
+456:         List<Long> exceedMenuIds = menuIds.stream()
+457:                 .filter(menuId -> !packageMenuIds.contains(menuId))
+458:                 .collect(Collectors.toList());
+459:         if (CollUtil.isNotEmpty(exceedMenuIds)) {
+460:             throw exception(TENANT_PACKAGE_MENU_EXCEED, exceedMenuIds, tenantPackage.getName());
+461:         }
+462:     }
+463: 
+464:     /**
+465:      * У������Ȩ�޲��ż��ϣ�ÿ�����ű�����ڣ��ҹ�����ǰ�����⻧��
+466:      */
+467:     private void validateDeptListForAssign(Collection<Long> deptIds) {
+468:         if (CollUtil.isEmpty(deptIds)) {
+469:             return;
+470:         }
+471:         Map<Long, DeptDO> deptMap = convertMap(deptService.getDeptList(deptIds), DeptDO::getId);
+472:         deptIds.forEach(deptId -> {
+473:             DeptDO dept = deptMap.get(deptId);
+474:             if (dept == null) {
+475:                 throw exception(DEPT_NOT_FOUND);
+476:             }
+477:             validateTenantScope(dept.getTenantId(), deptId, PERMISSION_ASSIGN_DEPT_OTHER_TENANT);
+478:         });
+105:     // ZS-PERM-004.A codex r1 P1��createTenant ԭҲ�� @DSTransactional���滻ע��ʱ�˴���©����
+106:     // ���벹 @Transactional�������⻧�������ڲ���ɫ/��Ȩ�����ֶ��ύ����;ʧ�����²������⻧
+107:     @Transactional(rollbackFor = Exception.class)
+108:     @DataPermission(enable = false) // �μ� https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1154 ˵��
+109:     public Long createTenant(TenantSaveReqVO createReqVO) {
+110:         // У���⻧�����Ƿ��ظ�
+111:         validTenantNameDuplicate(createReqVO.getName(), null);
+112:         // У���⻧�����Ƿ��ظ�
+113:         validTenantWebsiteDuplicate(createReqVO.getWebsites(), null);
+114:         // У���ײͱ�����
+115:         TenantPackageDO tenantPackage = tenantPackageService.validTenantPackage(createReqVO.getPackageId());
+116:         // ZS-CFG-003.B codex r1 P1�������⻧ͬ����ȡ�ײ����������⻧��δ�󶨡��������������ö���У�
+117:         // �������ײ�����������Ա��ɫ���밴��������ײͲ˵�����
+118:         tenantPackageMapper.selectByIdForUpdate(createReqVO.getPackageId());
+119: 
+120:         // �����⻧
+121:         TenantDO tenant = BeanUtils.toBean(createReqVO, TenantDO.class);
+122:         tenantMapper.insert(tenant);
+123:         // �����⻧�Ĺ���Ա
+124:         TenantUtils.execute(tenant.getId(), () -> {
+125:             // ������ɫ
+126:             Long roleId = createRole(tenantPackage);
+127:             // �����û����������ɫ
+128:             Long userId = createUser(roleId, createReqVO);
+129:             // �޸��⻧�Ĺ���Ա
+130:             tenantMapper.updateById(new TenantDO().setId(tenant.getId()).setContactUserId(userId));
+131:         });
+132:         return tenant.getId();
+133:     }
+134: 
+68: 
+69:     @Override
+70:     // ZS-PERM-004.A codex r0 P1������ Spring @Transactional��ͬ TenantServiceImpl����ͳһ�����������ڣ��������ύͬ��
+71:     @Transactional(rollbackFor = Exception.class)
+72:     public void updateTenantPackage(TenantPackageSaveReqVO updateReqVO) {
+73:         // У��˵��������ùر�ģ�飨ZS-CFG-003.A��
+74:         validateTenantPackageMenus(updateReqVO.getMenuIds());
+75:         // ZS-CFG-003.B codex r2 P1����ȡ���ײ������ٶ�ȡ���������ײ͸�������ǰ��ֵ�ж�"�˵�δ�仯"
+76:         // ���������Ľ������봮�л����Ƚϻ�׼һ��ȡ������
+77:         tenantPackageMapper.selectByIdForUpdate(updateReqVO.getId());
+78:         // У�����
+79:         TenantPackageDO tenantPackage = validateTenantPackageExists(updateReqVO.getId());
+80:         // У���ײ����Ƿ��ظ�
+81:         validateTenantPackageNameUnique(updateReqVO.getId(), updateReqVO.getName());
+82:         // ����
+83:         TenantPackageDO updateObj = BeanUtils.toBean(updateReqVO, TenantPackageDO.class);
+84:         tenantPackageMapper.updateById(updateObj);
+85:         // ����˵������仯�����޸�ÿ���⻧�Ĳ˵�
+86:         if (!CollUtil.isEqualList(tenantPackage.getMenuIds(), updateReqVO.getMenuIds())) {
+87:             List<TenantDO> tenants = tenantService.getTenantListByPackageId(tenantPackage.getId());
+88:             // ZS-CFG-003.B codex r0 P1�����⻧ id ����������������⻧������ȡ˳��ȷ�������Ⲣ���ײ͸�������
+89:             tenants.sort(java.util.Comparator.comparing(TenantDO::getId));
+90:             tenants.forEach(tenant -> {
+91:                 // ZS-CFG-003.B codex r1 P1�������ز�󶨡������������ײ͡�������ö�ٿ��պ���⻧����/�������ײͣ�
+92:                 // �Ѳ��ٰ󶨱��ײ͵��⻧��������������Ȩ�ɻ����ײ͵�����Լ��������ֹ�����������ײ͵Ĳ˵�
+93:                 TenantDO locked = tenantMapper.selectByIdForUpdate(tenant.getId());
+94:                 if (locked == null || !Objects.equals(locked.getPackageId(), tenantPackage.getId())) {
+95:                     log.info("[updateTenantPackage][�⻧({}) �ѻ����ײͣ��������ײ�����]", tenant.getId());
+96:                     return;
+97:                 }
+98:                 tenantService.updateTenantRoleMenu(tenant.getId(), updateReqVO.getMenuIds());
+99:             });
+100:         }
+101:     }
+102: 
+103:     @Override
+104:     public void deleteTenantPackage(Long id) {
+105:         // У�����
+106:         validateTenantPackageExists(id);
+107:         // У������ʹ��
+docs\01-底座代码复用与改造方案.md:25:| 核心数据库 | PostgreSQL，实施前核验本地服务器版本，优先 17、可接受 16 | 从第一天作为唯一关系数据库基线，不再先用 MySQL 后迁移 |
+docs\01-底座代码复用与改造方案.md:40:6. **PostgreSQL 从第一天成为唯一关系数据库。** 当前上游具备 PostgreSQL 驱动、初始化脚本和方言基础，但仍需先修复已识别的 MySQL 专用 SQL，并用真实 PostgreSQL 完成 System/Infra/BPM 回归。
+docs\01-底座代码复用与改造方案.md:65:- 下一阶段按需求规格进入“固定版本、PostgreSQL 适配、迁入第一批底座代码”。
+docs\01-底座代码复用与改造方案.md:145:- 五类清理 Mapper 仍包含 `DELETE ... LIMIT`，完整 System/Infra PostgreSQL 验收未闭环。
+docs\01-底座代码复用与改造方案.md:451:但当前公开版本仍处于 Beta，且需要额外的 PostgreSQL/pgvector、全文检索和 Rerank 基础设施。建议先复用设计思想，用评测证明收益后再增加组件，避免 P0 一次引入过多基础设施。
+docs\01-底座代码复用与改造方案.md:532:- 核心关系数据库：已确认从第一天使用 PostgreSQL，不再建立 MySQL 过渡基线。优先 PostgreSQL 17，可接受 PostgreSQL 16；本地服务器的实际版本、连接方式和资源配置仍需在实施前核验。
+docs\01-底座代码复用与改造方案.md:535:- PostgreSQL 兼容门禁：先修复日志清理、任务日志清理和 OAuth2 Token 清理中的 `DELETE ... LIMIT` 等 MySQL 专用 SQL；System、Infra、Quartz、租户、权限和代码生成必须在真实 PostgreSQL 上验收。
+docs\01-底座代码复用与改造方案.md:592:2026-08-29 旧后端 Docker Compose 的依赖上下文曾发现不完整；本轮没有重新验收设计专项供体的部署。新项目需按核心应用、PostgreSQL、Redis、对象存储和网络边界编制并验证独立配置；向量库和 AI Runtime 等待 D-11，不提前部署。
+docs\01-底座代码复用与改造方案.md:603:- 核验本地 PostgreSQL 主版本、字符集、时区、备份和连接边界，创建项目独立数据库与低权限账号；
+docs\01-底座代码复用与改造方案.md:604:- 将 PostgreSQL 初始化脚本和后续版本化迁移设为唯一数据库基线；
+docs\01-底座代码复用与改造方案.md:609:验收：来源可追溯、构建可重复、PostgreSQL 空库可以重复初始化，文档一致性检查可本地运行，尚未引入业务域代码。
+docs\01-底座代码复用与改造方案.md:615:- 修复并测试当前已识别的 PostgreSQL 方言阻断点；
+docs\01-底座代码复用与改造方案.md:617:- 先写登录、权限、文件和 PostgreSQL 回归测试，再做改造。
+docs\01-底座代码复用与改造方案.md:619:验收：System、Infra、Quartz、日志/Token 清理在真实 PostgreSQL 上通过；Web/小程序基础登录与导航可用。该阶段不提前固化 D-09 的身份/组织模型。
+docs\01-底座代码复用与改造方案.md:681:11. 不建立 MySQL 临时基线，也不接受“先在 MySQL 开发、以后再迁 PostgreSQL”的双轨方案。
+docs\01-底座代码复用与改造方案.md:703:| D-08 | 已确认 | PostgreSQL 是唯一核心关系数据库；不建立 MySQL 过渡基线；向量库另行决策 | 底座初始化时生效 |
+docs\01-底座代码复用与改造方案.md:717:2. 从第一天使用 PostgreSQL，并把真实 PostgreSQL 回归作为每个模块的准入门禁；
+docs\01-底座代码复用与改造方案.md:734:| 2026-08-29 | V0.2 | 同步 D-01～D-06 已确认；将 D-08 更新为 PostgreSQL 唯一数据库基线；加入 D-07 薄纵向链建议、D-09～D-11 状态、PostgreSQL 适配门禁及一期需求主台账链接 |
+docs\04-源码迁入与验证报告.md:4:> 结论：完整源码复制和来源校验完成；二次开发、真实 PostgreSQL、多端联调与上线尚未完成。\
+docs\04-源码迁入与验证报告.md:45:| 后端原生测试 | 通过：83 套件，785 个测试中 767 通过、18 跳过，0 失败/错误 | [机器可读统计](../third_party/backend-test-summary.json)；System/Infra 基线主要使用 H2 与 jedismock，不证明 PostgreSQL 或 Provider 真实集成 |
+docs\04-源码迁入与验证报告.md:51:| 真实 PostgreSQL、整站启动、多端登录/权限联调 | 未执行 | 不能用打包和 H2 通过代替 |
+docs\04-源码迁入与验证报告.md:84:详细开发位置、前置关系、正向/反向验收与执行入口见 [12 批次开发顺序](03-底座二次开发顺序与验收标准.md)。当前可以开始 B01 工具链/配置/白名单修整、B02 PostgreSQL 适配，不需要等待 D-09；D-09 未批准前不能把设计 C 端账号直接变成全平台员工模型。
+docs\04-源码迁入与验证报告.md:89:| B02 | PostgreSQL、版本化迁移、五类清理 SQL、Quartz | 新建 PG 库可复现初始化，升级与重复执行安全；五类清理、分页、ID、事务和 Quartz 真实 PG 通过 |
+docs\04-源码迁入与验证报告.md:100:五个 PostgreSQL 已知阻断位置：`JobLogMapper`、`ApiAccessLogMapper`、`ApiErrorLogMapper`、`OAuth2AccessTokenMapper`、`OAuth2RefreshTokenMapper` 中的 `DELETE ... LIMIT`。未发现可直接替代这些 Mapper 的供体实现或 SQL 方言改写拦截器，必须修复并在真实 PG 上验证。
+docs\02-一期底座需求规格与待决策台账.md:58:2. 使用 PostgreSQL 作为唯一核心关系数据库；
+docs\02-一期底座需求规格与待决策台账.md:62:6. 验证 PostgreSQL 下的初始化、事务、ID、Quartz、分页、批量清理和代码生成；
+docs\02-一期底座需求规格与待决策台账.md:72:- PostgreSQL 空库可以通过版本化迁移重复初始化；
+docs\02-一期底座需求规格与待决策台账.md:73:- System、Infra、Quartz、登录、租户、权限、文件、日志和 Token 清理在真实 PostgreSQL 上通过；
+docs\02-一期底座需求规格与待决策台账.md:93:| D-08 | PostgreSQL 是唯一核心关系数据库 | 不建立 MySQL 过渡基线，不安排后续 MySQL→PostgreSQL 迁移 |
+docs\02-一期底座需求规格与待决策台账.md:111:- PostgreSQL 驱动、数据库脚本、迁移、测试和运行配置；
+docs\02-一期底座需求规格与待决策台账.md:133:- PostgreSQL 独立数据库和低权限运行账号；
+docs\02-一期底座需求规格与待决策台账.md:135:- PostgreSQL 集成测试环境；
+docs\02-一期底座需求规格与待决策台账.md:166:### 5.2 PostgreSQL
+docs\02-一期底座需求规格与待决策台账.md:170:| FND-DB-001 | PostgreSQL 是唯一关系数据库基线 | 开发、自动化测试和部署配置不依赖 MySQL 实例 |
+docs\02-一期底座需求规格与待决策台账.md:173:| FND-DB-004 | PostgreSQL 主版本必须固定 | 优先 17、可接受 16；本地服务器实际版本核验后写入环境说明 |
+docs\02-一期底座需求规格与待决策台账.md:176:| FND-DB-007 | 不允许 MySQL 专用 SQL 混入 | 静态扫描和真实 PostgreSQL 测试覆盖常见 MySQL 方言 |
+docs\02-一期底座需求规格与待决策台账.md:177:| FND-DB-008 | 已知清理任务必须适配 | 访问日志、错误日志、任务日志、Access Token、Refresh Token 批量清理在 PostgreSQL 上通过 |
+docs\02-一期底座需求规格与待决策台账.md:178:| FND-DB-009 | Quartz 必须使用 PostgreSQL 表和方言 | 定时任务创建、执行、并发和清理通过真实 PostgreSQL 验证 |
+docs\02-一期底座需求规格与待决策台账.md:179:| FND-DB-010 | 代码生成器必须读取 PostgreSQL 元数据 | 表、列、主键、类型、注释和索引识别结果正确 |
+docs\02-一期底座需求规格与待决策台账.md:180:| FND-DB-011 | 时间、布尔、长文本和 JSON 映射必须统一 | Java 与 PostgreSQL 的读写、排序、筛选和序列化结果可预测 |
+docs\02-一期底座需求规格与待决策台账.md:191:这些阻断点必须先有 PostgreSQL 失败测试，再改为可移植的批量删除实现。仅修改连接地址不算完成 PostgreSQL 适配。
+docs\02-一期底座需求规格与待决策台账.md:224:| FND-SYS-002 | 登录、Token 和在线会话可用 | 登录、刷新、退出、过期和清理路径在 PostgreSQL 上通过 |
+docs\02-一期底座需求规格与待决策台账.md:248:| FND-BPM-004 | BPM 在 PostgreSQL 上单独验收 | 流程部署、发起、通过、拒绝、撤回、转办和分页查询通过 |
+docs\02-一期底座需求规格与待决策台账.md:318:- PostgreSQL 适配；
+docs\02-一期底座需求规格与待决策台账.md:357:| PEND-004 | D-08 | 实施前核验（方案已备） | 本地 PostgreSQL 实际主版本、实例位置、备份方式和可用资源 | PostgreSQL 17；现有为 16 可直接使用；14 不作新项目基线。建库/授权/备份方案与核验命令清单已交付于 services/zhongshu-core/docs/数据库环境方案.md，环境落地后按清单逐项回填 | 数据库初始化 | 已备方案（ZS-DB-002，2026-09-09）；核验待环境授权 |
+docs\02-一期底座需求规格与待决策台账.md:367:- 本地 PostgreSQL 版本和扩展情况；
+docs\02-一期底座需求规格与待决策台账.md:369:- PostgreSQL 集成测试运行方式；
+docs\02-一期底座需求规格与待决策台账.md:370:- Quartz 和 Flowable 的 PostgreSQL 方言配置；
+docs\02-一期底座需求规格与待决策台账.md:383:| 阶段 0：来源与 PostgreSQL 基线 | 固定 SHA、来源清单、独立工程、数据库核验、初始化迁移 | D-01、D-02、D-05、D-08 已确认 | 可重复构建和空库初始化报告 |
+docs\02-一期底座需求规格与待决策台账.md:385:| 阶段 1A：System/Infra | 登录、角色、菜单、字典、文件、日志、任务、Token | 阶段 0 通过 | 真实 PostgreSQL 集成测试与 Web 基础验收 |
+docs\02-一期底座需求规格与待决策台账.md:402:| D-06 | FND-BPM-001～004 | 阶段 2 | Flowable PostgreSQL 集成和领域状态幂等测试 |
+docs\02-一期底座需求规格与待决策台账.md:404:| D-08 | FND-DB-001～012、PEND-004～005 | 阶段 0/1A | 空库迁移、真实 PostgreSQL 集成和恢复验证 |
+docs\02-一期底座需求规格与待决策台账.md:428:文档更新本身只能达到 `DOCUMENTED`，不能据此声称 PostgreSQL、底座或业务链已经运行。
+docs\02-一期底座需求规格与待决策台账.md:507:| 2026-08-29 | V0.1 | 记录 D-01～D-06 已确认；将 PostgreSQL 设为唯一数据库基线；加入一期底座需求、PostgreSQL 兼容门禁、薄纵向链建议、D-07/D-09～D-11 台账和文档同步规则 |
+docs\02-一期底座需求规格与待决策台账.md:509:| 2026-08-29 | V0.3 | 修正 PostgreSQL 阻断方法名；将身份切换与 `FND-MINI-002` 收紧到 D-09/阶段 1B；新增 `FND-DOC-001～003`、实施证据登记和自动检查契约 |
+docs\03-底座二次开发顺序与验收标准.md:6:> 决策边界：JDK 17、PostgreSQL、模块化单体、Flowable、Vue3 Web、Admin UniApp 不变；D-09 已确认（2026-09-10），D-07 方向已采纳、细节待阶段 2 前确认，D-10、D-11 后置\
+docs\03-底座二次开发顺序与验收标准.md:21:当前已证明：13,939 文件复制校验通过；25 个演示凭据净化差异可追溯；校验器 13 项单测通过；后端默认 21 个 Maven 模块打包通过，83 套件共 785 个测试中 767 通过、18 跳过，0 失败/错误。后端基线测试主要使用 H2/jedismock，不证明真实 PostgreSQL。
+docs\03-底座二次开发顺序与验收标准.md:23:Web 生产构建通过，但 `ts:check` 存在上游基线错误；UniApp 离线缺 `@dcloudio/uni-app@3.0.0-4070620250821001`，类型/构建未执行。真实 PostgreSQL 业务启动、跨组织权限、真机、微信支付、AI Provider 和真实角色 UAT 均未验收。完整记录见 [源码迁入与验证报告](04-源码迁入与验证报告.md)。
+docs\03-底座二次开发顺序与验收标准.md:30:2. PostgreSQL 是唯一核心关系数据库；不得先以 MySQL 跑通后再迁移，也不得用 H2 代替真实 PostgreSQL 验收。
+docs\03-底座二次开发顺序与验收标准.md:44:| WP-03 PostgreSQL | PG 驱动、初始化 SQL、MyBatis 方言 | 五类清理、Quartz、分页、ID、JSON/时间/布尔 | 业务索引按真实查询补齐 | B02 |
+docs\03-底座二次开发顺序与验收标准.md:104:### B02：真实 PostgreSQL 与版本化迁移
+docs\03-底座二次开发顺序与验收标准.md:112:- 执行入口：新增 `PostgresFoundationIntegrationTest` 与五个清理回归测试，CI 使用临时 PostgreSQL 实例运行。
+docs\03-底座二次开发顺序与验收标准.md:208:| 真实 PostgreSQL/Redis/对象存储 | B02～B05 | 版本、低权限账号、启动日志、迁移结果、备份恢复和测试报告 | 仅源码/本地配置，不标“环境通过” |
+docs\05-底座模块分析与开发任务清单.md:59:V1.6 变更与验证记录（2026-09-09）：M01 工程骨架六项全部完成（ZS-ENG-001 白名单 295040b3、002 JDK17 基线 f58fd09b、003 环境配置分离 38430267、004 关闭模拟认证 77b5f090、005 收紧管理端点 7c8fd2c0、006 任务启停边界 4557cc00）；M02 推进七项——ZS-DB-001.A PG 驱动与数据源合同（1f2eb7b6）、ZS-DB-003 Flyway 迁移机制（9106476f）、ZS-DB-004 V1 基线迁移与真实 PG 双库验证（391faeef）、ZS-DB-005 升级与恢复规程含 V2 qrtz 回填与三段演练（f7702928）、ZS-DB-002 环境方案与 PEND-004 清单（99e1a93c）、ZS-DB-019.A Docker 夹具自证三条语义（3a0d5d04）；另完成 ZS-CFG-001.A 秘密门禁（ebc7c9ba）、ZS-CFG-003.A 功能目录与套餐校验（2160d600）、ZS-CLIENT-005.A 构建与类型基线门禁（65272cdf）、ZS-GOV-001 文档一致性检查器（1d618920）、ZS-OPS-001.A 聚合流水线骨架（bda57b95）。持续防线：`node scripts/ops/run-local-gates.mjs` 10/10 通过（本地与 CI 同规则）。剩余 66 项待开发任务的推进前提：B02 环境（JDK 17 + Maven ≥3.8 + PostgreSQL 17，按数据库环境方案落地）解锁 M02 真实库验证与 ZS-OPS-001.B；D-07/D-09 决策解锁 M05/M06/B07~B09；B03~B06 联验环境解锁 M03/M04/M08~M12 运行验证；D-10/D-11 与终端范围解锁微信/支付/AI/App。本记录不表示任何主任务已验收。
+docs\05-底座模块分析与开发任务清单.md:132:### ZS-DB-001：完成 PostgreSQL 驱动与唯一运行数据源接入
+docs\05-底座模块分析与开发任务清单.md:257:- 众墅要求与现状：[ID 环境处理器][E12] 已含 PostgreSQLDelegate 选择逻辑；[Quartz SQL][E11] 已有 11 张表；local 默认不启用 Quartz，因此不能用 local 启动代替调度验收。
+docs\05-底座模块分析与开发任务清单.md:581:- 分批交付：见第 16.1 节 ZS-CFG-003.A、ZS-CFG-003.B；子项分别登记证据，全部适用子项验收后才能将本主任务标为已验收。
+docs\05-底座模块分析与开发任务清单.md:726:### ZS-BPM-001：建立 BPM 独立装配与 PostgreSQL 验收
+docs\05-底座模块分析与开发任务清单.md:845:| 菜单 | [接口](../services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/controller/admin/permission/MenuController.java)、[Web 页面](../apps/zhongshu-admin-web/src/views/system/menu/index.vue) | ZS-CFG-003.A、ZS-CFG-003.B | SYS-MENU-P / SYS-MENU-N | 目录/菜单/按钮配置与授权后的导航一致；合法父子关系可保存 | 非法父子关系、有引用删除和关闭模块入口受控；无权直调拒绝 |
+docs\05-底座模块分析与开发任务清单.md:983:| ZS-CFG-003.B | B03 | ZS-CFG-003.A、ZS-PERM-004.A | 套餐/角色权限交集与变更生效 | 套餐回收后直调拒绝；扩大套餐不自动扩大普通角色授权 |
+docs\05-底座模块分析与开发任务清单.md:993:| ZS-CLIENT-001.A | B06 | ZS-CLIENT-005.A、ZS-CLIENT-003、ZS-CFG-003.B | 技术账号 Web 导航/缓存与关闭模块守卫 | 直达/刷新/退出/撤权正确；不等待业务字段接口 |
+docs\05-底座模块分析与开发任务清单.md:995:| ZS-CLIENT-002.A | B06 | ZS-CLIENT-005.A、ZS-CLIENT-003、ZS-CFG-003.B | 技术权限移动导航、TabBar 和直达守卫 | 登录但无权限/未知页面/关闭模块拒绝，冷启动一致 |
+docs\05-底座模块分析与开发任务清单.md:1008:| ZS-SYS-001.A | B03 | ZS-DB-019.A、ZS-SEC-012.A、ZS-SEC-008、ZS-PERM-001.A、ZS-PERM-004.A、ZS-CFG-001.B、ZS-CFG-002.B、ZS-CFG-003.B、ZS-CFG-004、ZS-IAM-003 | 七类基础管理真实 PG/API 回归 | 见 15.1 矩阵全部正反向用例，不等待 Web E2E |
+docs\reviews\codex-hotfix-A.md:35:- A-r1-2：PostgreSQL schema 无 email 唯一约束，事务可提交；但应用层 `validateEmailUnique` → `AdminUserMapper.selectByEmail`（`selectOne`）在重复行时抛异常。
+docs\reviews\codex-hotfix-A.md:102:| PostgreSQL 实际执行验证 | ⚠️ 未验证 | Docker 不可用；SQLite 内存 DML 验证通过；真实 PG 验证归 B02 |
+docs\reviews\codex-hotfix-A-r2.raw.md:70:鐦戦惃?PostgreSQL 鎼?--     閿涙碍鏌婄憗鍛氨閻╁瓨甯存担璺ㄦ暏閺€鐟版倳閸氬海娈?sql/postgresql/ruoyi-vue-pr
+docs\reviews\codex-hotfix-A-r2.raw.md:947:No actionable regressions were identified. The guards match tenant and soft-delete semantics, and isolated SQL checks passed collision and rerun scenarios. PostgreSQL execution could not be verified because Docker access was denied.
+docs\reviews\codex-hotfix-C-r1.raw.md:81:"]? 鎺ュ彈鍙嶅紩鍙?鍙屽紩鍙?瑁稿啓锛涙柊澧炴柟瑷€瑕嗙洊鏂█锛屾樉寮忚姹?        MySQL 涓?PostgreSQL 涓荤瀛愰兘杩涘叆閫愯鏍稿锛屾潨缁濄€屽皯鎵竴涓柟瑷€銆嶇殑闈欓粯婕忔銆?    
+docs\reviews\codex-hotfix-C-r1.raw.md:190:冭繃闂ㄧ锛坔otfix-C 婕忔敼鐨勭 8 涓柟瑷€锛夈€?+  // 鏄惧紡鏂█ MySQL 涓?PostgreSQL 涓荤瀛愰兘纭疄杩涘叆浜嗛€愯鏍稿锛屾潨缁濄€屽皯鎵竴涓柟瑷€銆嶇殑闈欓粯婕忔銆?+  asse
+docs\reviews\codex-hotfix-C-r1.raw.md:194:+    `PostgreSQL 涓荤瀛愭湭琚鎴峰悓鍩熼棬绂佽鐩? ${PG_SEED}`);
+docs\reviews\codex-hotfix-C-r1.raw.md:348:"]? 鎺ュ彈鍙嶅紩鍙?鍙屽紩鍙?瑁稿啓锛涙柊澧炴柟瑷€瑕嗙洊鏂█锛屾樉寮忚姹?        MySQL 涓?PostgreSQL 涓荤瀛愰兘杩涘叆閫愯鏍稿锛屾潨缁濄€屽皯鎵竴涓柟瑷€銆嶇殑闈欓粯婕忔銆?    
+docs\reviews\codex-hotfix-C-r1.raw.md:457:冭繃闂ㄧ锛坔otfix-C 婕忔敼鐨勭 8 涓柟瑷€锛夈€?+  // 鏄惧紡鏂█ MySQL 涓?PostgreSQL 涓荤瀛愰兘纭疄杩涘叆浜嗛€愯鏍稿锛屾潨缁濄€屽皯鎵竴涓柟瑷€銆嶇殑闈欓粯婕忔銆?+  asse
+docs\reviews\codex-hotfix-C-r1.raw.md:461:+    `PostgreSQL 涓荤瀛愭湭琚鎴峰悓鍩熼棬绂佽鐩? ${PG_SEED}`);
+docs\reviews\codex-hotfix-C-r1.raw.md:765:No actionable regressions were found. All 24 naming and migration-tool tests passed. Live PostgreSQL validation was una
+docs\reviews\codex-hotfix-C-r1.raw.md:767:No actionable regressions were found. All 24 naming and migration-tool tests passed. Live PostgreSQL validation was unavailable because Docker access was denied.
+docs\reviews\codex-hotfix-A.raw.md:188:   4: -- 閫傜敤锛氫互 brand-rename-baseline锛堝惈锛変箣鍓嶇瀛愬垵濮嬪寲銆佸瓨鍦ㄦ棫浜у搧鏍囪瘑鐨?PostgreSQL 搴?
+docs\reviews\codex-hotfix-A.raw.md:1444:produced with isolated in-memory DML tests; PostgreSQL execution was unavailabl
+docs\reviews\codex-hotfix-A.raw.md:1454:com` instead. The shipped PostgreSQL schema has no unique email constraint, so 
+docs\reviews\codex-hotfix-A.raw.md:1466:s through `BaseDO`'s `@TableLogic`, and the shipped PostgreSQL schema has no un
+docs\reviews\codex-hotfix-A.raw.md:1470:The baseline fixes work, but the new changes can introduce duplicate active emails and unnecessarily block migration on deleted usernames. These cases were reproduced with isolated in-memory DML tests; PostgreSQL execution was unavailable because Docker access was denied.
+docs\reviews\codex-hotfix-A.raw.md:1475:  If another active account in tenant 1 already owns `zszj@example.com`, this update creates duplicate emails; the previous migration produced `yudao@example.com` instead. The shipped PostgreSQL schema has no unique email constraint, so the transaction succeeds, but subsequent profile or administrative updates invoke `validateEmailUnique` 鈫?`AdminUserMapper.selectByEmail`, whose `selectOne` now throws on the duplicate rows. Check target-email ownership before applying this mapping and explicitly skip or report conflicts.
+docs\reviews\codex-hotfix-A.raw.md:1478:  If tenant 1 previously created and deleted a `zszj` account, this guard still treats that deleted row as an occupied username and permanently skips the demo-account rename. Application username validation and login exclude deleted users through `BaseDO`'s `@TableLogic`, and the shipped PostgreSQL schema has no unique username constraint requiring this restriction. Consequently, no active account is available under the intended new login despite the migration committing successfully. Limit the blocking rows to `deleted = 0`.
+docs\reviews\codex-hotfix-A-r1.raw.md:349:   4: -- 閫傜敤锛氫互 brand-rename-baseline锛堝惈锛変箣鍓嶇瀛愬垵濮嬪寲銆佸瓨鍦ㄦ棫浜у搧鏍囪瘑鐨?PostgreSQL 搴?
+docs\reviews\codex-hotfix-A-r1.raw.md:798:vious migration produced `yudao@example.com` instead. The shipped PostgreSQL sc
+docs\reviews\codex-hotfix-A-r1.raw.md:1714: commit, this creates duplicate active emails; the PostgreSQL schema permits th
+docs\reviews\codex-hotfix-A-r1.raw.md:1723:  If another non-deleted account in tenant 1 has `zszj@iocoder.cn`, this guard passes and assigns `zszj@example.com` to account 100. The subsequent generic domain replacement assigns the same email to the other account. Unlike the parent commit, this creates duplicate active emails; the PostgreSQL schema permits them, but profile and administrative updates through `validateEmailUnique` 鈫?`selectByEmail` 鈫?`selectOne` then throw. Check both existing destination addresses and addresses that the subsequent replacement will map to that destination.
+docs\reviews\codex-ZS-BRAND-002.md:12:> The renamed database mappings no longer match the shipped PostgreSQL schema. The new naming verifier also rejects valid generated sources after compilation.
+docs\reviews\codex-ZS-BRAND-002.md:17:  > When initializing PostgreSQL from the shipped `sql/postgresql/ruoyi-vue-pro.sql`, the database still contains `yudao_demo01_contact` and `yudao_demo01_contact_seq`, not these renamed objects. Consequently, the enabled infra module's contact CRUD endpoints fail with missing-relation errors; the demo02/demo03 mappings have the same mismatch. Update the schema and migration together with these annotations, or defer the annotation changes until the SQL rename lands.
+docs\reviews\codex-ZS-BRAND-004.A.md:12:> The patch introduces unsafe account migration, conflicting tenant aliases, and a replacement workflow that corrupts its own upgrade script. Read-only replay and in-memory seed comparisons confirmed these issues; native PostgreSQL execution was unavailable because Docker access was denied.
+docs\reviews\codex-hotfix-C.raw.md:1176:-- 閫傜敤锛氫互 brand-rename-baseline锛堝惈锛変箣鍓嶇瀛愬垵濮嬪寲銆佸瓨鍦ㄦ棫浜у搧鏍囪瘑鐨?PostgreSQL 搴?
+docs\reviews\codex-hotfix-C.raw.md:1814:     * PostgreSQL
+docs\reviews\codex-hotfix-C.raw.md:1816:     * 鍗庝负 openGauss 浣跨敤 ProductName 涓?PostgreSQL 鐩稿悓
+docs\reviews\codex-hotfix-C.raw.md:1818:    POSTGRE_SQL(DbType.POSTGRE_SQL, "PostgreSQL", "POSITION(',' || CAST(#{value
+docs\reviews\codex-hotfix-C.raw.md:2108:4: -- 閫傜敤锛氫互 brand-rename-baseline锛堝惈锛変箣鍓嶇瀛愬垵濮嬪寲銆佸瓨鍦ㄦ棫浜у搧鏍囪瘑鐨?PostgreSQL 搴?
+docs\reviews\codex-hotfix-C.raw.md:2344:> 鍐荤粨鏃ユ湡锛?026-09-09锛涘叧鑱斿喅绛栵細D-08锛堜粎 PostgreSQL锛?
+docs\reviews\codex-hotfix-C.md:59:  MySQL 与 PostgreSQL 主种子都进入逐行核对，杜绝「少扫一个方言」的静默漏检。
+docs\reviews\codex-hotfix-C.md:71:> "No actionable regressions were found. All 24 naming and migration-tool tests passed. Live PostgreSQL validation was unavailable because Docker access was denied."
+docs\reviews\codex-hotfix-C.md:75:> **PG 实测限制**：codex 与本环境均无 Docker，未能对 `DO` 块做真实 PostgreSQL 执行验证。已代之以
+docs\reviews\codex-hotfix-B.raw.md:94:- 鏍稿績鏁版嵁搴擄細PostgreSQL锛屼粠绗竴澶╀綔涓哄敮涓€鍏崇郴鏁版嵁搴擄紝涓嶅缓绔?MySQL 杩囨浮鍩虹嚎
+docs\reviews\codex-hotfix-B.raw.md:96:- 鏈€氳繃/鏈墽琛岋細Web 绫诲瀷妫€鏌ユ湁涓婃父鍩虹嚎閿欒锛涘皬绋嬪簭绂荤嚎渚濊禆涓嶅叏锛屾瀯寤烘湭楠岃瘉锛涚湡瀹?PostgreSQL 鍒濆鍖栥€佷紬澧呰鍒欍€佸绔仈璋冨拰閮ㄧ讲灏氭湭鎵ц
+docs\reviews\codex-hotfix-B.raw.md:157:鏈疆娌℃湁瀹炴柦鐪熷疄 PostgreSQL銆佸叏骞冲彴韬唤銆佸缁勭粐鏉冮檺銆佷笟鍔￠摼銆佸井淇℃敮浠樸€丄I Provider 鎴栭儴缃层€侱-07銆丏-09銆丏-10銆丏-11 鐘舵€佷笉鍙樸€?
+docs\reviews\codex-ZS-BRAND-006.A.raw.md:3617:- 鏍稿績鏁版嵁搴擄細PostgreSQL锛屼粠绗竴澶╀綔涓哄敮涓€鍏崇郴鏁版嵁搴擄紝涓嶅缓绔?MySQL 杩囨浮鍩虹嚎
+docs\reviews\codex-ZS-BRAND-006.A.raw.md:3620:- 鏈€氳繃/鏈墽琛岋細Web 绫诲瀷妫€鏌ユ湁涓婃父鍩虹嚎閿欒锛涘皬绋嬪簭绂荤嚎渚濊禆涓嶅叏锛屾瀯寤烘湭楠岃瘉锛涚湡瀹?PostgreSQL 鍒濆鍖
+docs\reviews\codex-ZS-BRAND-006.A.raw.md:3695:鏈疆娌℃湁瀹炴柦鐪熷疄 PostgreSQL銆佸叏骞冲彴韬唤銆佸缁勭粐鏉冮檺銆佷笟鍔￠摼銆佸井淇℃敮浠樸€丄I Provider 鎴栭儴缃层€侱-07銆
+docs\reviews\codex-ZS-BRAND-001.raw.md:137:- 鏍稿績鏁版嵁搴擄細PostgreSQL锛屼粠绗竴澶╀綔涓哄敮涓€鍏崇郴鏁版嵁搴擄紝涓嶅缓绔?MySQL 杩囨浮鍩虹嚎
+docs\reviews\codex-ZS-BRAND-001.raw.md:140:- 鏈€氳繃/鏈墽琛岋細Web 绫诲瀷妫€鏌ユ湁涓婃父鍩虹嚎閿欒锛涘皬绋嬪簭绂荤嚎渚濊禆涓嶅叏锛屾瀯寤烘湭楠岃瘉锛涚湡瀹?PostgreSQL 鍒濆鍖
+docs\reviews\codex-ZS-BRAND-001.raw.md:215:鏈疆娌℃湁瀹炴柦鐪熷疄 PostgreSQL銆佸叏骞冲彴韬唤銆佸缁勭粐鏉冮檺銆佷笟鍔￠摼銆佸井淇℃敮浠樸€丄I Provider 鎴栭儴缃层€侱-07銆
+docs\reviews\codex-ZS-BRAND-001.raw.md:372:17 + Maven 鈮?.8 + PostgreSQL 17锛屾寜鏁版嵁搴撶幆澧冩柟妗堣惤鍦帮級瑙ｉ攣 M02 鐪熷疄搴?
+docs\reviews\codex-ZS-BRAND-001.raw.md:386:  ### ZS-DB-001锛氬畬鎴?PostgreSQL 椹卞姩涓庡敮涓€杩愯鏁版嵁婧愭帴鍏?
+docs\reviews\codex-ZS-BRAND-001.raw.md:1517:鏈疆娌℃湁瀹炴柦鐪熷疄 PostgreSQL銆佸叏骞冲彴韬唤銆佸缁勭粐鏉冮檺銆佷笟鍔￠摼銆佸井淇℃敮浠樸€丄I Provider 鎴栭儴缃层€侱-07銆
+docs\reviews\codex-ZS-LOGIN-001.r1.raw.md:577:@KeySequence("system_oauth2_access_token_seq") // ���� Oracle��PostgreSQL��King
+docs\reviews\codex-ZS-LOGIN-001.r1.raw.md:651:@KeySequence("system_oauth2_access_token_seq") // ���� Oracle��PostgreSQL��King
+docs\reviews\codex-ZS-CFG-001.B-r2.raw.md:511:@KeySequence("infra_config_seq") // 锟斤拷锟斤拷 Oracle锟斤拷PostgreSQL锟斤拷Kingbase锟斤拷DB2锟斤拷H2 锟斤拷锟捷匡拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷 My
+docs\reviews\codex-ZS-GOV-001-P0.raw.md:471:鍦颁笌 CI 鍚岃鍒欙級銆傚墿浣?66 椤瑰緟寮€鍙戜换鍔＄殑鎺ㄨ繘鍓嶆彁锛欱02 鐜锛圝DK 17 + Maven 鈮?.8 + PostgreSQL
+docs\reviews\codex-ZS-GOV-001-P0.raw.md:706:### ZS-DB-001锛氬畬鎴?PostgreSQL 椹卞姩涓庡敮涓€杩愯鏁版嵁婧愭帴鍏?
+docs\reviews\codex-ZS-GOV-001-P0.raw.md:926:DB-004銆乑S-ENG-006銆?- 浼楀瑕佹眰涓庣幇鐘讹細[ID 鐜澶勭悊鍣╙[E12] 宸插惈 PostgreSQLDelegate 閫夋嫨閫昏
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:309:+-- 閫傜敤锛氫互 brand-rename-baseline锛堝惈锛変箣鍓嶇瀛愬垵濮嬪寲銆佸瓨鍦ㄦ棫浜у搧鏍囪瘑鐨?PostgreSQL 搴?+--  
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:498:@@ -1033,7 +1033,7 @@ class HighGoConvertor(PostgreSQLConvertor):
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:1288:- 鏍稿績鏁版嵁搴擄細PostgreSQL锛屼粠绗竴澶╀綔涓哄敮涓€鍏崇郴鏁版嵁搴擄紝涓嶅缓绔?MySQL 杩囨浮鍩虹嚎
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:1291:- 鏈€氳繃/鏈墽琛岋細Web 绫诲瀷妫€鏌ユ湁涓婃父鍩虹嚎閿欒锛涘皬绋嬪簭绂荤嚎渚濊禆涓嶅叏锛屾瀯寤烘湭楠岃瘉锛涚湡瀹?PostgreSQL 鍒濆鍖
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:1366:鏈疆娌℃湁瀹炴柦鐪熷疄 PostgreSQL銆佸叏骞冲彴韬唤銆佸缁勭粐鏉冮檺銆佷笟鍔￠摼銆佸井淇℃敮浠樸€丄I Provider 鎴栭儴缃层€侱-07銆
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:4113:nd in-memory seed comparisons confirmed these issues; native PostgreSQL executi
+docs\reviews\codex-ZS-BRAND-004.A.raw.md:4155:The patch introduces unsafe account migration, conflicting tenant aliases, and a replacement workflow that corrupts its own upgrade script. Read-only replay and in-memory seed comparisons confirmed these issues; native PostgreSQL execution was unavailable because Docker access was denied.
+docs\reviews\codex-ZS-CFG-001.B.raw.md:563:| `ZSZJ_DATASOURCE_URL` | **是** | 目标数据库 JDBC URL（D-08：PostgreSQL） |
+docs\reviews\codex-ZS-OPS-001-step4.md:19:  > With `--incremental`, SQL seed edits skip G2b because its only area is `scripts/brand/`. However, `apply-naming-migration.test.mjs` reads the actual SQL seeds and checks cross-tenant website uniqueness. Changing `zsxq.zszj.example.com` to `www.zszj.example.com` in the PostgreSQL seed creates a duplicate that G2b detects, but the selected G3/G6/G7/G8/G9 gates do not. Include the repository data consumed by this test in its areas, or keep G2b always enabled.
+docs\reviews\codex-ZS-OPS-001-step4.raw.md:1313:  // 显式断言 MySQL 与 PostgreSQL 主种子都确实进入了逐行核对，杜绝「少扫一个方言」的静默漏检。
+docs\reviews\codex-ZS-OPS-001-step4.raw.md:1317:    `PostgreSQL 主种子未被租户同域门禁覆盖: ${PG_SEED}`);
+docs\reviews\codex-ZS-OPS-001-step4.raw.md:2138: to `www.zszj.example.com` in the PostgreSQL seed creates a duplicate that G2b 
+docs\reviews\codex-ZS-OPS-001-step4.raw.md:2163:  With `--incremental`, SQL seed edits skip G2b because its only area is `scripts/brand/`. However, `apply-naming-migration.test.mjs` reads the actual SQL seeds and checks cross-tenant website uniqueness. Changing `zsxq.zszj.example.com` to `www.zszj.example.com` in the PostgreSQL seed creates a duplicate that G2b detects, but the selected G3/G6/G7/G8/G9 gates do not. Include the repository data consumed by this test in its areas, or keep G2b always enabled.
+docs\reviews\codex-ZS-SEC-008.raw.md:3787: - 未通过/未执行：Web 类型检查有上游基线错误；小程序离线依赖不全，构建未验证；真实 PostgreSQL 初始化、众墅规则、多端联调和部署尚未执行
+docs\reviews\codex-ZS-SEC-004.raw.md:1429:    dynamic: # ������Դ���ã�ZS-DB-001.A / D-08���� PostgreSQL �����⣬ģ��ӿ����Ƴ���
+docs\reviews\codex-ZS-BRAND-002.raw.md:19480:- 鐩爣鏁版嵁搴撲负 PostgreSQL锛圖-08 鍐崇瓥绂佹 MySQL 杩囨浮鍩虹嚎锛夛紱鍒濆鍖栬剼鏈 [sql/postgresql](sq
+docs\reviews\codex-ZS-BRAND-002.raw.md:20027:The renamed database mappings no longer match the shipped PostgreSQL schema. Th
+docs\reviews\codex-ZS-BRAND-002.raw.md:20035:  When initializing PostgreSQL from the shipped `sql/postgresql/ruoyi-vue-pro.s
+docs\reviews\codex-ZS-BRAND-002.raw.md:20051:The renamed database mappings no longer match the shipped PostgreSQL schema. The new naming verifier also rejects valid generated sources after compilation.
+docs\reviews\codex-ZS-BRAND-002.raw.md:20056:  When initializing PostgreSQL from the shipped `sql/postgresql/ruoyi-vue-pro.sql`, the database still contains `yudao_demo01_contact` and `yudao_demo01_contact_seq`, not these renamed objects. Consequently, the enabled infra module's contact CRUD endpoints fail with missing-relation errors; the demo02/demo03 mappings have the same mismatch. Update the schema and migration together with these annotations, or defer the annotation changes until the SQL rename lands.
+docs\reviews\codex-ZS-SEC-010.raw.md:3590:21: @KeySequence("system_oauth2_access_token_seq") // ���� Oracle��PostgreSQL��Kingbase��DB2��H2 ���ݿ����������������� 
+docs\reviews\codex-ZS-SEC-010.raw.md:4029:- 已确认技术路线：JDK 17、Vue3、Admin UniApp、模块化单体、Flowable、PostgreSQL
+docs\reviews\codex-ZS-SEC-010.raw.md:4033:- 核心数据库：PostgreSQL，从第一天作为唯一关系数据库，不建立 MySQL 过渡基线
+docs\reviews\codex-ZS-SEC-010.raw.md:4035:- 未通过/未执行：Web 类型检查有上游基线错误；小程序离线依赖不全，构建未验证；真实 PostgreSQL 初始化、众墅规则、多端联调和部署尚未执行
+docs\reviews\codex-ZS-SEC-010.raw.md:4088:本轮没有实施真实 PostgreSQL、全平台身份、多组织权限、业务链、微信支付、AI Provider 或部署。D-09 已于 2026-09-10 确认最小模型（决策门禁解除，实现待阶段 1B）；D-07 方向已采纳、细节待阶段 2 
+docs\reviews\codex-ZS-SEC-010.raw.md:4167:@KeySequence("system_oauth2_access_token_seq") // 用于 Oracle、PostgreSQL、Kingbase、DB2、H2 数据库的主键自增。如果是 MySQL 等数据库，可不写。
+docs\reviews\codex-ZS-SEC-010.raw.md:6524:@KeySequence("system_sms_code_seq") // 用于 Oracle、PostgreSQL、Kingbase、DB2、H2 数据库的主键自增。如果是 MySQL 等数据库，可不写。
+
+exec
+"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$p = '"'services/zhongshu-core/zszj-module-system/src/test/java/cn/zszj/module/system/service/tenant/TenantServiceImplTest.java'; "'$a = Get-Content -Encoding utf8 $p; 80..148 | ForEach-Object { '"'{0}: {1}' -f ("'$_ + 1), $a[$_] }; rg -n '"'transaction-isolation|default_transaction_isolation|setTransactionIsolation|localCacheScope|local-cache-scope' services/zhongshu-core -g '*.java' -g '*.yaml' -g '*.yml' -g '*.xml'; git diff --check 94f6a141..HEAD" in E:\zszj-wt-cfg-003-b
+ succeeded in 280ms:
+143:             assertEquals(0, role.getSort());
+144:             assertEquals("ϵͳ�Զ�����", role.getRemark());
+145:             return true;
+146:         }), eq(RoleTypeEnum.SYSTEM.getType()))).thenReturn(200L);
+147:         // mock �û� 300L
+148:         when(userService.createUser(argThat(user -> {
+149:             assertEquals("yunai", user.getUsername());
+
+codex
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "priority": "P2",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java",
+      "lines": [115, 118],
+      "title": "createTenant 仍使用锁前套餐对象授权",
+      "description": "该路径未完成所述修复：selectByIdForUpdate 的返回值仍被丢弃，createRole 使用 validTenantPackage 返回的锁前对象。若等待锁期间套餐扩大，新租户管理员会缺少新增菜单；若套餐收缩，旧菜单会被后续套餐子集校验拒绝，导致创建回滚。锁定读返回 null 也未在此拒绝。应使用锁定读返回的套餐并检查 null，补充创建路径的并发菜单变化测试。"
+    }
+  ]
+}
+tokens used
+36,393
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "priority": "P2",
+      "file": "services/zhongshu-core/zszj-module-system/src/main/java/cn/zszj/module/system/service/tenant/TenantServiceImpl.java",
+      "lines": [115, 118],
+      "title": "createTenant 仍使用锁前套餐对象授权",
+      "description": "该路径未完成所述修复：selectByIdForUpdate 的返回值仍被丢弃，createRole 使用 validTenantPackage 返回的锁前对象。若等待锁期间套餐扩大，新租户管理员会缺少新增菜单；若套餐收缩，旧菜单会被后续套餐子集校验拒绝，导致创建回滚。锁定读返回 null 也未在此拒绝。应使用锁定读返回的套餐并检查 null，补充创建路径的并发菜单变化测试。"
+    }
+  ]
+}

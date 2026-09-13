@@ -1,0 +1,42 @@
+npm warn Unknown project config "strict-peer-dependencies". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown project config "shamefully-hoist". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown project config "ignore-workspace-root-check". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown project config "install-workspace-root". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mE:/zszj-wt-client-003/apps/zhongshu-miniapp[39m
+
+ [32m✓[39m tests/unit/interceptor.spec.ts [2m([22m[2m26 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+[90mstderr[2m | tests/unit/http.spec.ts[2m > [22m[2mhttp 异常收敛：解密失败不永久 loading（验收④）[2m > [22m[2m解密失败分支显式 reject，且携带服务端 trace-id
+[22m[39m响应数据解密失败: Error: bad cipher
+    at Object.h.decryptImpl [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:58:13[90m)[39m
+    at Object.decryptResponse [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:26:31[90m)[39m
+    at Object.success [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39msrc\http\http.ts:134:39[90m)[39m
+    at Object.<anonymous> [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:61:11[90m)[39m
+    at Object.mockCall [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/@vitest+spy@2.1.9/node_modules/[4m@vitest/spy[24m/dist/index.js:61:17[90m)[39m
+    at Object.spy [as request] [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/tinyspy@3.0.2/node_modules/[4mtinyspy[24m/dist/index.js:45:80[90m)[39m
+    at [90mE:\zszj-wt-client-003\apps\zhongshu-miniapp\[39msrc\http\http.ts:260:9
+    at new Promise (<anonymous>)
+    at http [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39msrc\http\http.ts:114:10[90m)[39m
+    at [90mE:\zszj-wt-client-003\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:67:15
+
+[90mstderr[2m | tests/unit/http.spec.ts[2m > [22m[2mhttp 刷新队列（验收③：至多刷新一次、失败全部 reject、不循环）[2m > [22m[2m刷新失败时排队请求全部 reject，且不进入无限刷新
+[22m[39m刷新 token 失败: Error: refresh failed
+    at Object.<anonymous> [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:141:15[90m)[39m
+    at Object.mockCall [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/@vitest+spy@2.1.9/node_modules/[4m@vitest/spy[24m/dist/index.js:61:17[90m)[39m
+    at Object.spy [as refreshToken] [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/tinyspy@3.0.2/node_modules/[4mtinyspy[24m/dist/index.js:45:80[90m)[39m
+    at Object.success [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39msrc\http\http.ts:190:32[90m)[39m
+    at Object.<anonymous> [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39mtests\unit\http.spec.ts:143:45[90m)[39m
+    at Object.mockCall [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/@vitest+spy@2.1.9/node_modules/[4m@vitest/spy[24m/dist/index.js:61:17[90m)[39m
+    at Object.spy [as request] [90m(file:///E:/zszj-wt-client-003/apps/zhongshu-miniapp/[39mnode_modules/[4m.pnpm[24m/tinyspy@3.0.2/node_modules/[4mtinyspy[24m/dist/index.js:45:80[90m)[39m
+    at [90mE:\zszj-wt-client-003\apps\zhongshu-miniapp\[39msrc\http\http.ts:260:9
+    at new Promise (<anonymous>)
+    at http [90m(E:\zszj-wt-client-003\apps\zhongshu-miniapp\[39msrc\http\http.ts:114:10[90m)[39m
+
+ [32m✓[39m tests/unit/http.spec.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 95[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m36 passed[39m[22m[90m (36)[39m
+[2m   Start at [22m 18:14:31
+[2m   Duration [22m 387ms[2m (transform 93ms, setup 25ms, collect 76ms, tests 99ms, environment 0ms, prepare 185ms)[22m
+
