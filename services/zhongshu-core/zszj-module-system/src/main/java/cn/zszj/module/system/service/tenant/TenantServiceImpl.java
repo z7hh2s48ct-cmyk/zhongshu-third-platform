@@ -35,6 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
@@ -95,7 +96,12 @@ public class TenantServiceImpl implements TenantService {
     }
 
     @Override
-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
+    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
+    // 为空操作，内层 Spring 事务提交驱逐缓存而 DB 要等外层 DS 结束才提交，留有「他连接回填旧授权、外层提交后无最终驱逐」窗口；
+    // system 模块单库，统一 Spring 事务生命周期
+    // ZS-PERM-004.A codex r1 P1：createTenant 原也有 @DSTransactional，替换注解时此处遗漏——
+    // 必须补 @Transactional，否则租户插入与内部角色/授权操作分段提交，中途失败留下不完整租户
+    @Transactional(rollbackFor = Exception.class)
     @DataPermission(enable = false) // 参见 https://gitee.com/zhijiantianya/ruoyi-vue-pro/pulls/1154 说明
     public Long createTenant(TenantSaveReqVO createReqVO) {
         // 校验租户名称是否重复
@@ -140,7 +146,10 @@ public class TenantServiceImpl implements TenantService {
     }
 
     @Override
-    @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
+    // ZS-PERM-004.A codex r0 P1：改用 Spring @Transactional——外层 @DSTransactional 下 DS ConnectionProxy.commit()
+    // 为空操作，内层 Spring 事务提交驱逐缓存而 DB 要等外层 DS 结束才提交，留有「他连接回填旧授权、外层提交后无最终驱逐」窗口；
+    // system 模块单库，统一 Spring 事务生命周期
+    @Transactional(rollbackFor = Exception.class)
     public void updateTenant(TenantSaveReqVO updateReqVO) {
         // 校验存在
         TenantDO tenant = validateUpdateTenant(updateReqVO.getId());
@@ -190,7 +199,8 @@ public class TenantServiceImpl implements TenantService {
     }
 
     @Override
-    @DSTransactional
+    // ZS-PERM-004.A codex r0 P1：同上——统一 Spring 事务生命周期（本方法由套餐/租户更新链调用，驱逐须与提交同序）
+    @Transactional(rollbackFor = Exception.class)
     public void updateTenantRoleMenu(Long tenantId, Set<Long> menuIds) {
         TenantUtils.execute(tenantId, () -> {
             // 获得所有角色

@@ -124,6 +124,8 @@ public class RoleServiceImpl implements RoleService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = RedisKeyConstants.ROLE,
+            allEntries = true) // ZS-PERM-004.A：批量删除角色同样必须驱逐缓存（修复前缺失，陈旧角色可继续取权）
     public void deleteRoleList(List<Long> ids) {
         // 1. 校验是否可以删除
         ids.forEach(this::validateRoleForUpdate);

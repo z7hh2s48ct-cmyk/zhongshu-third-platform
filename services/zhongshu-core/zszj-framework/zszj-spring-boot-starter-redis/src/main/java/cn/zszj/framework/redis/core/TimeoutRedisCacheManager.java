@@ -83,4 +83,16 @@ public class TimeoutRedisCacheManager extends RedisCacheManager {
         return NumberUtil.parseLong(StrUtil.sub(ttlStr, 0, ttlStr.length() - 1));
     }
 
+
+    /**
+     * ZS-PERM-004.A codex r2 P1：在【事务装饰器内侧】包「驱逐/清空失败重试 + ERROR 证据」装饰器——
+     * decorateCache 先以 RetryEvictCache 包住原始 RedisCache，再由 super 应用事务感知装饰；
+     * 最终链为 TransactionAwareCacheDecorator → RetryEvictCache → RedisCache，
+     * 事务内 evict/clear 延迟到 afterCommit 后仍落在 RetryEvictCache 上，重试与证据由此生效。
+     * （codex r2 修正：此前包装在 getCache 外侧，afterCommit 直接调底层 RedisCache 绕过重试。）
+     */
+    @Override
+    protected org.springframework.cache.Cache decorateCache(org.springframework.cache.Cache cache) {
+        return super.decorateCache(new RetryEvictCache(cache));
+    }
 }
