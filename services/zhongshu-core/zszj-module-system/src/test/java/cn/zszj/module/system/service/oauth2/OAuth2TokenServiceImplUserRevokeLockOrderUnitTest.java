@@ -6,6 +6,7 @@ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import org.junit.jupiter.api.AfterEach;
@@ -48,6 +49,7 @@ public class OAuth2TokenServiceImplUserRevokeLockOrderUnitTest {
     private OAuth2AccessTokenMapper accessTokenMapper;
     private OAuth2RefreshTokenMapper refreshTokenMapper;
     private OAuth2AccessTokenRedisDAO redisDAO;
+    private AdminUserMapper adminUserMapper;
 
     @BeforeEach
     void setUp() {
@@ -55,11 +57,14 @@ public class OAuth2TokenServiceImplUserRevokeLockOrderUnitTest {
         accessTokenMapper = mock(OAuth2AccessTokenMapper.class);
         refreshTokenMapper = mock(OAuth2RefreshTokenMapper.class);
         redisDAO = mock(OAuth2AccessTokenRedisDAO.class);
+        adminUserMapper = mock(AdminUserMapper.class);
         ReflectionTestUtils.setField(service, "oauth2AccessTokenMapper", accessTokenMapper);
         ReflectionTestUtils.setField(service, "oauth2RefreshTokenMapper", refreshTokenMapper);
         ReflectionTestUtils.setField(service, "oauth2AccessTokenRedisDAO", redisDAO);
         // ZS-LOGIN-003 codex r1 P1：用户级撤销现在还会失效未消费授权码，裸构造实例需注入 mapper mock
         ReflectionTestUtils.setField(service, "oauth2CodeMapper", mock(OAuth2CodeMapper.class));
+        // ZS-LOGIN-003 codex r2 P1：撤销现在先取用户行锁（统一锁序最外层），注入 AdminUserMapper mock
+        ReflectionTestUtils.setField(service, "adminUserMapper", adminUserMapper);
     }
 
     @AfterEach
@@ -175,6 +180,44 @@ public class OAuth2TokenServiceImplUserRevokeLockOrderUnitTest {
 
         verify(refreshTokenMapper, never()).selectByRefreshTokenForUpdate(anyString());
         verify(refreshTokenMapper, never()).deleteByRefreshToken(anyString());
+    }
+
+    /**
+     * ZS-LOGIN-003 codex r2 P1：统一锁序——用户行锁必须先于任何刷新令牌行锁获取，
+     * 与兑换路径（grantAuthorizationCodeForAccessToken 的 selectByIdForUpdate）构成同一把外层锁，
+     * 杜绝「兑换读到启用态 → 撤销提交 → 兑换仍建新会话」交错。
+     */
+    @Test
+    void batchRevoke_mustAcquireUserRowLockBeforeAnyRefreshTokenLock() {
+        Long userId = 450L;
+        String orphan = "ddd-orphan-refresh";
+        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
+        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE))
+                .thenReturn(List.of(makeRefreshToken(orphan, userId)));
+        when(accessTokenMapper.selectListByRefreshToken(orphan)).thenReturn(List.of());
+
+        service.removeAccessToken(userId, USER_TYPE);
+
+        InOrder outerMostFirst = inOrder(adminUserMapper, refreshTokenMapper);
+        outerMostFirst.verify(adminUserMapper).selectByIdForUpdate(userId);
+        outerMostFirst.verify(refreshTokenMapper).selectByRefreshTokenForUpdate(orphan);
+    }
+
+    /**
+     * ZS-LOGIN-003 codex r2 P1：用户取得 code 后退出登录再被改密/禁用时无任何会话，
+     * 未消费授权码仍必须被失效（不得因空会话提前返回而残留可兑换的旧 code）。
+     */
+    @Test
+    void batchRevoke_noSessionButUnconsumedCode_mustStillRevokeCodes() {
+        Long userId = 460L;
+        OAuth2CodeMapper codeMapper = (OAuth2CodeMapper) ReflectionTestUtils.getField(service, "oauth2CodeMapper");
+        when(accessTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
+        when(refreshTokenMapper.selectListByUserIdAndUserType(userId, USER_TYPE)).thenReturn(List.of());
+        when(codeMapper.deleteByUserIdAndUserType(userId, USER_TYPE)).thenReturn(2);
+
+        service.removeAccessToken(userId, USER_TYPE);
+
+        verify(codeMapper, times(1)).deleteByUserIdAndUserType(userId, USER_TYPE);
     }
 
     /**

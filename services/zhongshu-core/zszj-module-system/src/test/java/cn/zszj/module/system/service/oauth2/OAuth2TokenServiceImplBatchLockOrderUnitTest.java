@@ -5,6 +5,7 @@ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,8 @@ public class OAuth2TokenServiceImplBatchLockOrderUnitTest {
         ReflectionTestUtils.setField(service, "oauth2AccessTokenRedisDAO", redisDAO);
         // ZS-LOGIN-003 codex r1 P1：用户级撤销现在还会失效未消费授权码，裸构造实例需注入 mapper mock
         ReflectionTestUtils.setField(service, "oauth2CodeMapper", mock(OAuth2CodeMapper.class));
+        // ZS-LOGIN-003 codex r2 P1：撤销现在先取用户行锁（统一锁序最外层），注入 AdminUserMapper mock
+        ReflectionTestUtils.setField(service, "adminUserMapper", mock(AdminUserMapper.class));
     }
 
     /**

@@ -9,9 +9,10 @@ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.enums.ErrorCodeConstants;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.service.auth.AdminAuthService;
-import cn.zszj.module.system.service.user.AdminUserService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.Resource;
 import java.util.List;
@@ -33,7 +34,7 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
     @Resource
     private AdminAuthService adminAuthService;
     @Resource
-    private AdminUserService adminUserService;
+    private AdminUserMapper adminUserMapper;
 
     @Override
     public OAuth2AccessTokenDO grantImplicit(Long userId, Integer userType,
@@ -50,6 +51,7 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public OAuth2AccessTokenDO grantAuthorizationCodeForAccessToken(String clientId, String code,
                                                                     String redirectUri, String state) {
         OAuth2CodeDO codeDO = oauth2CodeService.consumeAuthorizationCode(code);
@@ -72,7 +74,11 @@ public class OAuth2GrantServiceImpl implements OAuth2GrantService {
         // 不校验则撤销完成后仍能凭旧 code 换出可用新会话（撤销后复活）。技术账号（ADMIN）先闭环，
         // 会员（MEMBER）兑换状态校验归其模块任务。
         if (UserTypeEnum.ADMIN.getValue().equals(codeDO.getUserType())) {
-            AdminUserDO user = adminUserService.getUser(codeDO.getUserId());
+            // ZS-LOGIN-003 codex r2 P1：先取用户行锁（与用户级撤销 doRemoveAccessTokenByUser、
+            // 账号状态更新同一把行锁，统一锁序最外层），锁内重读状态再消费 code、创建令牌——
+            // 撤销与兑换的交错只有两种结果：兑换先提交（新会话随后被撤销覆盖）或撤销先提交（兑换被拒）。
+            // 会员（MEMBER）账号的状态校验归其模块任务
+            AdminUserDO user = adminUserMapper.selectByIdForUpdate(codeDO.getUserId());
             if (user == null || CommonStatusEnum.isDisable(user.getStatus())) {
                 throw exception(ErrorCodeConstants.USER_NOT_EXISTS);
             }

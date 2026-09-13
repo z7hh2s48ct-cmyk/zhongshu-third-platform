@@ -9,9 +9,11 @@ import cn.zszj.framework.common.exception.ErrorCode;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2ClientDO;
+import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
+import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import cn.zszj.module.system.service.user.AdminUserService;
@@ -91,6 +93,8 @@ public class OAuth2TokenServiceImplOrphanRevokeTest extends BaseDbAndRedisUnitTe
 
     @Resource
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
+    @Resource
+    private OAuth2CodeMapper oauth2CodeMapper;
 
     @MockitoBean
     private OAuth2ClientService oauth2ClientService;
@@ -447,6 +451,26 @@ public class OAuth2TokenServiceImplOrphanRevokeTest extends BaseDbAndRedisUnitTe
 
         assertNotNull(oauth2AccessTokenRedisDAO.get(access.getAccessToken()),
                 "无撤销墓碑时缓存回填必须正常工作");
+    }
+
+    /**
+     * 场景 ⑤-3（codex r2 P1）：仅有未消费授权码、无任何 Access/Refresh 会话的用户被撤销时，
+     * code 必须一并失效——否则有效期（5 分钟）内仍可经 grantAuthorizationCodeForAccessToken
+     * 兑换出新会话（撤销后复活）。
+     */
+    @Test
+    public void testRemoveAccessTokenByUser_noSessionButUnconsumedCode_codeMustBeRevoked() {
+        Long userId = randomLongId();
+        OAuth2CodeDO code = new OAuth2CodeDO().setCode(randomString()).setUserId(userId)
+                .setUserType(UserTypeEnum.ADMIN.getValue()).setClientId(randomString())
+                .setScopes(List.of("read")).setRedirectUri(randomString()).setState("")
+                .setExpiresTime(LocalDateTime.now().plusMinutes(5));
+        oauth2CodeMapper.insert(code);
+        assertNotNull(oauth2CodeMapper.selectByCode(code.getCode()), "前置：授权码已存在");
+
+        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+
+        assertNull(oauth2CodeMapper.selectByCode(code.getCode()), "未消费授权码必须随用户级撤销一并失效");
     }
 
     private OAuth2RefreshTokenDO seedRefreshToken(String clientId, Long userId) {

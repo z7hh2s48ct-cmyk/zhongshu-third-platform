@@ -6,8 +6,8 @@ import cn.zszj.framework.test.core.ut.BaseMockitoUnitTest;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2CodeDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.service.auth.AdminAuthService;
-import cn.zszj.module.system.service.user.AdminUserService;
 import com.google.common.collect.Lists;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -41,7 +41,7 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
     @Mock
     private AdminAuthService adminAuthService;
     @Mock
-    private AdminUserService adminUserService;
+    private AdminUserMapper adminUserMapper;
 
     @Test
     public void testGrantImplicit() {
@@ -64,12 +64,12 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
     public void testGrantAuthorizationCodeForCode() {
         // 准备参数
         Long userId = randomLongId();
-        Integer userType = randomEle(UserTypeEnum.values()).getValue();
+        Integer userType = UserTypeEnum.MEMBER.getValue();
         String clientId = randomString();
         List<String> scopes = Lists.newArrayList("read", "write");
         String redirectUri = randomString();
         String state = randomString();
-        // mock 方法
+        // mock 方法（userType 固定 MEMBER：发码路径不涉及兑换时账号状态校验，避免随机 ADMIN 触发无关分支）
         OAuth2CodeDO codeDO = randomPojo(OAuth2CodeDO.class);
         when(oauth2CodeService.createAuthorizationCode(eq(userId), eq(userType),
                 eq(clientId), eq(scopes), eq(redirectUri), eq(state))).thenReturn(codeDO);
@@ -96,7 +96,7 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
             o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
         when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
-        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(
+        when(adminUserMapper.selectByIdForUpdate(eq(codeDO.getUserId()))).thenReturn(
                 new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.ENABLE.getStatus()));
         // mock 方法（创建令牌）
         OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class);
@@ -123,7 +123,7 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
             o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
         when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
-        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(
+        when(adminUserMapper.selectByIdForUpdate(eq(codeDO.getUserId()))).thenReturn(
                 new AdminUserDO().setId(codeDO.getUserId()).setStatus(CommonStatusEnum.DISABLE.getStatus()));
 
         // 调用，并断言：禁用账号不得凭旧授权码换出新会话
@@ -146,7 +146,7 @@ public class OAuth2GrantServiceImplTest extends BaseMockitoUnitTest {
             o.setUserType(UserTypeEnum.ADMIN.getValue());
         });
         when(oauth2CodeService.consumeAuthorizationCode(eq(code))).thenReturn(codeDO);
-        when(adminUserService.getUser(eq(codeDO.getUserId()))).thenReturn(null);
+        when(adminUserMapper.selectByIdForUpdate(eq(codeDO.getUserId()))).thenReturn(null);
 
         // 调用，并断言
         assertServiceException(() -> oauth2GrantService.grantAuthorizationCodeForAccessToken(
