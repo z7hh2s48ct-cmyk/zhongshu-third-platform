@@ -31,10 +31,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -159,9 +162,12 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         List<OAuth2AccessTokenDO> accessTokenDOs = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
         if (CollUtil.isNotEmpty(accessTokenDOs)) {
             oauth2AccessTokenMapper.deleteByIds(convertSet(accessTokenDOs, OAuth2AccessTokenDO::getId));
+            // ZS-LOGIN-005.A：旧代际缓存失效注册到事务提交后执行（回滚亦补偿）
+            List<Runnable> evictions = new ArrayList<>();
             for (OAuth2AccessTokenDO evicted : accessTokenDOs) {
-                revokeWithTombstone(evicted.getAccessToken(), evicted.getExpiresTime());
+                evictions.add(() -> revokeWithTombstone(evicted.getAccessToken(), evicted.getExpiresTime()));
             }
+            invalidateCacheAfterCommit("刷新淘汰旧代际(refreshAccessToken)", evictions);
         }
 
         // 已过期的情况下，删除刷新令牌
@@ -224,6 +230,29 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         if (DateUtils.isExpired(accessTokenDO.getExpiresTime())) {
             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌已过期");
         }
+        // ZS-LOGIN-005.A：DB 权威校验——Redis 降级为纯加速，撤销的权威状态在 DB（行逻辑删除）。
+        // 缓存可能残留已撤销凭据（撤销路径缓存失效失败 / 回填竞态），命中后必须回源核验：
+        // 普通令牌查 access 表；gate 合成令牌（LOGIN-001 兼容路径）查 refresh 表。
+        // 核验使用 flushCache=TRUE 的专用 count 语句（codex r0 P1）：MyBatis SESSION 一级缓存
+        // 会在长事务内复用 SqlSession 返回撤销前的旧快照，普通 select 不可作权威依据。
+        // 查无即已撤销 → 自愈（落墓碑防即时回填复活 + evict 缓存）并按 401 拒绝（幽灵凭据根本闭环，
+        // 同时是 Redis 失效失败的自愈修复路径）；DB 查询异常失败关闭（安全默认：宁可拒绝也不放行幽灵）并告警。
+        try {
+            int count = isSyntheticAccessToken(accessTokenDO)
+                    ? oauth2RefreshTokenMapper.selectAuthorityCountByRefreshToken(accessToken)
+                    : oauth2AccessTokenMapper.selectAuthorityCountByAccessToken(accessToken);
+            if (count <= 0) {
+                // 自愈复用 revokeWithTombstone（墓碑/删除各自容错，codex r1 P2：避免墓碑失败中断删除、
+                // Redis 异常被误记为 DB 核验异常）；随后仍按 401 拒绝
+                revokeWithTombstone(accessToken, accessTokenDO.getExpiresTime());
+                throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌不存在");
+            }
+        } catch (ServiceException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.warn("[checkAccessToken][ZS-LOGIN-005.A DB 权威校验异常，失败关闭拒绝鉴权 token({})]", maskToken(accessToken), ex);
+            throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌不存在");
+        }
         return accessTokenDO;
     }
 
@@ -255,19 +284,22 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         // ZS-LOGIN-002：行锁 + 获锁后重读，撤销并发刷新可能已提交的新代际访问令牌
         String refreshToken = accessTokenDO.getRefreshToken();
         oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
+        List<Runnable> cacheInvalidations = new ArrayList<>();
         for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
             oauth2AccessTokenMapper.deleteById(aliveToken.getId());
-            revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+            cacheInvalidations.add(() -> revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime()));
         }
         // 删除刷新令牌
         OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
         // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
         // 撤销时同样落墓碑（TTL 取刷新令牌剩余有效期，删除前读取），堵住并发门控路径从旧 DB 快照回填复活
-        revokeWithTombstone(refreshToken, refreshTokenDO != null ? refreshTokenDO.getExpiresTime()
-                : accessTokenDO.getExpiresTime());
+        cacheInvalidations.add(() -> revokeWithTombstone(refreshToken, refreshTokenDO != null
+                ? refreshTokenDO.getExpiresTime() : accessTokenDO.getExpiresTime()));
         // ZS-LOGIN-002：会话终结，清理代际键（访问令牌侧的代际标识保留至自然过期，供审计定位）
-        deleteSessionGenerationQuietly(refreshToken);
+        cacheInvalidations.add(() -> deleteSessionGenerationQuietly(refreshToken));
+        // ZS-LOGIN-005.A：缓存失效注册到事务提交后执行（回滚亦执行失效补偿），失败告警不阻断
+        invalidateCacheAfterCommit("退出撤销(removeAccessToken)", cacheInvalidations);
         return accessTokenDO;
     }
 
@@ -360,7 +392,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         if (sortedRefreshTokens.isEmpty()) {
             return; // 该用户无任何会话，无害空操作（不加锁、不写日志）
         }
-        // 2. 按稳定顺序逐个锁定并撤销
+        // 2. 按稳定顺序逐个锁定并撤销（缓存失效统一注册到事务提交后执行——ZS-LOGIN-005.A）
+        List<Runnable> cacheInvalidations = new ArrayList<>();
         for (String refreshToken : sortedRefreshTokens) {
             // ZS-LOGIN-002：行锁 + 获锁后重读
             oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
@@ -375,7 +408,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             // 获锁后重读，覆盖并发刷新在获锁前刚插入的新代际访问令牌（防会话复活）
             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
-                revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime());
+                cacheInvalidations.add(() -> revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime()));
             }
             // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
             // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
@@ -384,10 +417,13 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
             // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
             // key 即 refreshToken 串，TTL 继承刷新令牌）；对孤立刷新凭据而言这是唯一的清理时机
-            revokeWithTombstone(refreshToken, revokeTarget != null ? revokeTarget.getExpiresTime() : null);
+            cacheInvalidations.add(() -> revokeWithTombstone(refreshToken,
+                    revokeTarget != null ? revokeTarget.getExpiresTime() : null));
             // ZS-LOGIN-002：会话终结，清理代际键
-            deleteSessionGenerationQuietly(refreshToken);
+            cacheInvalidations.add(() -> deleteSessionGenerationQuietly(refreshToken));
         }
+        // ZS-LOGIN-005.A：缓存失效注册到事务提交后执行（回滚亦执行失效补偿），失败告警不阻断
+        invalidateCacheAfterCommit("用户级撤销(removeAccessTokenByUser)", cacheInvalidations);
         // 3. ZS-LOGIN-003：审计可追踪（令牌串不入日志，仅记数量与用户标识）
         if (log.isInfoEnabled()) {
             log.info("[removeAccessToken][ZS-LOGIN-003 用户({}/{}) 的全部会话已撤销：会话数({})，其中孤立刷新凭据({})]",
@@ -416,7 +452,10 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         accessTokenDO.setTenantId(tenantId);
         oauth2AccessTokenMapper.insert(accessTokenDO);
         // 记录到 Redis 中
-        oauth2AccessTokenRedisDAO.set(accessTokenDO);
+        // ZS-LOGIN-005.A：缓存发布注册到事务提交后执行——事务回滚时不得残留「DB 无行、Redis 有值」的幽灵新令牌
+        publishCacheAfterCommit("新访问令牌(createOAuth2AccessToken)",
+                () -> oauth2AccessTokenRedisDAO.set(accessTokenDO),
+                () -> oauth2AccessTokenRedisDAO.delete(accessTokenDO.getAccessToken()));
         return accessTokenDO;
     }
 
@@ -501,8 +540,95 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
      * 「查墓碑 + 写缓存」的 Lua 原子门闩拒绝该回填；TTL 取凭据剩余有效期，自清理。
      */
     private void revokeWithTombstone(String token, LocalDateTime expiresTime) {
-        oauth2AccessTokenRedisDAO.markRevoked(token, millisUntil(expiresTime));
-        oauth2AccessTokenRedisDAO.delete(token);
+        // ZS-LOGIN-005.A codex r0 P2：墓碑与删缓存逐项隔离——墓碑写失败仍须尝试删缓存，反之亦然
+        long ttlMillis = millisUntil(expiresTime);
+        try {
+            oauth2AccessTokenRedisDAO.markRevoked(token, ttlMillis);
+        } catch (Exception ex) {
+            log.warn("[revokeWithTombstone][ZS-LOGIN-005.A 墓碑写入失败 token({}) 剩余ttl(ms)({})]"
+                    + "——继续尝试删缓存，凭据权威以 DB 为准]", maskToken(token), ttlMillis, ex);
+        }
+        try {
+            oauth2AccessTokenRedisDAO.delete(token);
+        } catch (Exception ex) {
+            log.warn("[revokeWithTombstone][ZS-LOGIN-005.A 缓存删除失败 token({})]"
+                    + "——checkAccessToken DB 权威校验自愈 evict 即修复路径]", maskToken(token), ex);
+        }
+    }
+
+    /**
+     * ZS-LOGIN-005.A：把「缓存失效类」Redis 动作（墓碑 + 删缓存 + 代际键）注册到事务<b>提交后</b>执行——
+     * 撤销的权威状态在 DB，缓存失效不必也不应在事务内抢跑（事务回滚时 DB 凭据仍有效，缓存不应被提前清理后
+     * 无人补偿）。事务回滚时同样执行失效补偿：缓存 miss 可回源重建，宁可可用性抖动也不留撤销态不一致；
+     * 无事务上下文（测试 / 自调用）时立即执行。
+     *
+     * <p>Redis 动作失败<b>不阻断</b> DB 提交：输出结构化 WARN（可重放修复证据），修复路径 =
+     * {@link #checkAccessToken} 的 DB 权威校验自愈 evict；可靠重放补偿归 ZS-LOGIN-005.B（B05 JOB-002）。
+     */
+    private void invalidateCacheAfterCommit(String desc, List<Runnable> invalidationSteps) {
+        // ZS-LOGIN-005.A codex r0 P2：逐项隔离——任一步失败不中断剩余队列，每步分别记录修复证据；
+        // afterCompletion 对【所有】结束状态幂等兜底（提交/回滚/UNKNOWN）：失效动作幂等（墓碑+删除），
+        // 覆盖 STATUS_UNKNOWN（提交/回滚异常）与前序同步回调抛异常导致 afterCommit 被跳过的情形
+        Runnable safeAll = () -> {
+            for (int i = 0; i < invalidationSteps.size(); i++) {
+                try {
+                    invalidationSteps.get(i).run();
+                } catch (Exception ex) {
+                    log.warn("[invalidateCache][ZS-LOGIN-005.A {} 第 {}/{} 步缓存失效失败——凭据权威以 DB 为准"
+                            + "（checkAccessToken DB 权威校验自愈 evict 即修复路径，可靠重放归 ZS-LOGIN-005.B）]",
+                            desc, i + 1, invalidationSteps.size(), ex);
+                }
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // ZS-LOGIN-005.A codex r1 P3：单次执行于事务结束后（afterCompletion 覆盖全部结束状态）——
+            // COMMITTED 即「提交后失效」；ROLLED_BACK / STATUS_UNKNOWN 为幂等兜底（回滚补偿 +
+            // 前序同步回调异常跳过 afterCommit 的情形一并覆盖），且避免 afterCommit+afterCompletion 双跑翻倍
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    safeAll.run();
+                }
+            });
+        } else {
+            safeAll.run();
+        }
+    }
+
+    /**
+     * ZS-LOGIN-005.A：把「缓存发布类」Redis 动作（新令牌写缓存）注册到事务<b>提交后</b>执行——
+     * 事务回滚时执行回滚清理，杜绝「缓存成功而事务回滚」留下的幽灵新令牌（DB 无行、Redis 有值）；
+     * 无事务上下文（测试 / 自调用）时立即发布。
+     */
+    private void publishCacheAfterCommit(String desc, Runnable publish, Runnable rollbackCleanup) {
+        Runnable safePublish = () -> {
+            try {
+                publish.run();
+            } catch (Exception ex) {
+                log.warn("[publishCache][ZS-LOGIN-005.A {} 缓存发布失败——新令牌可经缓存 miss 回源重建]", desc, ex);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // ZS-LOGIN-005.A：与失效动作一致，单次执行于事务结束后——COMMITTED 才发布；
+            // ROLLED_BACK / STATUS_UNKNOWN（提交/回滚异常）按保守清理处理：误清缓存只损失可用性
+            // （miss 回源重建），残留幽灵发布则是安全缺口
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == TransactionSynchronization.STATUS_COMMITTED) {
+                        safePublish.run();
+                    } else {
+                        try {
+                            rollbackCleanup.run();
+                        } catch (Exception ex) {
+                            log.warn("[publishCache][ZS-LOGIN-005.A {} 回滚/未知状态清理失败]", desc, ex);
+                        }
+                    }
+                }
+            });
+        } else {
+            safePublish.run();
+        }
     }
 
     /**

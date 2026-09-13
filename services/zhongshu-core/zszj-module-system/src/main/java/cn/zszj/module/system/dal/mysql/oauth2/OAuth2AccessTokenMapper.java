@@ -8,13 +8,25 @@ import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenP
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Mapper
 public interface OAuth2AccessTokenMapper extends BaseMapperX<OAuth2AccessTokenDO> {
+
+    /**
+     * ZS-LOGIN-005.A：鉴权权威存在性核验——{@code flushCache=TRUE} 强制回源，绕过 MyBatis SESSION
+     * 一级缓存（长事务内复用 SqlSession 会读到撤销前的旧快照）；忽略租户（鉴权权威跨租户）；
+     * 仅统计未删除行（逻辑删除即已撤销）。
+     */
+    @TenantIgnore
+    @Select("SELECT COUNT(1) FROM system_oauth2_access_token WHERE access_token = #{accessToken} AND deleted = 0")
+    @Options(flushCache = Options.FlushCachePolicy.TRUE)
+    int selectAuthorityCountByAccessToken(@Param("accessToken") String accessToken);
 
     @TenantIgnore // 获取 token 的时候，需要忽略租户编号。原因是：一些场景下，可能不会传递 tenant-id 请求头，例如说文件上传、积木报表等等
     default OAuth2AccessTokenDO selectByAccessToken(String accessToken) {
