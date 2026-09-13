@@ -64,10 +64,11 @@ public class BpmPgHarnessConfiguration {
         if (!url.startsWith("jdbc:postgresql://")) {
             throw new IllegalStateException("[bpm-pg-harness] 夹具仅面向真实 PostgreSQL，收到 " + url);
         }
+        // 全部环境参数在创建连接池前完成校验；密码缺失同样快速失败（不静默回退空口令）
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(url);
         config.setUsername(requireEnv(ENV_USERNAME));
-        config.setPassword(System.getenv(ENV_PASSWORD) == null ? "" : System.getenv(ENV_PASSWORD));
+        config.setPassword(requireEnv(ENV_PASSWORD));
         config.setMaximumPoolSize(4);
         config.setMinimumIdle(1);
         config.setPoolName("bpm-pg-harness");

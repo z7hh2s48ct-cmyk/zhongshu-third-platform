@@ -36,7 +36,7 @@
 | 重启可恢复 | 阶段 2 以独立 JVM、`schema-update=false`、低权限账号重启接入同库：定义/实例/历史/schema.version 全部一致（R10） | PASS |
 | 事务失败可恢复 | R60：Spring `DataSourceTransactionManager` 回滚事务内的发起不留引擎痕迹；提交事务正常持久化 | PASS |
 | 异步执行器与启停 | bootstrap 执行器挂起留积压（`ACT_RU_JOB`=1、探针零记录）→ runtime 重启后积压跨重启持久保留（执行器不自启），显式 `asyncExecutor.start()` 消化积压且无死信、实时路径再验、`shutdown()` 回到非活动态（R70，isActive 直证） | PASS |
-| 关闭 BPM 无副作用 | S0：System/Infra 全基线零 `ACT_`/`FLW_` 表；server POM/根 reactor 保持 BPM 注释 + `ModuleWhitelistTest` 门禁不变 | PASS |
+| 关闭 BPM 无副作用 | 结构面（本套件 S0）：System/Infra 全基线零 `ACT_`/`FLW_` 表；装配面（既有证据）：server POM/根 reactor 保持 BPM 注释 + `ModuleWhitelistTest` 门禁 + V1.6 记录的真实 PG17+Redis 启动联验（BPM 关闭态下 server 正常装配、关闭模块请求被拒）。启动后零流程副作用的运行期观测归启用 BPM 的批次做开/关对照时补测，本件不作此宣称 | PASS（结构与装配面） |
 | 装配扩展点同构直证 | `BpmPgHarnessConfiguration` 与 `BpmFlowableConfiguration` 同用 `SpringProcessEngineConfiguration` + `setEventListeners` 扩展点，R90 证明监听器在真实 PG 引擎触发 | PASS |
 
 两阶段账号/参数：阶段 1 `zhongshu_owner` + `SCHEMA_UPDATE=true` + `ASYNC_EXECUTOR=false`；
@@ -50,8 +50,15 @@
 - zszj-module-bpm 不在默认 reactor（根 POM 注释态），套件以 `mvn -f zszj-module-bpm/pom.xml`
   独立构建，兄弟模块依赖取自本地仓库已安装产物；**不通过根 POM profile 启用 reactor 成员**
   （`ModuleWhitelistTest` 以根 POM 非注释 `<module>` 为门禁事实源，引入 profile 会被判违规）。
+  因此套件每次运行前先 `mvn install -pl zszj-module-system,zszj-module-infra -am
+  -Dmaven.test.skip=true`（保证消费当前提交的产物，规避「陈旧构件使跨模块测试失真」）；
+  CI（pg-regression.yml）同步 provision JDK 17 与该安装步骤，本地无 tools/ 供给时回退
+  PATH 上的 mvn/java，皆缺退出码 3。
 - 就绪探测必须走 TCP（`-h 127.0.0.1`）：postgres 镜像 initdb 期间的临时服务器只监听
   unix socket，socket 探测可能误判就绪导致建库落到临时服务器失败（2026-09-14 首跑实测）。
+  **移交给量**：本套件已按此修复；`run-db006/008-verify.mjs` 等既有套件仍是 socket 探测，
+  2026-09-14 聚合首跑中二者再次竞态失败、单独复跑即绿——历史登记的「Docker 负载 flaky」
+  相当部分可能即此根因，建议后续批次统一改为 TCP 探测（属各套件所属卡，不在本件改动）。
 
 ## 4. 边界与后续
 

@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -94,6 +95,11 @@ class BpmPgHarnessRuntimeTest {
                 .processInstanceId(instance.getId()).finished().singleResult();
         assertNotNull(historic, "审批通过后实例应进入历史");
         assertEquals(1, historic.getProcessDefinitionVersion(), "旧实例应在原版本 v1 上完成（版本钉住）");
+        // 结束分支直证：approve 条件必须真实路由到 approvedEnd，不得误接 rejectedEnd 仍伪绿
+        assertEquals(1, historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(instance.getId()).activityId("approvedEnd").count(), "应恰好经过 approvedEnd");
+        assertEquals(0, historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(instance.getId()).activityId("rejectedEnd").count(), "通过路径不得经过 rejectedEnd");
         assertEquals(BpmPgHarness.OUTCOME_APPROVE, historyService.createHistoricVariableInstanceQuery()
                 .processInstanceId(instance.getId()).variableName(BpmPgHarness.VAR_OUTCOME)
                 .singleResult().getValue());
@@ -141,6 +147,13 @@ class BpmPgHarnessRuntimeTest {
                 .taskId(task.getId()).singleResult().getAssignee(), "任务历史应记录转办后的受理人");
     }
 
+    /** 回滚实验专用信号：与发起路径可能抛出的任何其它异常明确区分（防止把基础设施错误当回滚路径吞掉）。 */
+    private static final class HarnessRollbackSignal extends RuntimeException {
+        private HarnessRollbackSignal() {
+            super("harness: 模拟业务事务失败");
+        }
+    }
+
     @Test
     @Order(60)
     void springTransactionRollbackLeavesNoEngineTrace() {
@@ -150,20 +163,29 @@ class BpmPgHarnessRuntimeTest {
                 runtimeService.startProcessInstanceByKeyAndTenantId(
                         BpmPgHarness.PROCESS_APPROVAL, "bpm001-A7", null, BpmPgHarness.TENANT_1));
         assertEquals(before + 1, runtimeService.createProcessInstanceQuery().count());
-        // 实验组：回滚事务内的发起不留下任何引擎痕迹（证明引擎走 Spring 事务管理器）
-        try {
-            transactionTemplate.executeWithoutResult(status -> {
-                runtimeService.startProcessInstanceByKeyAndTenantId(
-                        BpmPgHarness.PROCESS_APPROVAL, "bpm001-A8", null, BpmPgHarness.TENANT_1);
-                throw new IllegalStateException("harness: 模拟业务事务失败");
-            });
-        } catch (IllegalStateException expected) {
-            // 由回滚断言承接
-        }
+        // 实验组：先确认事务内发起已成功，再抛专用信号触发回滚
+        assertThrows(HarnessRollbackSignal.class, () ->
+                transactionTemplate.executeWithoutResult(status -> {
+                    ProcessInstance started = runtimeService.startProcessInstanceByKeyAndTenantId(
+                            BpmPgHarness.PROCESS_APPROVAL, "bpm001-A8", null, BpmPgHarness.TENANT_1);
+                    assertNotNull(started, "回滚前事务内发起应已成功（不得由发起自身异常冒充回滚路径）");
+                    throw new HarnessRollbackSignal();
+                }));
+        // 回滚零残留：运行实例/历史实例/历史任务三面均无 A8 痕迹（历史写入与运行态同事务，一并回滚）
         assertEquals(before + 1, runtimeService.createProcessInstanceQuery().count(),
                 "回滚事务内的发起不应持久化");
-        assertNull(runtimeService.createProcessInstanceQuery()
-                .processInstanceBusinessKey("bpm001-A8").singleResult());
+        assertEquals(0, runtimeService.createProcessInstanceQuery()
+                .processInstanceBusinessKey("bpm001-A8").count());
+        assertEquals(0, historyService.createHistoricProcessInstanceQuery()
+                .processInstanceBusinessKey("bpm001-A8").count(), "历史实例不应有 A8 残留");
+        assertEquals(0, historyService.createHistoricTaskInstanceQuery()
+                .processInstanceBusinessKey("bpm001-A8").count(), "历史任务不应有 A8 残留");
+        // 回滚后引擎完好：同一操作重试并提交即成功（完整恢复直证）
+        ProcessInstance retried = transactionTemplate.execute(tx ->
+                runtimeService.startProcessInstanceByKeyAndTenantId(
+                        BpmPgHarness.PROCESS_APPROVAL, "bpm001-A9", null, BpmPgHarness.TENANT_1));
+        assertNotNull(retried, "回滚后重试发起应成功");
+        assertEquals(before + 2, runtimeService.createProcessInstanceQuery().count());
     }
 
     @Test
@@ -196,17 +218,31 @@ class BpmPgHarnessRuntimeTest {
     @Test
     @Order(80)
     void historyAndRuntimeQueriesSupportPaging() {
-        List<HistoricProcessInstance> page = historyService.createHistoricProcessInstanceQuery()
+        // 分页直证：按唯一列（实例 ID）排序保证全序，OFFSET 页与全量切片精确相等，无重复无遗漏
+        List<String> finishedIds = historyService.createHistoricProcessInstanceQuery()
                 .finished()
-                .orderByProcessInstanceEndTime().asc()
-                .listPage(0, 2);
-        assertEquals(2, page.size(), "分页历史查询应返回整页");
-        assertTrue(historyService.createHistoricProcessInstanceQuery().finished().count() >= 4,
-                "通过/拒绝/撤回/转办完成共 4 个实例应进入历史");
-        assertEquals(2, historyService.createHistoricTaskInstanceQuery().finished()
-                .listPage(0, 2).size(), "任务历史分页应可用");
-        assertTrue(runtimeService.createProcessInstanceQuery()
-                .listPage(0, 3).size() <= 3, "运行实例分页应可用");
+                .orderByProcessInstanceId().asc()
+                .list().stream().map(HistoricProcessInstance::getId).toList();
+        assertTrue(finishedIds.size() >= 6, "通过/拒绝/撤回/转办 4 审批 + 2 异步共 6 实例应全部进入历史");
+        List<String> historyPage1 = historyService.createHistoricProcessInstanceQuery()
+                .finished().orderByProcessInstanceId().asc().listPage(0, 2)
+                .stream().map(HistoricProcessInstance::getId).toList();
+        List<String> historyPage2 = historyService.createHistoricProcessInstanceQuery()
+                .finished().orderByProcessInstanceId().asc().listPage(2, 2)
+                .stream().map(HistoricProcessInstance::getId).toList();
+        assertEquals(finishedIds.subList(0, 2), historyPage1, "OFFSET=0 页应精确等于全量前 2 条");
+        assertEquals(finishedIds.subList(2, 4), historyPage2, "OFFSET=2 页应精确等于全量第 3~4 条");
+        assertTrue(historyPage1.stream().noneMatch(historyPage2::contains), "两页不得重复");
+
+        // 运行面：精确计数（A5/A6/A7/A9，A8 已回滚零残留）+ 非零 OFFSET 精确切片
+        List<String> runningIds = runtimeService.createProcessInstanceQuery()
+                .orderByProcessInstanceId().asc()
+                .list().stream().map(ProcessInstance::getId).toList();
+        assertEquals(4, runningIds.size(), "运行实例应恰为 A5/A6/A7/A9");
+        List<String> runningOffsetPage = runtimeService.createProcessInstanceQuery()
+                .orderByProcessInstanceId().asc().listPage(1, 3)
+                .stream().map(ProcessInstance::getId).toList();
+        assertEquals(runningIds.subList(1, 4), runningOffsetPage, "OFFSET=1 页应精确等于全量去掉首条");
     }
 
     @Test
