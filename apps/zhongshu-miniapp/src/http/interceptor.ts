@@ -30,13 +30,24 @@ const AUTHORITY_RE = /^[a-z][a-z\d+\-.]*:\/\/[^/?#]+/i
 /** 提取 origin（scheme://host[:port]）；小程序运行时无浏览器 URL 全局，故用正则解析 */
 const ORIGIN_RE = /^([a-z][a-z\d+\-.]*):\/\/([^/?#]+)/i
 
-/** 由绝对地址解析 origin（统一小写）；非绝对地址或解析失败返回空串。不依赖 new URL */
+/** 由绝对地址解析 origin（统一小写、归一化默认端口）；非绝对地址或解析失败返回空串。不依赖 new URL */
 function parseOrigin(url: string): string {
   const m = ORIGIN_RE.exec(url)
   if (!m) {
     return ''
   }
-  return `${m[1].toLowerCase()}://${m[2].toLowerCase()}`
+  const scheme = m[1].toLowerCase()
+  let authority = m[2].toLowerCase()
+  // 归一化默认端口（与 URL.origin 行为一致）：http 省略 :80、https 省略 :443，
+  // 避免同一 origin 因显式/省略默认端口写法不同而被误判为外部来源、丢失凭据。
+  const portMatch = /:(\d+)$/.exec(authority)
+  if (portMatch) {
+    const port = portMatch[1]
+    if ((scheme === 'http' && port === '80') || (scheme === 'https' && port === '443')) {
+      authority = authority.slice(0, authority.length - portMatch[0].length)
+    }
+  }
+  return `${scheme}://${authority}`
 }
 
 /**
@@ -120,7 +131,9 @@ export function isApprovedApiOrigin(url: string, approvedOrigin: string): boolea
   }
   // 不依赖 new URL（小程序运行时无浏览器 URL 全局）
   const origin = parseOrigin(url)
-  return !!origin && origin === approvedOrigin.toLowerCase()
+  // approvedOrigin 亦归一化（兼容调用方直接传入显式默认端口的写法）
+  const approved = parseOrigin(approvedOrigin) || approvedOrigin.toLowerCase()
+  return !!origin && origin === approved
 }
 
 /** trace/correlation 标识透传：调用方已提供则原样保留，否则生成；返回最终值（ZS-SEC-006） */

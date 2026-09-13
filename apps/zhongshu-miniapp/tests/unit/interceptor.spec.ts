@@ -224,3 +224,16 @@ describe('codex r0 回归：小程序运行时兼容与 trace-id 合同（ZS-CLI
     expect(header['Trace-Id']).toBeUndefined()
   })
 })
+
+describe('codex r1 回归：origin 默认端口归一化（P2）', () => {
+  it('https 显式 :443 与省略端口视为同一 origin', () => {
+    expect(resolveApprovedOrigin('https://api.zszj.test:443/admin-api')).toBe('https://api.zszj.test')
+    expect(isApprovedApiOrigin('https://api.zszj.test:443/admin-api/x', 'https://api.zszj.test')).toBe(true)
+    expect(isApprovedApiOrigin('https://api.zszj.test/admin-api/x', 'https://api.zszj.test:443')).toBe(true)
+  })
+  it('http 显式 :80 归一化；非默认端口保留', () => {
+    expect(resolveApprovedOrigin('http://api.zszj.test:80/admin-api')).toBe('http://api.zszj.test')
+    expect(resolveApprovedOrigin('https://api.zszj.test:8443/admin-api')).toBe('https://api.zszj.test:8443')
+    expect(isApprovedApiOrigin('https://api.zszj.test:8443/x', 'https://api.zszj.test')).toBe(false)
+  })
+})
