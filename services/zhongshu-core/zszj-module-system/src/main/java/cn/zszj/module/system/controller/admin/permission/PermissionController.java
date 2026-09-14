@@ -1,12 +1,10 @@
 package cn.zszj.module.system.controller.admin.permission;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.module.system.controller.admin.permission.vo.permission.PermissionAssignRoleDataScopeReqVO;
 import cn.zszj.module.system.controller.admin.permission.vo.permission.PermissionAssignRoleMenuReqVO;
 import cn.zszj.module.system.controller.admin.permission.vo.permission.PermissionAssignUserRoleReqVO;
 import cn.zszj.module.system.service.permission.PermissionService;
-import cn.zszj.module.system.service.tenant.TenantService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,9 +25,6 @@ public class PermissionController {
 
     @Resource
     private PermissionService permissionService;
-    @Resource
-    private TenantService tenantService;
-
     @Operation(summary = "获得角色拥有的菜单编号")
     @Parameter(name = "roleId", description = "角色编号", required = true)
     @GetMapping("/list-role-menus")
@@ -42,10 +37,11 @@ public class PermissionController {
     @Operation(summary = "赋予角色菜单")
     @PreAuthorize("@ss.hasPermission('system:permission:assign-role-menu')")
     public CommonResult<Boolean> assignRoleMenu(@Validated @RequestBody PermissionAssignRoleMenuReqVO reqVO) {
-        // 开启多租户的情况下，需要过滤掉未开通的菜单
-        tenantService.handleTenantMenu(menuIds -> reqVO.getMenuIds().removeIf(menuId -> !CollUtil.contains(menuIds, menuId)));
-
-        // 执行菜单的分配
+        // ZS-CFG-003.B GAP-3：移除上游 yudao 遗留的 handleTenantMenu 套餐静默过滤（removeIf 丢弃套餐外菜单）。
+        // 静默过滤会在服务端校验之前吞掉越界菜单，把「越界显式拒绝（TENANT_PACKAGE_MENU_EXCEED，见
+        // PermissionServiceImpl#validateMenusInTenantPackage）」降级为「部分成功」——请求 code=0 但越界菜单
+        // 未写入，违反 ZS-CFG-003.B「套餐回收后直调拒绝」的安全合同（SYS-001.A 真实 HTTP 回归 SYS-ROLE-N1 实证）。
+        // 租户/套餐交集约束由服务端 @Transactional 内 validateMenusInTenantPackage 显式拒绝，系统租户不受影响。
         permissionService.assignRoleMenu(reqVO.getRoleId(), reqVO.getMenuIds());
         return success(true);
     }

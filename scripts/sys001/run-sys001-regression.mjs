@@ -319,9 +319,8 @@ try {
 const results = [];
 // 已登记缺口（报告含归口与证据；这些用例的 FAIL 是缺口证据本身，不是夹具误报）
 const REGISTERED_GAPS = new Set([
-  'SYS-POST-N1', // 归口 ZS-IAM-003（已修复，断言新拒绝码）
-  'SYS-ROLE-N1', // 归口 ZS-CFG-003.B / ZS-DB-001：真实 PG 上越界既不拒绝也不落库（GAP-3）
   'STATEMENT-DEFECT', // 归口 ZS-DB-001/依赖基线：真实 PG「statement 已关闭」（GAP-1，已夹具规避）
+  // SYS-POST-N1（GAP-2 岗位引用，3097b22f 修复）、SYS-ROLE-N1（GAP-3 套餐静默过滤，控制器修复）均已修复转正式断言
 ]);
 function record(id, ok, note) {
   const knownGap = !ok && ([...REGISTERED_GAPS].some((g) => id.startsWith(g)) || /系统异常|code=500/.test(note));
@@ -382,16 +381,16 @@ const report = {
     {
       id: 'GAP-1 真实 PG「statement 已关闭」高频缺陷（夹具级规避已落地，根因修复归口待办）',
       severity: '阻塞级（规避前：真实 PG 环境下约半数写路径/令牌路径请求 500/401）',
-      mitigation: '夹具以 CLI 覆盖显式关闭 Druid PSCache（pool-prepared-statements=false、max-pool-prepared-statement-per-connection-size=-1，与 ZS-BRAND-004.B 运行期夹具同款并经其验证）；规避效果以本次报告「结果汇总」实测为准（规避前基线 24~30/50 且逐 run 波动，规避后仅剩 GAP-3 一项 FAIL）。产品 yaml 未改动；根因修复（依赖升级或 selectOne 实现回退）归 ZS-DB-001。',
+      mitigation: '夹具以 CLI 覆盖显式关闭 Druid PSCache（pool-prepared-statements=false、max-pool-prepared-statement-per-connection-size=-1，与 ZS-BRAND-004.B 运行期夹具同款并经其验证）；规避效果以本次报告「结果汇总」实测为准（规避前基线 24~30/50 且逐 run 波动，规避后「statement 已关闭」残留为零）。产品 yaml 未改动；根因修复（依赖升级或 selectOne 实现回退）归 ZS-DB-001。',
       phenomenon: 'MP 3.5.17 `selectOne` 新会话光标查询（openSession→selectCursor）与 Druid PSCache 语句包装在真实 PostgreSQL 17 上触发「该 statement 已经关闭」：Prepared 语句创建后、参数设置前即被关闭，请求以 500（PersistenceException）或 401（令牌校验路径 catch ServiceException 后按匿名处理）失败。上游同类：alibaba/druid#3641（MyBatis cursor + Druid 连接回收重置语句状态）、mybatis#1351。',
       evidence: '规避前逐 run 命中用例不同（写/令牌路径 500、401）；关闭 stat/wall 过滤器、对齐 Druid 池参数、关闭 pgjdbc 语句缓存、关闭 mapper DEBUG 日志代理均不消除；显式关闭 PSCache（BRAND-004.B 同款 CLI 覆盖）后「statement 已关闭」残留为零（以本报告用例明细中 code=500/系统异常 计数为准）。',
       attribution: '归口 ZS-DB-001（数据源 PG 合同）/ZS-ENG（依赖基线）；建议升级 MyBatis-Plus/Druid 或将 MP selectOne 光标实现回退为 selectList 语义后回归。',
     },
     {
-      id: 'GAP-3 真实 PG 上 assign-role-menu 越界既不拒绝也不落库（SYS-ROLE-N1 证据，CFG-003.B 跨 PG 复验失败）',
-      severity: '功能缺口（真实 PG 行为与 H2 不一致，需复验）：归口 ZS-CFG-003.B / ZS-DB-001',
-      phenomenon: '租户 123 的自定义角色 assign-role-menu 混入套餐外菜单 102：服务端返回 code=0，PG 日志（log_statement=all）证实事务内仅发生「锁租户→读套餐→读角色菜单→COMMIT」，无 INSERT 且无 TENANT_PACKAGE_MENU_EXCEED 异常；套餐 menu_ids 读回不含 102，PG 亦无越界行。与 P2 套餐内授权成功并存，contains 判定行为自相矛盾，疑与 JacksonTypeHandler 泛型擦除（Set<Long> 解析为 Integer 集合）及 MP 3.5.17 新会话路径在 PG 的组合行为有关，超出本卡修复范围。',
-      attribution: '归口 ZS-CFG-003.B（跨 PG 方言复验，docs/05 已预留「并发用例跨 PG 方言复验归 ZS-SYS-001.A」）+ ZS-DB-001；建议依赖升级后以本套件 SYS-ROLE-N1 复验。',
+      id: 'GAP-3 真实 PG 上 assign-role-menu 越界既不拒绝也不落库（已修复——根因并非 TypeHandler/依赖）',
+      severity: '已修复：根因为控制器套餐静默过滤；SYS-ROLE-N1 已转正式断言，真实 PG 复验 49/49',
+      phenomenon: '【根因更正】初判「JacksonTypeHandler 泛型擦除 × MP 3.5.17」不成立：真相是 PermissionController.assignRoleMenu 的上游 yudao 遗留 handleTenantMenu 在服务端校验前静默 removeIf 套餐外菜单，把「越界显式拒绝（TENANT_PACKAGE_MENU_EXCEED 1002016005）」降级为「部分成功」（code=0、无 INSERT、越界行=0）；H2 服务层测试直调 service 不经控制器，故「同路径守卫通过」属测试层级差异而非数据库差异。修复=删除控制器静默过滤（失效 TenantService 注入一并清理）+ 同提交补菜单存在性显式校验（MENU_NOT_EXISTS，堵系统租户伪造 ID 悬空记录，codex r0 P2）。',
+      attribution: '修复归口 ZS-CFG-003.B（GAP-3 控制器修复提交）；ZS-DB-001 依赖升级不再为本项所需（仅余 GAP-1 根因修复诉求）；SYS-ROLE-N1 已摘出 REGISTERED_GAPS 转正式安全断言。',
     },
     {
       id: 'GAP-4 菜单深层环校验缺失（父菜单可挂到自己子菜单下）',

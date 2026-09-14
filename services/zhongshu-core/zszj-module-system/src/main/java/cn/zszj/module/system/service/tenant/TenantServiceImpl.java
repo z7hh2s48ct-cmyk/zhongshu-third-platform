@@ -154,8 +154,21 @@ public class TenantServiceImpl implements TenantService {
                 .setSort(0).setRemark("系统自动生成");
         Long roleId = roleService.createRole(reqVO, RoleTypeEnum.SYSTEM.getType());
         // 分配权限
-        permissionService.assignRoleMenu(roleId, tenantPackage.getMenuIds());
+        // ZS-CFG-003.B GAP-3 codex r1 P1：套餐 menu_ids 可能残留已删除菜单（deleteMenu 只清 role_menu），
+        // 内部供给路径须先按现有菜单消毒，避免被 assignRoleMenu 的外部伪造拒绝语义（MENU_NOT_EXISTS）误伤开通
+        permissionService.assignRoleMenu(roleId, sanitizeExistingMenuIds(tenantPackage.getMenuIds()));
         return roleId;
+    }
+
+    // ZS-CFG-003.B GAP-3 codex r1 P1：套餐 menu_ids 可能残留已删除菜单（deleteMenu 只清 role_menu、不维护
+    // 套餐不变量）——内部供给/收敛路径传入 assignRoleMenu 前先按现有菜单消毒，避免 MENU_NOT_EXISTS 误伤；
+    // 套餐不变量维护（删除/停用菜单时同步清理 package.menu_ids）归 ZS-CFG-003 后续小卡
+    private Set<Long> sanitizeExistingMenuIds(Set<Long> menuIds) {
+        if (CollUtil.isEmpty(menuIds)) {
+            return menuIds;
+        }
+        Set<Long> existingIds = CollectionUtils.convertSet(menuService.getMenuList(menuIds), MenuDO::getId);
+        return CollUtil.intersectionDistinct(menuIds, existingIds);
     }
 
     @Override
@@ -240,14 +253,14 @@ public class TenantServiceImpl implements TenantService {
             roles.forEach(role -> {
                 // 如果是租户管理员，重新分配其权限为租户套餐的权限
                 if (Objects.equals(role.getCode(), RoleCodeEnum.TENANT_ADMIN.getCode())) {
-                    permissionService.assignRoleMenu(role.getId(), menuIds);
+                    permissionService.assignRoleMenu(role.getId(), sanitizeExistingMenuIds(menuIds));
                     log.info("[updateTenantRoleMenu][租户管理员({}/{}) 的权限修改为({})]", role.getId(), role.getTenantId(), menuIds);
                     return;
                 }
                 // 如果是其他角色，则去掉超过套餐的权限
                 Set<Long> roleMenuIds = permissionService.getRoleMenuListByRoleId(role.getId());
                 roleMenuIds = CollUtil.intersectionDistinct(roleMenuIds, menuIds);
-                permissionService.assignRoleMenu(role.getId(), roleMenuIds);
+                permissionService.assignRoleMenu(role.getId(), sanitizeExistingMenuIds(roleMenuIds));
                 log.info("[updateTenantRoleMenu][角色({}/{}) 的权限修改为({})]", role.getId(), role.getTenantId(), roleMenuIds);
             });
         });
