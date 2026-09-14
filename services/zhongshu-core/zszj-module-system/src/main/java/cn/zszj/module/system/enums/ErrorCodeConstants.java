@@ -94,6 +94,15 @@ public interface ErrorCodeConstants {
     ErrorCode PERMISSION_GRANT_EXCEED_CEILING = new ErrorCode(1_002_009_003, "超出可授予权限上限，非超级管理员不能授予超级管理员等特权角色");
     ErrorCode PERMISSION_SELF_ELEVATION = new ErrorCode(1_002_009_004, "禁止为当前登录用户自身新增角色，避免自我提权");
 
+    // ========== 业务审计 1-002-010-000 ==========
+    /**
+     * ZS-AUDIT-001：统一业务审计 fail-closed——eventType/actorType/result 必填，缺失即拒绝写入并中止当前事务，
+     * 杜绝「无主体的模糊审计」；detail 序列化失败、DB 写入失败各有其码，供调用方区分处置。
+     */
+    ErrorCode AUDIT_EVENT_FIELD_MISSING = new ErrorCode(1_002_010_000, "审计事件缺少必填字段({})，拒绝写入");
+    ErrorCode AUDIT_EVENT_DETAIL_SERIALIZE_FAILED = new ErrorCode(1_002_010_001, "审计事件明细序列化失败");
+    ErrorCode AUDIT_EVENT_WRITE_FAILED = new ErrorCode(1_002_010_002, "审计事件写入失败");
+
     // ========== 短信渠道 1-002-011-000 ==========
     ErrorCode SMS_CHANNEL_NOT_EXISTS = new ErrorCode(1_002_011_000, "短信渠道不存在");
     ErrorCode SMS_CHANNEL_DISABLE = new ErrorCode(1_002_011_001, "短信渠道不处于开启状态，不允许选择");
