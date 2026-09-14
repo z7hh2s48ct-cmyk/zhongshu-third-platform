@@ -22,3 +22,14 @@ codex 对清单生成器、主体类型推导（ADMIN=322/MEMBER=6）、匿名�
 ## 验证（交付时点证据，沿用卡片开发记录）
 
 - `-pl :zszj-server -Dtest=ApiInventoryTest,ModuleWhitelistTest test`：8/8 BUILD SUCCESS；`-pl :zszj-spring-boot-starter-biz-tenant -Dtest=SecurityFilterChainFixtureTest`：35/35；`run-local-gates --fast` 10/10
+
+## 2026-09-15 P2 硬化收口（feat/sec-002-p2 → main 8f6efc3c）
+
+5×P2 中 #1/#4 收口（`ApiInventoryTest.java` +32/-4），#2/#3/#5 保留登记：
+- #1 基线缺失门禁硬化：`!Files.exists(BASELINE)` 时仅 `-Dapi.inventory.update=true` 允许创建；否则 assertTrue 失败
+- #4 类级 @PreAuthorize 生效语义：类级 for 循环识别 `@PreAuthorize`；方法级有注解时使用方法级权限（即使为 null 如 `isAuthenticated()`），仅当方法级无注解时才回落到类级
+
+附带修复：AUDIT-002 合并时遗漏的基线更新（新增 AuditEventController 2 端点，331→333）
+
+验证：`mvn -pl :zszj-server -Dtest=ApiInventoryTest test` 4/4 BUILD SUCCESS
+codex 评审：r0 `codex review --commit cc8a8362` → 1×P2（`isAuthenticated()` 回落缺陷）；r1 `codex review --commit 10d3b163` → "No actionable regressions" 0×P0/P1

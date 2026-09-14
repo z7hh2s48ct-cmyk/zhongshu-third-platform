@@ -17,3 +17,13 @@
 
 - 真实 PG17（一次性 Docker 容器）C1~C10 全过：CRUD/分页/JOIN/批量/逻辑删除/聚合按 tenant_id 隔离、伪造上下文 PK 越权 0 行、三类合法范围（全局表/@TenantIgnore/系统清理）结构断言、`--self-test` 负向对照证明隔离非空洞；已注册进 `run-pg-regression.mjs`（8 套件，2026-09-13 空载复跑 8/8 全绿）
 - SQL 级等效语句验证的边界（非 PG 原生 RLS、拦截器端到端归 SEC-012.A/B）已在卡片登记
+
+## 2026-09-15 P2 硬化收口（feat/db-018-p2 → main 5ab4b00f）
+
+3×P2 全部收口（`scripts/db/run-db018-verify.mjs` +33/-10）：
+- #1 C3/C6 JOIN 追加 username@dept.name / dept.id 集合内容断言
+- #2 C2 分页追加 LIMIT 3 返回行 name 序列断言
+- #3 C4 批量追加 ctx=2 UPDATE tenant_id=2 命中 5 行、tenant_id=1 二次影响 0 行
+
+验证：`run-db018-verify.mjs --self-test` 11/11 PASS；`run-pg-regression.mjs` 7/9 PASS（DB-018 ✓）
+codex 评审：`codex review --commit bfd3bc3b` → "No actionable defects" 0×P0/P1

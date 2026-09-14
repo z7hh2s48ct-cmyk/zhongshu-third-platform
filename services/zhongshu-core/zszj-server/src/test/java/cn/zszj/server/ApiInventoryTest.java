@@ -48,6 +48,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>重新生成基线（评审通过后）：
  * <pre>mvn -pl :zszj-server -Dtest=ApiInventoryTest -Dapi.inventory.update=true test</pre>
  *
+ * <p>2026-09-15 P2 硬化（codex-ZS-SEC-002 评审处置 #1/#4）：
+ * <ul>
+ *   <li>#1 基线缺失门禁硬化：基线文件不存在时，仅 {@code -Dapi.inventory.update=true} 允许创建；
+ *       否则直接失败——防止从 checkout 省略基线时静默写入当前清单再与自身比对通过。</li>
+ *   <li>#4 类级 @PreAuthorize 生效语义：类级 for 循环识别 {@code @PreAuthorize} 并提取权限标识；
+ *       方法级缺省 {@code @PreAuthorize} 时回落到类级权限（方法级优先）。</li>
+ * </ul>
+ *
  * <p>边界：本清单为静态源码事实来源，覆盖启用模块的 API 分类/匿名/方法权限；ADMIN/MEMBER Token 串用、
  * ASYNC 派发不免认证、缺方法权限拒绝等运行时合同由 ZS-SEC-012.A 的真实安全链夹具覆盖，不在此重复。
  * zszj-server 的 DefaultController（未启用模块兜底路由）由 ZS-ENG-001 的 ModuleWhitelistTest 治理，不纳入本清单。
@@ -81,10 +89,19 @@ class ApiInventoryTest {
         List<String> actual = generateInventory();
         assertFalse(actual.isEmpty(), "接口清单不应为空，请检查启用模块 Controller 扫描路径");
 
-        if (Boolean.getBoolean("api.inventory.update") || !Files.exists(BASELINE)) {
+        // P2 硬化 #1：基线缺失时仅 update=true 允许创建；否则直接失败（防止静默自比通过）
+        boolean updateMode = Boolean.getBoolean("api.inventory.update");
+        if (!Files.exists(BASELINE)) {
+            assertTrue(updateMode,
+                    "基线文件缺失：" + BASELINE.toAbsolutePath()
+                            + "\n  首次创建或基线被删除时，必须显式带 -Dapi.inventory.update=true 评审后再生成，"
+                            + "防止从 checkout 省略基线时静默写入当前清单再与自身比对通过（codex-ZS-SEC-002 P2 #1 硬化）");
             Files.createDirectories(BASELINE.getParent());
             Files.write(BASELINE, renderBaseline(actual), StandardCharsets.UTF_8);
             System.out.println("[ApiInventory] 基线已重新生成：" + actual.size() + " 个端点 -> " + BASELINE.toAbsolutePath());
+        } else if (updateMode) {
+            Files.write(BASELINE, renderBaseline(actual), StandardCharsets.UTF_8);
+            System.out.println("[ApiInventory] 基线已更新：" + actual.size() + " 个端点 -> " + BASELINE.toAbsolutePath());
         }
 
         List<String> expected = readBaseline();
@@ -210,9 +227,10 @@ class ApiInventoryTest {
         }
         assertTrue(classIdx > 0, "未找到类声明: " + controller);
 
-        // 3. 类级基路径与类级 @PermitAll
+        // 3. 类级基路径、类级 @PermitAll、类级 @PreAuthorize（P2 硬化 #4）
         String basePath = "";
         boolean classPermitAll = false;
+        String classPermission = null;
         for (int i = 0; i < classIdx; i++) {
             String t = lines.get(i).trim();
             if (t.startsWith("@RequestMapping")) {
@@ -220,6 +238,8 @@ class ApiInventoryTest {
                 basePath = ps.isEmpty() ? "" : ps.get(0);
             } else if (t.startsWith("@PermitAll")) {
                 classPermitAll = true;
+            } else if (t.startsWith("@PreAuthorize")) {
+                classPermission = extractPermission(t);
             }
         }
 
@@ -228,6 +248,7 @@ class ApiInventoryTest {
         List<String> pendingPaths = null;
         boolean pendingPermitAll = false;
         String pendingPermission = null;
+        boolean hasMethodPreAuthorize = false;  // P2 硬化 #4 r1：跟踪方法级 @PreAuthorize 注解是否存在（与提取的权限标识分开）
         for (int i = classIdx + 1; i < lines.size(); i++) {
             String t = lines.get(i).trim();
             if (t.startsWith("@GetMapping")) {
@@ -252,15 +273,20 @@ class ApiInventoryTest {
                 pendingPermitAll = true;
             } else if (t.startsWith("@PreAuthorize")) {
                 pendingPermission = extractPermission(t);
+                hasMethodPreAuthorize = true;  // P2 硬化 #4 r1：方法级有 @PreAuthorize 注解（即使无权限字面量如 isAuthenticated()）
             } else if (isMethodSignature(t)) {
                 if (pendingMethod != null) {
+                    // P2 硬化 #4 r1：方法级有 @PreAuthorize 注解时使用方法级权限（即使为 null，如 isAuthenticated()）；
+                    // 仅当方法级无 @PreAuthorize 注解时才回落到类级权限（防止 isAuthenticated() 错误保留类级权限隐藏授权弱化）
+                    String effectivePermission = hasMethodPreAuthorize ? pendingPermission : classPermission;
                     emit(out, pendingMethod, pendingPaths, pendingPermitAll || classPermitAll,
-                            pendingPermission, prefix, basePath, subject, module, controller);
+                            effectivePermission, prefix, basePath, subject, module, controller);
                 }
                 pendingMethod = null;
                 pendingPaths = null;
                 pendingPermitAll = false;
                 pendingPermission = null;
+                hasMethodPreAuthorize = false;  // P2 硬化 #4 r1：复位
             }
         }
     }
