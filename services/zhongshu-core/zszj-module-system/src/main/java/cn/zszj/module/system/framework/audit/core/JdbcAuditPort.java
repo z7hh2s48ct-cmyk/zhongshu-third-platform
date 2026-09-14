@@ -203,7 +203,11 @@ public class JdbcAuditPort implements AuditPort {
             // 复用 ZS-SEC-007 LogSanitizeUtils 同一规则集（键归一模糊匹配 + 递归掩码 + 失败只记摘要）
             return LogSanitizeUtils.sanitizeJson(JsonUtils.toJsonString(detail));
         } catch (Exception e) {
-            log.error("[serializeDetail] 审计明细序列化失败 detail={}", detail, e);
+            // ZS-AUDIT-002 codex r0 P1：失败日志只记类型/长度/错误类别，不输出原始对象与异常链（防凭据泄漏）
+            log.error("[serializeDetail][审计明细序列化失败 type({}) keys({}) errClass({})]",
+                    detail != null ? detail.getClass().getSimpleName() : "null",
+                    detail != null ? detail.keySet() : "null",
+                    e.getClass().getSimpleName());
             throw exception(AUDIT_EVENT_DETAIL_SERIALIZE_FAILED);
         }
     }

@@ -5,12 +5,14 @@ import cn.zszj.framework.common.biz.system.audit.AuditPort;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.module.system.controller.admin.audit.vo.AuditEventPageReqVO;
 import cn.zszj.module.system.dal.dataobject.audit.AuditEventDO;
 import cn.zszj.module.system.dal.mysql.audit.AuditEventMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.annotation.Resource;
@@ -51,8 +53,18 @@ public class AuditEventQueryService {
      * 分页查询审计事件——租户范围强制隔离（非系统租户只见本租户）。
      */
     public PageResult<AuditEventDO> getAuditEventPage(AuditEventPageReqVO pageReqVO) {
-        return auditEventMapper.selectPage(pageReqVO, new LambdaQueryWrapperX<AuditEventDO>()
-                .eqIfPresent(AuditEventDO::getEventType, pageReqVO.getEventType())
+        PageResult<AuditEventDO> page = doGetAuditEventPage(pageReqVO);
+        // codex r0 P1：读取时兜底脱敏——覆盖升级前已落库的未净化历史记录（写时脱敏仅覆盖新增数据）
+        page.getList().forEach(event -> {
+            if (event.getDetail() != null && event.getDetail().contains("\"")) {
+                event.setDetail(LogSanitizeUtils.sanitizeJson(event.getDetail()));
+            }
+        });
+        return page;
+    }
+
+    private PageResult<AuditEventDO> doGetAuditEventPage(AuditEventPageReqVO pageReqVO) {
+        return auditEventMapper.selectPage(pageReqVO, new LambdaQueryWrapperX<AuditEventDO>()                .eqIfPresent(AuditEventDO::getEventType, pageReqVO.getEventType())
                 .eqIfPresent(AuditEventDO::getActorId, pageReqVO.getActorId())
                 .eqIfPresent(AuditEventDO::getBizType, pageReqVO.getBizType())
                 .eqIfPresent(AuditEventDO::getBizId, pageReqVO.getBizId())
@@ -71,9 +83,15 @@ public class AuditEventQueryService {
      * @param retentionDays  保留期天数
      * @return 清理条数
      */
+    @Transactional(rollbackFor = Exception.class) // codex r0 P1：DELETE 与 AUDIT_CLEANED 同事务
     public int cleanExpiredEvents(Long operatorUserId, int retentionDays) {
         if (retentionDays <= 0) {
             throw exception(AUDIT_EVENT_CLEAN_FAILED, "保留期必须为正数天");
+        }
+        // codex r0 P1：清理仅限系统租户（防止普通租户物理删除全表历史）
+        Long currentTenant = TenantContextHolder.getTenantId();
+        if (!Objects.equals(currentTenant, SYSTEM_TENANT_ID)) {
+            throw exception(AUDIT_EVENT_CLEAN_FAILED, "仅系统租户可执行审计清理");
         }
         LocalDateTime deadline = LocalDateTime.now().minusDays(retentionDays);
         int deleted = auditEventMapper.deleteExpiredBefore(deadline);
@@ -89,7 +107,7 @@ public class AuditEventQueryService {
                     .reason("保留期 " + retentionDays + " 天")
                     .result(AuditEventMessage.AuditResult.SUCCESS)
                     .detail(java.util.Map.of("deleted", deleted, "deadline", deadline.toString()))
-                    .idempotencyKey("audit-clean-" + deadline)
+                    .idempotencyKey("audit-clean-" + operatorUserId)
                     .build();
             auditPort.record(message);
         }
@@ -100,9 +118,13 @@ public class AuditEventQueryService {
      * 租户范围解析：非系统租户强制限定当前租户；系统租户返回 null（不限定，可跨范围追查）。
      */
     private Long resolveTenantScope() {
+        // codex r0 P2：缺失租户上下文必须拒绝查询（null scope 会被 eqIfPresent 跳过导致全表暴露）
         Long tenantId = TenantContextHolder.getTenantId();
+        if (tenantId == null) {
+            throw exception(AUDIT_EVENT_CLEAN_FAILED, "租户上下文缺失，拒绝审计查询");
+        }
         if (Objects.equals(tenantId, SYSTEM_TENANT_ID)) {
-            return null;
+            return null; // 系统租户可跨范围追查
         }
         return tenantId;
     }
