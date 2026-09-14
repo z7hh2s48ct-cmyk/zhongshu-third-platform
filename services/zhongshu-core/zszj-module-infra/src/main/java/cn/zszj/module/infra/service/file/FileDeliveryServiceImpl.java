@@ -1,0 +1,258 @@
+package cn.zszj.module.infra.service.file;
+
+import cn.hutool.crypto.digest.DigestUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliveryChunkRespVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliverySessionRespVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliveryTicketIssueReqVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliveryTicketIssueRespVO;
+import cn.zszj.module.infra.dal.dataobject.file.FileDO;
+import cn.zszj.module.infra.dal.dataobject.file.FileDeliveryTicketDO;
+import cn.zszj.module.infra.dal.mysql.file.FileDeliveryTicketMapper;
+import cn.zszj.module.infra.dal.mysql.file.FileMapper;
+import cn.zszj.module.infra.framework.file.core.client.FileClient;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.annotation.Resource;
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.UUID;
+
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
+
+/**
+ * 文件交付票据与鉴权取流 Service 实现（ZS-FILE-004.A）。
+ *
+ * <p>适配供体 JdbcDeliveryPort（散列存储、到期条件、原子一次消费）并补齐其消费 SQL 缺失的
+ * owner·tenant·purpose 匹配谓词——供体实现不能原样当作完整授权（卡片要求）。默认后端鉴权取流：
+ * 不向私有附件调用者返回任何可绕过平台授权的存储 URL（含预签名 GET）。</p>
+ */
+@Service
+@Slf4j
+@Validated
+public class FileDeliveryServiceImpl implements FileDeliveryService {
+
+    /** 票据/下载会话有效期（分钟）：与 FILE-003 上传凭证 30 分钟合同对齐。 */
+    private static final int TICKET_EXPIRE_MINUTES = 30;
+
+    @Resource
+    private FileDeliveryTicketMapper deliveryTicketMapper;
+
+    @Resource
+    private FileMapper fileMapper;
+
+    @Resource
+    private FileService fileService;
+
+    @Resource
+    private FileConfigService fileConfigService;
+
+    // ========== 签发 ==========
+
+    @Override
+    public FileDeliveryTicketIssueRespVO issueDeliveryTicket(FileDeliveryTicketIssueReqVO reqVO,
+                                                             LoginUser loginUser, String loginSession) {
+        requireLoginUser(loginUser);
+        // 读授权重检（签发时点）：PUBLIC 匿名可读；PRIVATE 本人或同租户 infra:file:query——
+        // 复用 FILE-001.A 的统一读取授权，票据只可能签发给「当前有权读该文件」的主体
+        FileDO file = requireFile(reqVO.getFileId());
+        fileService.validateFileReadable(file, loginUser);
+
+        String ticketToken = UUID.randomUUID().toString().replace("-", "");
+        FileDeliveryTicketDO ticket = new FileDeliveryTicketDO();
+        ticket.setTicketHash(DigestUtil.sha256Hex(ticketToken)); // 票据不明文落库
+        ticket.setFileId(file.getId());
+        ticket.setOwnerUserId(loginUser.getId());
+        ticket.setPurpose(reqVO.getPurpose());
+        ticket.setStatus(FileDeliveryTicketDO.STATUS_WAITING);
+        ticket.setTenantId(loginUser.getTenantId());
+        ticket.setExpiresTime(LocalDateTime.now().plusMinutes(TICKET_EXPIRE_MINUTES));
+        deliveryTicketMapper.insert(ticket);
+
+        FileDeliveryTicketIssueRespVO respVO = new FileDeliveryTicketIssueRespVO();
+        respVO.setTicketToken(ticketToken);
+        respVO.setExpiresTime(ticket.getExpiresTime());
+        return respVO;
+    }
+
+    // ========== 兑换 ==========
+
+    @Override
+    public FileDeliverySessionRespVO redeemDeliveryTicket(String ticketToken, String purpose,
+                                                          LoginUser loginUser, String loginSession) {
+        requireLoginUser(loginUser);
+        FileDeliveryTicketDO ticket = deliveryTicketMapper.selectByTicketHash(DigestUtil.sha256Hex(ticketToken));
+        // 不区分「token 不存在」与「谓词不匹配」，统一 FORBIDDEN（不泄露票据存在性）
+        if (ticket == null) {
+            throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+        // 消费前谓词：owner·tenant·purpose 必须匹配（供体缺失的关键谓词），不匹配不消费
+        if (!loginUser.getId().equals(ticket.getOwnerUserId())
+                || !loginUser.getTenantId().equals(ticket.getTenantId())
+                || !StrUtil.equals(purpose, ticket.getPurpose())) {
+            throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+        if (FileDeliveryTicketDO.STATUS_REVOKED.equals(ticket.getStatus())) {
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
+        // 已兑换：同主体同登录会话幂等返回既有会话（断线重连不新建）；换登录会话重放拒绝
+        if (FileDeliveryTicketDO.STATUS_REDEEMED.equals(ticket.getStatus())) {
+            if (!StrUtil.equals(loginSession, ticket.getLoginSession())) {
+                throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+            }
+            return buildSessionResponse(ticket);
+        }
+        if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
+            throw exception(FILE_DELIVERY_TICKET_EXPIRED);
+        }
+        // 交付重检（读授权在签发后可能被回收：角色撤权、scope 调整等）——失败按撤权拒绝
+        FileDO file = requireFile(ticket.getFileId());
+        try {
+            fileService.validateFileReadable(file, loginUser);
+        } catch (Exception ex) {
+            log.warn("[redeemDeliveryTicket][票据({}) 交付重检失败，按撤权拒绝 file({})]", ticket.getId(), file.getId(), ex);
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
+
+        // 原子兑换（CAS）：消费 SQL 带 owner·tenant·purpose·status·有效期谓词，恰好一次成功
+        String deliverySessionId = UUID.randomUUID().toString().replace("-", "");
+        LocalDateTime now = LocalDateTime.now();
+        int affected = deliveryTicketMapper.update(null, new LambdaUpdateWrapper<FileDeliveryTicketDO>()
+                .set(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_REDEEMED)
+                .set(FileDeliveryTicketDO::getDeliverySessionId, deliverySessionId)
+                .set(FileDeliveryTicketDO::getLoginSession, loginSession)
+                .set(FileDeliveryTicketDO::getRedeemTime, now)
+                .eq(FileDeliveryTicketDO::getId, ticket.getId())
+                .eq(FileDeliveryTicketDO::getOwnerUserId, loginUser.getId())
+                .eq(FileDeliveryTicketDO::getTenantId, loginUser.getTenantId())
+                .eq(FileDeliveryTicketDO::getPurpose, purpose)
+                .eq(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_WAITING)
+                .gt(FileDeliveryTicketDO::getExpiresTime, now));
+        if (affected == 0) {
+            // 并发竞态：重读核对——同主体同登录会话已兑换则幂等返回，其余拒绝（不新建会话）
+            FileDeliveryTicketDO current = deliveryTicketMapper.selectByTicketHash(ticket.getTicketHash());
+            if (current != null && FileDeliveryTicketDO.STATUS_REDEEMED.equals(current.getStatus())
+                    && loginUser.getId().equals(current.getOwnerUserId())
+                    && StrUtil.equals(loginSession, current.getLoginSession())) {
+                return buildSessionResponse(current);
+            }
+            throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+        ticket.setStatus(FileDeliveryTicketDO.STATUS_REDEEMED);
+        ticket.setDeliverySessionId(deliverySessionId);
+        ticket.setLoginSession(loginSession);
+        return buildSessionResponse(ticket);
+    }
+
+    // ========== 鉴权取流 ==========
+
+    @Override
+    public FileDeliveryChunkRespVO readDeliveryChunk(String deliverySessionId, Long start, Long endInclusive,
+                                                     LoginUser loginUser, String loginSession) {
+        requireLoginUser(loginUser);
+        FileDeliveryTicketDO ticket = deliveryTicketMapper.selectByDeliverySessionId(deliverySessionId);
+        if (ticket == null) {
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
+        // 撤权与过期重检（在途传输分块级——撤权/过期后停止后续输出）
+        if (FileDeliveryTicketDO.STATUS_REVOKED.equals(ticket.getStatus())) {
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
+        if (!FileDeliveryTicketDO.STATUS_REDEEMED.equals(ticket.getStatus())) {
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
+        if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
+            throw exception(FILE_DELIVERY_TICKET_EXPIRED);
+        }
+        // 登录会话绑定重检（兑换后退出/换端：会话 ID 不单独代替认证）
+        if (!StrUtil.equals(loginSession, ticket.getLoginSession())) {
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
+        // 主体身份重检（转发会话 ID/地址给他人：owner·tenant 谓词拒绝）
+        if (!loginUser.getId().equals(ticket.getOwnerUserId())
+                || !loginUser.getTenantId().equals(ticket.getTenantId())) {
+            throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+        // 对象与读权限重检（每次取流均重检撤权状态）
+        FileDO file = requireFile(ticket.getFileId());
+        try {
+            fileService.validateFileReadable(file, loginUser);
+        } catch (Exception ex) {
+            log.warn("[readDeliveryChunk][会话({}) 读权限重检失败，按撤权拒绝 file({})]", deliverySessionId, file.getId(), ex);
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
+
+        // 后端鉴权取流：按同一不可变版本读取，Range 语义 [start, endInclusive] 越界收敛到内容末尾
+        byte[] content = getFileContent(file);
+        long totalSize = content.length;
+        long begin = start != null ? start : 0L;
+        long end = endInclusive != null ? endInclusive : totalSize - 1;
+        if (begin < 0 || end < begin || begin >= totalSize) {
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
+        end = Math.min(end, totalSize - 1);
+        FileDeliveryChunkRespVO respVO = new FileDeliveryChunkRespVO();
+        respVO.setContent(Arrays.copyOfRange(content, (int) begin, (int) (end + 1)));
+        respVO.setTotalSize(totalSize);
+        respVO.setLast(end >= totalSize - 1);
+        return respVO;
+    }
+
+    // ========== 撤权 ==========
+
+    @Override
+    public void revokeDelivery(String deliverySessionId) {
+        deliveryTicketMapper.update(null, new LambdaUpdateWrapper<FileDeliveryTicketDO>()
+                .set(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_REVOKED)
+                .eq(FileDeliveryTicketDO::getDeliverySessionId, deliverySessionId)
+                .eq(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_REDEEMED));
+    }
+
+    // ========== 内部方法 ==========
+
+    private void requireLoginUser(LoginUser loginUser) {
+        if (loginUser == null || loginUser.getId() == null || loginUser.getTenantId() == null) {
+            throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+    }
+
+    private FileDO requireFile(Long fileId) {
+        FileDO file = fileMapper.selectById(fileId);
+        if (file == null) {
+            throw exception(FILE_NOT_EXISTS);
+        }
+        return file;
+    }
+
+    private byte[] getFileContent(FileDO file) {
+        FileClient client = fileConfigService.getFileClient(file.getConfigId());
+        if (client == null) {
+            throw exception(FILE_NOT_EXISTS);
+        }
+        byte[] content;
+        try {
+            content = client.getContent(file.getPath());
+        } catch (Exception ex) {
+            log.error("[getFileContent][文件({}) 读取失败]", file.getId(), ex);
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
+        if (content == null) {
+            throw exception(FILE_NOT_EXISTS);
+        }
+        return content;
+    }
+
+    private FileDeliverySessionRespVO buildSessionResponse(FileDeliveryTicketDO ticket) {
+        FileDO file = requireFile(ticket.getFileId());
+        FileDeliverySessionRespVO respVO = new FileDeliverySessionRespVO();
+        respVO.setDeliverySessionId(ticket.getDeliverySessionId());
+        respVO.setTotalSize(file.getSize());
+        return respVO;
+    }
+
+}

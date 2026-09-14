@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：331
+# 端点总数：337
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -109,6 +109,7 @@ GET|/admin-api/infra/demo03-student-normal/page|ADMIN|PERMISSION|infra:demo03-st
 GET|/admin-api/infra/file-config/get|ADMIN|PERMISSION|infra:file-config:query|infra|FileConfigController
 GET|/admin-api/infra/file-config/page|ADMIN|PERMISSION|infra:file-config:query|infra|FileConfigController
 GET|/admin-api/infra/file-config/test|ADMIN|PERMISSION|infra:file-config:query|infra|FileConfigController
+GET|/admin-api/infra/file/delivery/chunk|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
 GET|/admin-api/infra/file/get|ADMIN|PERMISSION|infra:file:query|infra|FileController
 GET|/admin-api/infra/file/page|ADMIN|PERMISSION|infra:file:query|infra|FileController
 GET|/admin-api/infra/file/presigned-url|ADMIN|AUTHENTICATED|-|infra|FileController
@@ -123,6 +124,7 @@ GET|/admin-api/infra/job/page|ADMIN|PERMISSION|infra:job:query|infra|JobControll
 GET|/admin-api/infra/redis/get-monitor-info|ADMIN|PERMISSION|infra:redis:get-monitor-info|infra|RedisController
 GET|/admin-api/system/area/get-by-ip|ADMIN|AUTHENTICATED|-|system|AreaController
 GET|/admin-api/system/area/tree|ADMIN|AUTHENTICATED|-|system|AreaController
+GET|/admin-api/system/audit-event/page|ADMIN|PERMISSION|system:audit:query|system|AuditEventController
 GET|/admin-api/system/auth/get-permission-info|ADMIN|AUTHENTICATED|-|system|AuthController
 GET|/admin-api/system/auth/social-auth-redirect|ADMIN|ANONYMOUS|-|system|AuthController
 GET|/admin-api/system/dept/get|ADMIN|PERMISSION|system:dept:query|system|DeptController
@@ -239,11 +241,15 @@ POST|/admin-api/infra/demo03-student-erp/demo03-grade/create|ADMIN|PERMISSION|in
 POST|/admin-api/infra/demo03-student-inner/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentInnerController
 POST|/admin-api/infra/demo03-student-normal/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentNormalController
 POST|/admin-api/infra/file-config/create|ADMIN|PERMISSION|infra:file-config:create|infra|FileConfigController
+POST|/admin-api/infra/file/delivery/issue|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
+POST|/admin-api/infra/file/delivery/redeem|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
+POST|/admin-api/infra/file/delivery/revoke|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
 POST|/admin-api/infra/file/upload-complete|ADMIN|PERMISSION|infra:file:create|infra|FileController
 POST|/admin-api/infra/file/upload-credential|ADMIN|PERMISSION|infra:file:create|infra|FileController
 POST|/admin-api/infra/file/upload|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/job/create|ADMIN|PERMISSION|infra:job:create|infra|JobController
 POST|/admin-api/infra/job/sync|ADMIN|PERMISSION|infra:job:create|infra|JobController
+POST|/admin-api/system/audit-event/clean|ADMIN|PERMISSION|system:audit:clean|system|AuditEventController
 POST|/admin-api/system/auth/login|ADMIN|ANONYMOUS|-|system|AuthController
 POST|/admin-api/system/auth/logout|ADMIN|ANONYMOUS|-|system|AuthController
 POST|/admin-api/system/auth/refresh-token|ADMIN|ANONYMOUS|-|system|AuthController
