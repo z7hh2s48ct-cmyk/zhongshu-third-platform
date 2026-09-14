@@ -158,6 +158,15 @@ public class PermissionServiceImpl implements PermissionService {
     public void assignRoleMenu(Long roleId, Set<Long> menuIds) {
         // ZS-PERM-001.A：分配前校验角色归属，防止篡改他租户角色 ID 写入关联
         validateRoleForAssign(roleId);
+        // ZS-CFG-003.B GAP-3 codex r0 P2：上游 handleTenantMenu 静默过滤同时承担「菜单存在性过滤」
+        // （对系统租户以 menuService.getMenuList() 为界剔除伪造/陈旧 ID）——移除静默过滤后须显式校验
+        // 存在性，防止伪造菜单 ID 写入 system_role_menu 形成悬空记录（该表无外键约束）
+        if (CollUtil.isNotEmpty(menuIds)) {
+            Set<Long> existingMenuIds = convertSet(menuService.getMenuList(menuIds), MenuDO::getId);
+            if (!existingMenuIds.containsAll(menuIds)) {
+                throw exception(MENU_NOT_EXISTS);
+            }
+        }
         // ZS-CFG-003.B：套餐/角色权限交集——租户角色的菜单授权必须是其套餐菜单的子集（服务端重检，
         // 套餐回收后租户管理员也不能经授权入口把套餐外菜单重新授予任何角色）
         validateMenusInTenantPackage(roleId, menuIds);

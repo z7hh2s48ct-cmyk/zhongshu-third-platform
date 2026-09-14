@@ -34,6 +34,7 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.TENANT_PACKAGE_MENU
 import static cn.zszj.module.system.enums.ErrorCodeConstants.TENANT_PACKAGE_NOT_EXISTS;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 
@@ -80,6 +81,20 @@ public class TenantPackageMenuIntersectionTest extends BaseDbUnitTest {
     @BeforeEach
     public void beforeEach() {
         when(adminUserService.getUser(anyLong())).thenReturn(randomPojo(cn.zszj.module.system.dal.dataobject.user.AdminUserDO.class));
+        // GAP-3 修复后 assignRoleMenu 显式校验菜单存在性；本套件菜单 ID 均为真实存在语义，默认桩=全视为存在
+        when(menuService.getMenuList(anyCollection())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            java.util.List<cn.zszj.module.system.dal.dataobject.permission.MenuDO> menus = new java.util.ArrayList<>();
+            if (ids != null) {
+                for (Long id : ids) {
+                    cn.zszj.module.system.dal.dataobject.permission.MenuDO m =
+                            new cn.zszj.module.system.dal.dataobject.permission.MenuDO();
+                    m.setId(id);
+                    menus.add(m);
+                }
+            }
+            return menus;
+        });
     }
 
     @AfterEach

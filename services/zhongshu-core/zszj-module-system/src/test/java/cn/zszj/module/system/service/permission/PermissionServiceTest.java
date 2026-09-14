@@ -20,6 +20,7 @@ import cn.zszj.module.system.service.dept.DeptService;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.context.annotation.Import;
@@ -39,11 +40,31 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
 import static java.util.Collections.singleton;
 import static java.util.Collections.singletonList;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @Import({PermissionServiceImpl.class})
 public class PermissionServiceTest extends BaseDbUnitTest {
+
+    @BeforeEach
+    public void setUpMenuExistenceStub() {
+        // ZS-CFG-003.B GAP-3 修复后 assignRoleMenu 显式校验菜单存在性；默认桩=入参 ID 全视为存在，
+        // 存在性拒绝由专项用例 testAssignRoleMenu_menuNotExists 覆盖
+        lenient().when(menuService.getMenuList(anyCollection())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            java.util.List<cn.zszj.module.system.dal.dataobject.permission.MenuDO> menus = new java.util.ArrayList<>();
+            if (ids != null) {
+                for (Long id : ids) {
+                    cn.zszj.module.system.dal.dataobject.permission.MenuDO m =
+                            new cn.zszj.module.system.dal.dataobject.permission.MenuDO();
+                    m.setId(id);
+                    menus.add(m);
+                }
+            }
+            return menus;
+        });
+    }
 
     @Resource
     private PermissionServiceImpl permissionService;
@@ -796,4 +817,26 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         }
     }
 
+    @Test
+    public void testAssignRoleMenu_menuNotExists() {
+        // GAP-3 codex r0 P2：移除控制器静默过滤后，伪造/不存在的菜单 ID 必须显式拒绝（MENU_NOT_EXISTS），
+        // 防止 system_role_menu（无外键）出现悬空记录；植入系统租户豁免套餐校验以专测存在性分支
+        Long roleId = 1L;
+        TenantContextHolder.setTenantId(100L);
+        when(roleService.getRole(eq(roleId))).thenReturn(randomPojo(RoleDO.class, o -> {
+            o.setId(roleId);
+            o.setTenantId(100L);
+        }));
+        cn.zszj.module.system.dal.dataobject.tenant.TenantDO tenant =
+                randomPojo(cn.zszj.module.system.dal.dataobject.tenant.TenantDO.class);
+        tenant.setId(100L).setPackageId(cn.zszj.module.system.dal.dataobject.tenant.TenantDO.PACKAGE_ID_SYSTEM);
+        tenantMapper.insert(tenant);
+        // mock：仅菜单 100 存在，300 为伪造 ID
+        cn.zszj.module.system.dal.dataobject.permission.MenuDO menu =
+                new cn.zszj.module.system.dal.dataobject.permission.MenuDO();
+        menu.setId(100L);
+        when(menuService.getMenuList(anyCollection())).thenReturn(java.util.Collections.singletonList(menu));
+
+        assertServiceException(() -> permissionService.assignRoleMenu(roleId, asSet(100L, 300L)), MENU_NOT_EXISTS);
+    }
 }
