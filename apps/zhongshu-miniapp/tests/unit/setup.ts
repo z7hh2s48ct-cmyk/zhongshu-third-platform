@@ -30,6 +30,7 @@ const uniMock: Record<string, any> = {
   navigateTo: vi.fn(),
   redirectTo: vi.fn(),
   reLaunch: vi.fn(),
+  switchTab: vi.fn(),
   getAccountInfoSync: () => ({ miniProgram: { envVersion: 'release' } }),
 }
 

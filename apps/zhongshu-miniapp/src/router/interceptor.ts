@@ -6,9 +6,11 @@ import { isMp } from '@uni-helper/uni-env'
  * 黑、白名单的配置，请看 config.ts 文件， EXCLUDE_LOGIN_PATH_LIST
  */
 import { useTokenStore } from '@/store/token'
+import { useUserStore } from '@/store/user'
 import { isPageTabbar, tabbarStore } from '@/tabbar/store'
 import { getAllPages, getLastPage, HOME_PAGE, parseUrlToObj } from '@/utils/index'
 import { toLoginPage } from '@/utils/toLoginPage'
+import { hasRouteAccess, UNAUTHORIZED_PAGE } from './access'
 import { EXCLUDE_LOGIN_PATH_LIST, isNeedLoginMode, LOGIN_PAGE, LOGIN_PAGE_ENABLE_IN_MP, NOT_FOUND_PAGE } from './config'
 
 export const FG_LOG_ENABLE = false
@@ -94,6 +96,13 @@ export const navigateToInterceptor = {
     // 不管黑白名单，登录了就直接去吧（但是当前不能是登录页）
     if (tokenStore.hasLogin) {
       if (path !== LOGIN_PAGE) {
+        // ZS-CLIENT-002.A：服务端授权导航——登录后仍须校验页面授权；无对应权限标识
+        // 不得进入，reLaunch 到 403 落点（与「页面不存在」的 404 区分）。注册表为单一真相源，
+        // 客户端只做服务端下发权限的集合成员判断，不重算业务权限。
+        if (!hasRouteAccess(path, useUserStore().permissions ?? [])) {
+          uni.reLaunch({ url: UNAUTHORIZED_PAGE })
+          return false // 明确表示阻止原路由继续执行
+        }
         return allowRoute(path) // 明确表示允许路由继续执行
       } else {
         console.log('已经登录，但是还在登录页', myQuery.redirect)
