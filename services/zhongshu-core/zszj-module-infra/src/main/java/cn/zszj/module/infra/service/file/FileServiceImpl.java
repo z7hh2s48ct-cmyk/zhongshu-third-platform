@@ -5,6 +5,7 @@ import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.zszj.framework.common.pojo.PageResult;
@@ -183,8 +184,9 @@ public class FileServiceImpl implements FileService {
         }
         String suffix = null;
         if (PATH_SUFFIX_TIMESTAMP_ENABLE) {
-            // 5 位随机数，避免同一毫秒内的重复
-            suffix = String.valueOf(System.currentTimeMillis()) + RandomUtil.randomInt(10000, 100000);
+            // ZS-FILE-002 codex r1 P2：UUID 熵增——原毫秒+5 位随机每毫秒仅 9 万种，
+            // 同毫秒并发同名仍有 1/90000 撞键概率；UUID 32 hex 使碰撞概率可忽略
+            suffix = IdUtil.fastSimpleUUID();
         }
 
         // 2.1 先拼接 suffix 后缀
@@ -336,6 +338,12 @@ public class FileServiceImpl implements FileService {
 
 
     /**
+     * ZS-FILE-002 codex r1 P2：ZIP 容器家族扩展名（纯内容探测为 application/zip，但业务扩展名合法）
+     */
+    private static final java.util.Set<String> ZIP_CONTAINER_EXTENSIONS = java.util.Set.of(
+            "jar", "war", "ear", "apk", "docx", "xlsx", "pptx", "odt", "ods", "odp", "epub");
+
+    /**
      * ZS-FILE-001.A：当前登录用户编号；匿名/系统上下文返回 0（owner 列 NOT NULL DEFAULT 0 语义一致）。
      */
     private Long currentUserOrZero() {
@@ -401,12 +409,13 @@ public class FileServiceImpl implements FileService {
             throw exception(FILE_SCOPE_INVALID);
         }
         FileDO file = validateFileExists(id);
-        // ZS-FILE-002：转 PUBLIC 需类型在公开素材白名单（前缀匹配）
+        // ZS-FILE-002（codex r1 P2）：转 PUBLIC 需类型【精确匹配】公开素材白名单——
+        // 前缀匹配 image/ 会放进 image/svg+xml（可携带脚本，存储型 XSS 面）
         if (FileScopeEnum.PUBLIC.getScope().equals(scope)
                 && CollUtil.isNotEmpty(fileProperties.getPublicAllowedTypes())
                 && fileProperties.getPublicAllowedTypes().stream()
                         .noneMatch(allowed -> file.getType() != null
-                                && file.getType().toLowerCase().startsWith(allowed.toLowerCase()))) {
+                                && file.getType().equalsIgnoreCase(allowed))) {
             throw exception(FILE_PUBLIC_TYPE_NOT_ALLOWED, file.getType());
         }
         FileDO updateObj = new FileDO().setId(file.getId()).setScope(scope);
@@ -427,6 +436,12 @@ public class FileServiceImpl implements FileService {
         // 首选扩展名会误拒 .jpeg/.jfif）；集合为空（注册表无扩展名）跳过
         String nameExt = FileUtil.extName(name);
         if (StrUtil.isEmpty(nameExt)) {
+            return;
+        }
+        // codex r1 P2：ZIP 容器兼容——jar/war/docx/xlsx 等纯内容探测为 application/zip，
+        // 其扩展名集合不含真实业务扩展名；属已知容器形态则放行（内容仍是合法 ZIP 容器）
+        if ("application/zip".equals(detectedType)
+                && ZIP_CONTAINER_EXTENSIONS.contains(nameExt.toLowerCase())) {
             return;
         }
         try {

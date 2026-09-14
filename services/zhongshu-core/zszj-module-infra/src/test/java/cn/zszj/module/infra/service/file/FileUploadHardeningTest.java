@@ -260,6 +260,43 @@ public class FileUploadHardeningTest extends BaseDbUnitTest {
     // ========== ⑥ 转 PUBLIC 类型白名单 ==========
 
     @Test
+    public void createFile_jarContainer_allowed() {
+        // codex r1 P2：ZIP 容器兼容——JAR 纯内容探测为 application/zip，扩展名 jar 合法放行
+        byte[] zipMagic = new byte[]{'P', 'K', 3, 4, 20, 0, 0, 0, 0, 0};
+        String url = fileService.createFile(zipMagic, "lib.jar", null, null);
+        assertTrue(url != null && !url.isEmpty(), "ZIP 容器 JAR 必须放行");
+    }
+
+    @Test
+    public void updateFileScope_prefixWhitelistCannotMatchSpecificType() {
+        // codex r1 P2：白名单匹配必须精确——即使配置前缀值 image/，image/svg+xml 也不得命中
+        FileDO svg = FileDO.builder()
+                .configId(1L).name("evil.svg").path("evil/" + RandomUtils.randomString() + ".svg")
+                .url("https://oss.example.com/evil.svg").type("image/svg+xml").size(10L)
+                .ownerUserId(1L).scope("PRIVATE").build();
+        svg.setTenantId(1L);
+        fileMapper.insert(svg);
+
+        fileProperties.setPublicAllowedTypes(List.of("image/")); // 部署残留前缀值
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> fileService.updateFileScope(svg.getId(), "PUBLIC"));
+        assertEquals(FILE_PUBLIC_TYPE_NOT_ALLOWED.getCode(), ex.getCode(),
+                "精确匹配下 image/ 前缀不得命中 image/svg+xml");
+        fileProperties.setPublicAllowedTypes(List.of("image/png", "image/jpeg", "image/gif", "image/webp",
+                "application/pdf", "text/plain")); // 还原默认
+    }
+
+    @Test
+    public void createFile_svgExtension_rejected() {
+        // codex r0 P1：svg 可携带脚本，入黑名单隔离
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> fileService.createFile("<svg onload=alert(1)></svg>".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        "evil.svg", null, null));
+        assertEquals(FILE_DANGEROUS_CONTENT.getCode(), ex.getCode());
+    }
+
+
+    @Test
     public void updateFileScope_public_typeNotInWhitelist_rejected() {
         byte[] content = "plain".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         String url = fileService.createFile(content, "note.txt", null, "text/plain");
