@@ -518,6 +518,11 @@ public class FileServiceImpl implements FileService {
         validateDangerExtension(name);
         validatePublicScopeWhitelist(reqVO.getScope(), reqVO.getContentType());
 
+        // 1.1 codex r1 P2：scope 默认化并校验枚举合法性（防 UNKNOWN 等值原样落库）
+        String scope = StrUtil.blankToDefault(reqVO.getScope(), FileScopeEnum.PRIVATE.getScope());
+        if (!FileScopeEnum.isValid(scope)) {
+            throw exception(FILE_SCOPE_INVALID, scope);
+        }
         // 2. master 客户端必须支持 presign——local 等禁用直传，走服务端受控上传（不降低校验）
         FileClient client = fileConfigService.getMasterFileClient();
         if (client == null) {
@@ -543,7 +548,7 @@ public class FileServiceImpl implements FileService {
                 .setFileName(name)
                 .setContentType(reqVO.getContentType())
                 .setDeclaredSize(reqVO.getSize())
-                .setScope(StrUtil.blankToDefault(reqVO.getScope(), FileScopeEnum.PRIVATE.getScope()))
+                .setScope(scope)
                 .setStatus(FileUploadCredentialDO.STATUS_WAITING_UPLOAD)
                 .setExpiresTime(LocalDateTime.now().plusMinutes(CREDENTIAL_EXPIRE_MINUTES));
         fileUploadCredentialMapper.insert(credential);
@@ -591,7 +596,9 @@ public class FileServiceImpl implements FileService {
             if (client == null) {
                 throw exception(FILE_PRESIGN_NOT_SUPPORTED);
             }
-            byte[] content = client.getContent(credential.getTempPath());
+            // codex r1 P1：有界读取——超限立即中止（真流式归 FILE-004.A；此处保证超限对象不会被发布）
+            byte[] content = client.getContentBounded(credential.getTempPath(),
+                    Math.max(credential.getDeclaredSize(), fileProperties.getMaxSize()) + 1);
             if (content == null || content.length == 0) {
                 throw exception(FILE_UPLOAD_TEMP_EMPTY);
             }
@@ -601,6 +608,10 @@ public class FileServiceImpl implements FileService {
             }
             if (content.length > fileProperties.getMaxSize()) {
                 throw exception(FILE_SIZE_EXCEED, content.length, fileProperties.getMaxSize());
+            }
+            // codex r1 P2：scope 枚举合法性复验
+            if (!FileScopeEnum.isValid(credential.getScope())) {
+                throw exception(FILE_SCOPE_INVALID, credential.getScope());
             }
 
             // 6. FILE-002 硬化复验：按实际内容探测类型；补全扩展名后做危险/一致性校验（codex r0 P2）
@@ -645,6 +656,12 @@ public class FileServiceImpl implements FileService {
             // 10. 凭证一次性 CAS 迁移（同事务：affected=0 抛异常 → 插入随事务回滚），清理临时对象
             int updated = fileUploadCredentialMapper.updateStatusToCompletedIfWaiting(credential.getId(), file.getId());
             if (updated == 0) {
+                // codex r1 P1：并发败者——尽力删除已发布正式对象（事务回滚只撤 DB 行，不撤存储对象）
+                try {
+                    client.delete(path);
+                } catch (Exception cleanupEx) {
+                    log.warn("[completeUpload][ZS-FILE-003 并发败者清理正式对象({}) 失败，需人工清理]", path, cleanupEx);
+                }
                 throw exception(FILE_UPLOAD_CREDENTIAL_ALREADY_USED);
             }
             try {

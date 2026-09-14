@@ -85,6 +85,9 @@ public class FileUploadCredentialTest extends BaseDbUnitTest {
             });
             when(masterClient.getContent(anyString())).thenAnswer(inv ->
                     objectStore.get(inv.getArgument(0, String.class)));
+            // ZS-FILE-003：completeUpload 走 getContentBounded（Mockito 默认方法返回 null，必须显式 stub）
+            when(masterClient.getContentBounded(anyString(), org.mockito.ArgumentMatchers.anyLong()))
+                    .thenAnswer(inv -> objectStore.get(inv.getArgument(0, String.class)));
             org.mockito.Mockito.doAnswer(inv -> {
                 objectStore.remove(inv.getArgument(0, String.class));
                 return null;
