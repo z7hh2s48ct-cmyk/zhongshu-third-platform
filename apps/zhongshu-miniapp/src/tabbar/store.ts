@@ -1,6 +1,7 @@
 import type { CustomTabBarItem, CustomTabBarItemBadge } from './types'
 import { reactive } from 'vue'
 
+import { hasRouteAccess } from '@/router/access'
 import { isNeedLoginMode } from '@/router/config'
 import { FG_LOG_ENABLE, judgeIsExcludePath } from '@/router/interceptor'
 import { useTokenStore } from '@/store/token'
@@ -64,10 +65,15 @@ export function isTabbarItemVisible(itemOrIndex?: CustomTabBarItem | number) {
   if (!item) {
     return false
   }
+  // ZS-CLIENT-002.A：TabBar 授权化——入口按路由权限注册表过滤（注册表为单一真相源，
+  // 与 interceptor 直达守卫同源）；无对应服务端权限的受保护入口不渲染（如未授权审批/通讯录）。
+  const userStore = useUserStore()
+  if (!hasRouteAccess(item.pagePath, userStore.permissions ?? [])) {
+    return false
+  }
   if (!item.roles?.length) {
     return true
   }
-  const userStore = useUserStore()
   const userRoles = new Set(userStore.roles)
   return item.roles.some(role => userRoles.has(role))
 }
