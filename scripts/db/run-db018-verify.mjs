@@ -26,6 +26,13 @@
  * 附带 --self-test 负向对照：证明隔离断言非空洞（作用域内 0、忽略路径可见同一行）。
  * 任一用例失败 → 退出码非零。
  *
+ * 2026-09-15 P2 硬化（codex-ZS-DB-018 评审处置 #1/#2/#3）：
+ *   C2 分页追加「LIMIT 3 返回行 name 序列」内容断言；
+ *   C3 关联追加「JOIN 到的 username@dept.name 序列」内容断言；
+ *   C4 批量追加「ctx=2 UPDATE tenant_id=2 命中 5 行、tenant_id=1 二次影响 0 行」双租户形态过滤；
+ *   C6 手写 SQL 追加「LEFT JOIN 分组后 dept.id 集合」内容断言。
+ *   与 SYS-001.A 真实 API 级回归的内容断言互补，脚本侧自证充分。
+ *
  * 用法：node scripts/db/run-db018-verify.mjs [--self-test]
  */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -133,17 +140,24 @@ COMMIT;`;
   const scopedTenants = count("SELECT count(DISTINCT tenant_id) FROM system_dept WHERE deleted=0 AND tenant_id=1 AND name LIKE 'DB018-%-PG-%'");
   const ignoredTenants = count("SELECT count(DISTINCT tenant_id) FROM system_dept WHERE deleted=0 AND name LIKE 'DB018-%-PG-%'");
   const t1Page = count("SELECT count(*) FROM system_dept WHERE deleted=0 AND tenant_id=1 AND name LIKE 'DB018-T1-PG-%'");
-  record('C2 分页隔离（页内不越租户；作用域仅本租户，忽略路径跨租户）',
-    pageBad === '0' && scopedTenants === '1' && ignoredTenants === '2' && t1Page === '5',
-    `页内越界=${pageBad} 作用域租户数=${scopedTenants} 忽略路径租户数=${ignoredTenants} T1分页集=${t1Page}`);
+  // P2 硬化 #2：断言分页 LIMIT 3 返回的具体行内容（前 3 行 name 序列 = T1-PG-1/2/3）
+  const page3Names = psqlOut('postgres', 'zhongshu', "SELECT string_agg(name, ',' ORDER BY id) FROM (SELECT id, name FROM system_dept WHERE deleted=0 AND tenant_id=1 AND name LIKE 'DB018-T1-PG-%' ORDER BY id LIMIT 3 OFFSET 0) p").stdout.trim();
+  record('C2 分页隔离（页内不越租户；作用域仅本租户，忽略路径跨租户；分页结果内容断言）',
+    pageBad === '0' && scopedTenants === '1' && ignoredTenants === '2' && t1Page === '5'
+      && page3Names === 'DB018-T1-PG-1,DB018-T1-PG-2,DB018-T1-PG-3',
+    `页内越界=${pageBad} 作用域租户数=${scopedTenants} 忽略路径租户数=${ignoredTenants} T1分页集=${t1Page} 前3行=${page3Names}`);
 }
 
 // C3 关联隔离：JOIN 两端注入 tenant_id；伪造跨租户外键被排除
 {
   const joined = count("SELECT count(*) FROM system_users u JOIN system_dept d ON u.dept_id=d.id AND d.tenant_id=1 AND d.deleted=0 WHERE u.tenant_id=1 AND u.deleted=0 AND u.username LIKE 'db018_t1_%'");
   const forgedDept = count("SELECT count(*) FROM system_dept WHERE id=900103 AND tenant_id=1 AND deleted=0");
-  record('C3 关联隔离（JOIN 两端注入 tenant_id；伪造跨租户外键被排除）',
-    joined === '2' && forgedDept === '0', `本租户关联命中=${joined}（期望2，u3跨租户被排除） 伪造部门在ctx=1可见=${forgedDept}（期望0）`);
+  // P2 硬化 #1：断言 JOIN 到的用户列数据内容（username@dept.name 序列 = u1@研发部, u2@市场部；u3 因跨租户 dept 被 JOIN 排除）
+  const joinRows = psqlOut('postgres', 'zhongshu', "SELECT string_agg(u.username || '@' || d.name, ',' ORDER BY u.id) FROM system_users u JOIN system_dept d ON u.dept_id=d.id AND d.tenant_id=1 AND d.deleted=0 WHERE u.tenant_id=1 AND u.deleted=0 AND u.username LIKE 'db018_t1_%'").stdout.trim();
+  record('C3 关联隔离（JOIN 两端注入 tenant_id；伪造跨租户外键被排除；JOIN 列内容断言）',
+    joined === '2' && forgedDept === '0'
+      && joinRows === 'db018_t1_u1@DB018-T1-研发部,db018_t1_u2@DB018-T1-市场部',
+    `本租户关联命中=${joined}（期望2，u3跨租户被排除） 伪造部门在ctx=1可见=${forgedDept}（期望0） JOIN内容=${joinRows}`);
 }
 
 // C4 批量隔离：批量 UPDATE 作用域限本租户，他租户零影响（批量插入见造数多行 VALUES）
@@ -152,9 +166,15 @@ COMMIT;`;
   const upd = psql('zhongshu_app', 'zhongshu', "UPDATE system_dept SET sort = sort + 100 WHERE deleted=0 AND tenant_id=1 AND name LIKE 'DB018-T1-%'");
   const t1Updated = count("SELECT count(*) FROM system_dept WHERE tenant_id=1 AND name LIKE 'DB018-T1-%' AND sort >= 100");
   const afterT2 = count("SELECT count(*) FROM system_dept WHERE tenant_id=2 AND name LIKE 'DB018-T2-%' AND sort >= 100");
-  record('C4 批量隔离（批量 UPDATE 作用域限本租户，他租户零影响）',
-    upd.status === 0 && beforeT2 === '0' && t1Updated === '7' && afterT2 === '0',
-    `T1批量更新=${t1Updated}（期望7） T2受影响=${afterT2}（期望0）`);
+  // P2 硬化 #3：过滤条件同时覆盖双租户形态——ctx=2 时 UPDATE tenant_id=2 命中 5 行、tenant_id=1 二次影响 0 行
+  const beforeT1 = count("SELECT count(*) FROM system_dept WHERE tenant_id=1 AND name LIKE 'DB018-T1-%' AND sort >= 200");
+  const upd2 = psql('zhongshu_app', 'zhongshu', "UPDATE system_dept SET sort = sort + 100 WHERE deleted=0 AND tenant_id=2 AND name LIKE 'DB018-T2-%'");
+  const t2Updated = count("SELECT count(*) FROM system_dept WHERE tenant_id=2 AND name LIKE 'DB018-T2-%' AND sort >= 100");
+  const afterT1 = count("SELECT count(*) FROM system_dept WHERE tenant_id=1 AND name LIKE 'DB018-T1-%' AND sort >= 200");
+  record('C4 批量隔离（批量 UPDATE 作用域限本租户，他租户零影响；双租户形态过滤均命中）',
+    upd.status === 0 && beforeT2 === '0' && t1Updated === '7' && afterT2 === '0'
+      && upd2.status === 0 && beforeT1 === '0' && t2Updated === '5' && afterT1 === '0',
+    `T1批量更新=${t1Updated}（期望7） T2受影响=${afterT2}（期望0） T2批量更新=${t2Updated}（期望5） T1二次受影响=${afterT1}（期望0）`);
 }
 
 // C5 逻辑删除隔离：本租户生效；跨租户按 PK 逻辑删除被拒（0 行）
@@ -178,8 +198,11 @@ COMMIT;`;
 {
   const groups = psqlOut('zhongshu_app', 'zhongshu', "SELECT count(*) FROM (SELECT d.id FROM system_dept d LEFT JOIN system_users u ON u.dept_id=d.id AND u.deleted=0 AND u.tenant_id=1 WHERE d.deleted=0 AND d.tenant_id=1 AND d.name LIKE 'DB018-T1-PG-%' GROUP BY d.id) t").stdout.trim();
   const leak = count("SELECT count(*) FROM system_dept d WHERE d.deleted=0 AND d.tenant_id=1 AND d.name LIKE 'DB018-T2-%'");
-  record('C6 手写 SQL 隔离（自定义聚合/JOIN 注入 tenant_id=ctx）',
-    groups === '5' && leak === '0', `本租户分组数=${groups}（期望5） 他租户可见=${leak}（期望0）`);
+  // P2 硬化 #1（C6 侧）：断言 LEFT JOIN 分组后 dept.id 集合内容（T1-PG-1~5 = 900111~900115）
+  const deptIds = psqlOut('zhongshu_app', 'zhongshu', "SELECT string_agg(id::text, ',' ORDER BY id) FROM (SELECT d.id FROM system_dept d LEFT JOIN system_users u ON u.dept_id=d.id AND u.deleted=0 AND u.tenant_id=1 WHERE d.deleted=0 AND d.tenant_id=1 AND d.name LIKE 'DB018-T1-PG-%' GROUP BY d.id) t").stdout.trim();
+  record('C6 手写 SQL 隔离（自定义聚合/JOIN 注入 tenant_id=ctx；分组 ID 集内容断言）',
+    groups === '5' && leak === '0' && deptIds === '900111,900112,900113,900114,900115',
+    `本租户分组数=${groups}（期望5） 他租户可见=${leak}（期望0） 分组ID集=${deptIds}`);
 }
 
 // C7 伪造上下文/他租户对象 ID 被拒绝：ctx=1 按 PK 读/改/删租户2 对象均 0 行
