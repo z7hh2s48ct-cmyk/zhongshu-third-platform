@@ -15,7 +15,7 @@
  *   --keep  保留容器与 server 进程供调试（打印连接信息；不用于 CI/收口）
  */
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, statSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
@@ -134,12 +134,12 @@ execFileSync('docker', ['exec', pgContainer, 'psql', '-U', 'postgres', '-q', '-c
   const r = pgSql('postgres', 'zhongshu', setup);
   if (r.status !== 0) fail(1, `[sys001] 库角色授权失败:\n${r.stdout}${r.stderr}`);
 }
-const migrations = [
-  'V20260909.001__system_infra_baseline.sql',
-  'V20260909.002__infra_quartz_backfill.sql',
-  'V20260909.003__system_dict_unique_constraints.sql',
-  'V20260913.001__infra_config_optimistic_version.sql',
-];
+// ZS-CFG-004 B04：清单改目录扫描——固定清单停更于 V20260913.001，V20260914.011（infra_config_history）
+// 未被执行致 SYS-CONFIG 用例 insert 时序列不存在（code=500，G14 45/49）。目录扫描按版本命名排序即 Flyway
+// 应用序，与真实 server 的 Flyway schema 同源，后续新增迁移不再需要手工同步本清单。
+const migrations = readdirSync(join(root, 'services/zhongshu-core/zszj-server/src/main/resources/db/migration'))
+        .filter((f) => f.endsWith('.sql'))
+        .sort();
 {
   const sql = migrations.map((f) => readFileSync(join(root, 'services/zhongshu-core/zszj-server/src/main/resources/db/migration', f), 'utf8')).join('\n');
   const r = pgSql('zhongshu_owner', 'zhongshu', sql);
