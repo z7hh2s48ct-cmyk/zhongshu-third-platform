@@ -29,4 +29,7 @@ public final class AuditEventTypes {
     /** 后台任务 / 调度执行（WORKER / SYSTEM 主体）。 */
     public static final String BACKGROUND_EXECUTION = "BACKGROUND_EXECUTION";
 
+    /** 参数配置恢复成功（ZS-CFG-004 B04：配置变更审计与审查后恢复流程接线）。 */
+    public static final String CONFIG_PARAM_RESTORED = "CONFIG_PARAM_RESTORED";
+
 }

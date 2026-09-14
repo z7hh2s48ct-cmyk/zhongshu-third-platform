@@ -5,7 +5,10 @@ import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.pojo.PageParam;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.excel.core.util.ExcelUtils;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigChangeHistoryPageReqVO;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigChangeHistoryRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigPageReqVO;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigRestoreReqVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
@@ -121,6 +124,25 @@ public class ConfigController {
                 .map(configService::getMaskedConfigRespVO).collect(Collectors.toList());
         // 输出
         ExcelUtils.write(response, "参数配置.xls", "数据", ConfigRespVO.class, exportList);
+    }
+
+    @PutMapping("/restore")
+    @Operation(summary = "恢复参数配置至历史值",
+            description = "ZS-CFG-004 B04：审查后恢复——仅回写 value，走与更新同一值校验与乐观锁契约；" +
+                    "秘密/敏感参数的历史值已脱敏不可自动恢复，须附审查依据")
+    @PreAuthorize("@ss.hasPermission('infra:config:update')")
+    public CommonResult<Boolean> restoreConfig(@Valid @RequestBody ConfigRestoreReqVO reqVO) {
+        configService.restoreConfig(reqVO);
+        return success(true);
+    }
+
+    @GetMapping("/history/page")
+    @Operation(summary = "获得参数配置变更历史分页",
+            description = "ZS-CFG-004 B04：变更历史审查入口；敏感/秘密配置整页掩码输出")
+    @PreAuthorize("@ss.hasPermission('infra:config:query')")
+    public CommonResult<PageResult<ConfigChangeHistoryRespVO>> getConfigChangeHistoryPage(
+            @Valid ConfigChangeHistoryPageReqVO pageReqVO) {
+        return success(configService.getConfigChangeHistoryPage(pageReqVO));
     }
 
 }

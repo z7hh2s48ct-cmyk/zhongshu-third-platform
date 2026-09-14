@@ -1,5 +1,6 @@
 package cn.zszj.module.infra.service.config;
 
+import cn.zszj.framework.common.biz.system.audit.AuditPort;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.collection.ArrayUtils;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
@@ -11,6 +12,7 @@ import cn.zszj.module.infra.dal.mysql.config.ConfigMapper;
 import cn.zszj.module.infra.enums.config.ConfigTypeEnum;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import jakarta.annotation.Resource;
 import java.util.function.Consumer;
@@ -25,7 +27,8 @@ import static cn.zszj.framework.test.core.util.RandomUtils.*;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class, ConfigValueValidator.class})
+@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class, ConfigValueValidator.class,
+        ConfigChangeRecorder.class})
 public class ConfigServiceImplTest extends BaseDbUnitTest {
 
     @Resource
@@ -33,6 +36,9 @@ public class ConfigServiceImplTest extends BaseDbUnitTest {
 
     @Resource
     private ConfigMapper configMapper;
+
+    @MockitoBean
+    private AuditPort auditPort; // ZS-CFG-004 B04：变更审计 Port 假件（真实 JdbcAuditPort 落 system 模块）
 
     @Test
     public void testCreateConfig_success() {

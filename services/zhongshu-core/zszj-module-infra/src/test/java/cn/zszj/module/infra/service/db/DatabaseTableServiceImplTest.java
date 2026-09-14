@@ -40,9 +40,12 @@ public class DatabaseTableServiceImplTest extends BaseDbUnitTest {
         // 调用
         List<TableInfo> tables = databaseTableService.getTableList(dataSourceConfigId,
                 "config", "参数");
-        // 断言
-        assertEquals(1, tables.size());
-        assertTableInfo(tables.get(0));
+        // 断言：ZS-CFG-004 B04 新增 infra_config_history（参数配置变更历史表）同含 config 关键字与「参数」注释，
+        // 与 infra_config 一并命中
+        assertEquals(2, tables.size());
+        TableInfo configTable = tables.stream().filter(table -> "infra_config".equals(table.getName()))
+                .findFirst().orElseThrow();
+        assertTableInfo(configTable);
     }
 
     @Test

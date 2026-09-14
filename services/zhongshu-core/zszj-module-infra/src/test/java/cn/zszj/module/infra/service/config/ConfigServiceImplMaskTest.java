@@ -5,6 +5,7 @@ import cn.zszj.framework.test.core.ut.BaseMockitoUnitTest;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
+import cn.zszj.module.infra.dal.mysql.config.ConfigChangeHistoryMapper;
 import cn.zszj.module.infra.dal.mysql.config.ConfigMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,6 +38,12 @@ public class ConfigServiceImplMaskTest extends BaseMockitoUnitTest {
 
     @Mock
     private ConfigValueValidator configValueValidator;
+
+    @Mock
+    private ConfigChangeHistoryMapper configChangeHistoryMapper; // ZS-CFG-004 B04：变更历史假件
+
+    @Mock
+    private ConfigChangeRecorder configChangeRecorder; // ZS-CFG-004 B04：变更留痕假件
 
     @InjectMocks
     private ConfigServiceImpl configService;

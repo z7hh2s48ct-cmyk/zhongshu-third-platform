@@ -21,6 +21,10 @@ public interface ErrorCodeConstants {
     ErrorCode CONFIG_VALUE_OUT_OF_RANGE = new ErrorCode(1_001_000_008, "参数值超出允许范围 [{}, {}]");
     ErrorCode CONFIG_VALUE_NOT_IN_ALLOWED_SET = new ErrorCode(1_001_000_009, "参数值不在允许的值集 {} 中");
     ErrorCode CONFIG_UPDATE_CONFLICT = new ErrorCode(1_001_000_010, "参数配置更新冲突，请刷新后重试");
+    // ZS-CFG-004 B04：配置变更历史与恢复流程错误码
+    ErrorCode CONFIG_RESTORE_HISTORY_NOT_EXISTS = new ErrorCode(1_001_000_011, "配置变更历史不存在");
+    ErrorCode CONFIG_RESTORE_NOT_RESTORABLE = new ErrorCode(1_001_000_012, "该历史记录不可自动恢复：秘密/敏感参数的历史值已脱敏或该记录类型不支持恢复，请手工重新填写参数值");
+    ErrorCode CONFIG_RESTORE_HISTORY_MISMATCH = new ErrorCode(1_001_000_013, "恢复目标历史与参数配置不匹配");
 
     // ========== 定时任务 1-001-001-000 ==========
     ErrorCode JOB_NOT_EXISTS = new ErrorCode(1_001_001_000, "定时任务不存在");
