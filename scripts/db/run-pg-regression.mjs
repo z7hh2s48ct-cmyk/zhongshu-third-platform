@@ -11,6 +11,7 @@
  *   7. DB-016 Quartz 调度表结构级验证（委托核心语句）
  *   8. DB-017 PG 元数据测试表与注释/索引核对
  *   9. ZS-BPM-001 BPM 独立装配与 PG 验收（两阶段：owner 建表引导 + app 低权限运行）
+ *  10. ZS-JOB-002 事务 Outbox 领取/租约/栅栏/DEAD（双实例 SKIP LOCKED、崩溃重领、旧凭证栅栏）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -30,6 +31,7 @@ const cases = [
   { id: 'DB-016 Quartz 调度表结构级验证', caseFile: 'scripts/db/cases/db016-quartz-schema.sql' },
   { id: 'DB-017 元数据测试表', caseFile: 'scripts/db/cases/db017-metadata-testtable.sql' },
   { id: 'ZS-BPM-001 BPM 独立装配与PG验收', cmd: ['node', 'scripts/db/run-bpm001-verify.mjs'] },
+  { id: 'ZS-JOB-002 事务Outbox领取/租约/栅栏', cmd: ['node', 'scripts/db/run-job002-verify.mjs'] },
 ];
 
 let failed = false;

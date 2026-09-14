@@ -10,3 +10,5 @@ DELETE FROM "infra_data_source_config";
 DELETE FROM "infra_codegen_table";
 DELETE FROM "infra_codegen_column";
 DELETE FROM "infra_config_history";
+DELETE FROM "outbox_event";
+DELETE FROM "dispatcher_lease";
