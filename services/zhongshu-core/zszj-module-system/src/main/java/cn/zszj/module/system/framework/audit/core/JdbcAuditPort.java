@@ -28,7 +28,7 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.AUDIT_EVENT_WRITE_F
 /**
  * {@link AuditPort} 的 JDBC 适配实现（ZS-AUDIT-001）——业务数据源上同步落库、不可改写。
  *
- * <p>适配自供体 {@code cn.iocoder.yudao.module.infra.zhongshu.audit.JdbcAuditPort}，落地众墅要求：
+ * <p>适配自供体 infra 审计端口 JDBC 实现（供体快照隔离于 {@code reference/donors/}，命名映射见 docs/06），落地众墅要求：
  * <ul>
  *   <li>忠实 {@link JdbcTemplate}（可移植 H2/PG、显式技术租户控制，规避 MyBatis-Plus 租户插件自动注入与
  *       BaseDO 逻辑删除语义——审计只追加不改写，无 {@code deleted/updater/update_time}）；</li>
