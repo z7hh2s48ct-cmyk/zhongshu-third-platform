@@ -105,8 +105,8 @@ public class PermissionServiceTest extends BaseDbUnitTest {
             RoleDO role = randomPojo(RoleDO.class, o -> o.setId(100L)
                     .setStatus(CommonStatusEnum.ENABLE.getStatus()));
             when(roleService.getRoleListFromCache(eq(singleton(100L)))).thenReturn(toList(role));
-            // mock 其它方法
-            when(roleService.hasAnySuperAdmin(eq(asSet(100L)))).thenReturn(true);
+            // mock 其它方法（ZS-PERM-001.A 小卡：超管豁免语义改走启用状态判定）
+            when(roleService.hasAnyEnabledSuperAdmin(eq(asSet(100L)))).thenReturn(true);
 
             // 调用，并断言
             assertTrue(permissionService.hasAnyPermissions(userId, roles));
@@ -259,8 +259,8 @@ public class PermissionServiceTest extends BaseDbUnitTest {
     public void testGetRoleMenuIds_superAdmin() {
         // 准备参数
         Long roleId = 100L;
-        // mock 方法
-        when(roleService.hasAnySuperAdmin(eq(singleton(100L)))).thenReturn(true);
+        // mock 方法（ZS-PERM-001.A 小卡：菜单全量豁免改走启用状态判定）
+        when(roleService.hasAnyEnabledSuperAdmin(eq(singleton(100L)))).thenReturn(true);
         List<MenuDO> menuList = singletonList(randomPojo(MenuDO.class).setId(1L));
         when(menuService.getMenuList()).thenReturn(menuList);
 
@@ -426,6 +426,38 @@ public class PermissionServiceTest extends BaseDbUnitTest {
             assertServiceException(() -> permissionService.assignUserRole(loginUserId, asSet(300L)),
                     PERMISSION_SELF_ELEVATION);
             assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(loginUserId)));
+        }
+    }
+
+    @Test
+    public void testAssignUserRole_disabledSuperAdminRole_noExemption() {
+        try (MockedStatic<SecurityFrameworkUtils> secMock = mockStatic(SecurityFrameworkUtils.class)) {
+            // ZS-PERM-001.A 小卡回归看守：操作者持【禁用】super_admin 角色（挂载未清理）+ 双角色组合
+            // （另一启用角色持 assign-user-role 权限）时，旧实现经 hasAnySuperAdmin（不查状态）仍产生超管豁免、
+            // 绕过自我提权上限；修复后豁免只认【启用状态】超管角色（hasAnyEnabledSuperAdmin），
+            // 授予上限仍保持不区分状态的 hasAnySuperAdmin 语义（禁用超管角色同样不可授予）
+            Long loginUserId = 1L;
+            secMock.when(SecurityFrameworkUtils::getLoginUserId).thenReturn(loginUserId);
+            TenantContextHolder.setTenantId(100L);
+            when(userService.getUser(eq(loginUserId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(loginUserId);
+                o.setTenantId(100L);
+            }));
+            // 操作者名下挂载【禁用】super_admin 角色（H2 落库夹具，使 isSuperAdminUser 的角色集合非空、真正走到豁免判定）
+            userRoleMapper.insert(randomPojo(UserRoleDO.class).setUserId(loginUserId).setRoleId(999L));
+            // 旧语义（不查状态）判操作者角色集 {999} 为超管豁免；新语义（仅启用）判非超管——
+            // 本用例在旧实现下会被豁免放行而失败。授予目标 {300} 非超管角色，不触发上限
+            when(roleService.hasAnySuperAdmin(eq(asSet(999L)))).thenReturn(true);
+            when(roleService.hasAnyEnabledSuperAdmin(eq(asSet(999L)))).thenReturn(false);
+            // 授予目标是另一启用普通角色
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+
+            // 调用，并断言拒绝：为自身新增角色 → 自我提权（禁用超管角色不产生豁免）
+            assertServiceException(() -> permissionService.assignUserRole(loginUserId, asSet(300L)),
+                    PERMISSION_SELF_ELEVATION);
+            // 仅有夹具行（禁用超管角色 999），目标角色 300 未被授予
+            assertEquals(1, userRoleMapper.selectListByUserId(loginUserId).size());
         }
     }
 

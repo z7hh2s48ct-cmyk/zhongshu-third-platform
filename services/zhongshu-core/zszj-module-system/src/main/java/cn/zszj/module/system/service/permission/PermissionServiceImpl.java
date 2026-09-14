@@ -94,8 +94,9 @@ public class PermissionServiceImpl implements PermissionService {
             }
         }
 
-        // 情况二：如果是超管，也说明有权限
-        return roleService.hasAnySuperAdmin(convertSet(roles, RoleDO::getId));
+        // 情况二：如果是【启用状态】超管，也说明有权限（ZS-PERM-001.A 小卡：禁用角色不产生豁免，
+        // 对齐 hasAnyPermissions 过滤禁用角色的语义；roles 此前已启用过滤，此处为显式语义声明）
+        return roleService.hasAnyEnabledSuperAdmin(convertSet(roles, RoleDO::getId));
     }
 
     /**
@@ -217,8 +218,8 @@ public class PermissionServiceImpl implements PermissionService {
             return Collections.emptySet();
         }
 
-        // 如果是管理员的情况下，获取全部菜单编号
-        if (roleService.hasAnySuperAdmin(roleIds)) {
+        // 如果是【启用状态】管理员的情况下，获取全部菜单编号（ZS-PERM-001.A 小卡：禁用角色不产生豁免）
+        if (roleService.hasAnyEnabledSuperAdmin(roleIds)) {
             return convertSet(menuService.getMenuList(), MenuDO::getId);
         }
         // 如果是非管理员的情况下，获得拥有的菜单编号
@@ -503,11 +504,13 @@ public class PermissionServiceImpl implements PermissionService {
         if (loginUserId == null) {
             return;
         }
-        // 超级管理员保留完整管理能力
+        // 超级管理员保留完整管理能力——仅【启用状态】超管角色产生豁免
+        // （ZS-PERM-001.A 小卡：禁用超管角色仍挂载 + 双角色组合时，旧实现可条件式绕过自我提权上限）
         if (isSuperAdminUser(loginUserId)) {
             return;
         }
-        // 上限：非超管不得授予超管等特权角色
+        // 上限：非超管不得授予超管等特权角色——注意保持【不区分角色状态】：
+        // 禁用超管角色同样不可授予，堵「先授禁用超管角色、待解禁生效」的搁置提权
         if (roleService.hasAnySuperAdmin(createRoleIds)) {
             throw exception(PERMISSION_GRANT_EXCEED_CEILING);
         }
@@ -518,11 +521,12 @@ public class PermissionServiceImpl implements PermissionService {
     }
 
     /**
-     * 判断用户是否为超级管理员。
+     * 判断用户是否为超级管理员（ZS-PERM-001.A 小卡：仅【启用状态】超管角色产生豁免，
+     * 与 {@code hasAnyPermissions} 过滤禁用角色的语义一致）。
      */
     private boolean isSuperAdminUser(Long userId) {
         Set<Long> roleIds = getUserRoleIdListByUserId(userId);
-        return CollUtil.isNotEmpty(roleIds) && roleService.hasAnySuperAdmin(roleIds);
+        return CollUtil.isNotEmpty(roleIds) && roleService.hasAnyEnabledSuperAdmin(roleIds);
     }
 
     /**

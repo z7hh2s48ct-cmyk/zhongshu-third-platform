@@ -238,10 +238,32 @@ public class RoleServiceImpl implements RoleService {
             return false;
         }
         RoleServiceImpl self = getSelf();
-        return ids.stream().anyMatch(id -> {
-            RoleDO role = self.getRoleFromCache(id);
-            return role != null && RoleCodeEnum.isSuperAdmin(role.getCode());
-        });
+        return ids.stream().anyMatch(id -> isSuperAdminRole(self.getRoleFromCache(id)));
+    }
+
+    @Override
+    public boolean hasAnyEnabledSuperAdmin(Collection<Long> ids) {
+        if (CollectionUtil.isEmpty(ids)) {
+            return false;
+        }
+        RoleServiceImpl self = getSelf();
+        return ids.stream().anyMatch(id -> isEnabledSuperAdminRole(self.getRoleFromCache(id)));
+    }
+
+    /**
+     * 超管角色判定（不区分状态）——供授予上限语义使用：禁用超管角色同样不可由非超管授予，
+     * 防「先授禁用超管角色、待解禁生效」的搁置提权（ZS-PERM-001.A 小卡）。
+     */
+    static boolean isSuperAdminRole(RoleDO role) {
+        return role != null && RoleCodeEnum.isSuperAdmin(role.getCode());
+    }
+
+    /**
+     * 启用状态超管角色判定——供超管豁免语义使用：禁用角色不产生任何豁免，
+     * 对齐 {@code hasAnyPermissions} 过滤禁用角色的语义（ZS-PERM-001.A 小卡）。
+     */
+    static boolean isEnabledSuperAdminRole(RoleDO role) {
+        return isSuperAdminRole(role) && CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus());
     }
 
     @Override

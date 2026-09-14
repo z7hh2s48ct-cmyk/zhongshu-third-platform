@@ -120,6 +120,18 @@ public interface RoleService {
     boolean hasAnySuperAdmin(Collection<Long> ids);
 
     /**
+     * 判断角色编号数组中，是否有【启用状态】的管理员（ZS-PERM-001.A 小卡）。
+     *
+     * 超管豁免语义专用：禁用角色不产生任何豁免（对齐 {@code hasAnyPermissions} 过滤禁用角色的语义，
+     * 堵「禁用超管角色仍挂载 + 双角色组合」条件下绕过自我提权上限的缺口）。
+     * 与 {@link #hasAnySuperAdmin(Collection)}（授予上限语义，不区分状态）相区分。
+     *
+     * @param ids 角色编号数组
+     * @return 是否有启用状态的管理员
+     */
+    boolean hasAnyEnabledSuperAdmin(Collection<Long> ids);
+
+    /**
      * 校验角色们是否有效。如下情况，视为无效：
      * 1. 角色编号不存在
      * 2. 角色被禁用
