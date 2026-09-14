@@ -107,7 +107,7 @@ public class AuditEventQueryService {
                     .reason("保留期 " + retentionDays + " 天")
                     .result(AuditEventMessage.AuditResult.SUCCESS)
                     .detail(java.util.Map.of("deleted", deleted, "deadline", deadline.toString()))
-                    .idempotencyKey("audit-clean-" + operatorUserId)
+                    .idempotencyKey("audit-clean-" + operatorUserId + "-" + System.currentTimeMillis())
                     .build();
             auditPort.record(message);
         }

@@ -144,6 +144,7 @@ public class AuditEventQueryServiceTest extends BaseDbUnitTest {
                 java.time.LocalDateTime.now().minusDays(400));
         seedEvent(1L, "RECENT_EVENT", "{}");
 
+        TenantContextHolder.setTenantId(0L); // codex r1 P2：清理仅限系统租户
         int deleted = auditEventQueryService.cleanExpiredEvents(100L, 365);
 
         assertEquals(1, deleted, "只清理过期事件");
