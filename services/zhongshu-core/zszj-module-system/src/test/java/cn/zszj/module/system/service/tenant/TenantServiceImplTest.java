@@ -81,6 +81,21 @@ public class TenantServiceImplTest extends BaseDbUnitTest {
     public void setUp() {
         // 清理租户上下文
         TenantContextHolder.clear();
+        // GAP-3 修复后 assignRoleMenu 显式校验菜单存在性；内部供给/收敛经 sanitizeExistingMenuIds 消毒，
+        // 默认桩=入参 ID 全视为存在（消毒结果与原集合一致），既有 verify 断言保持不变
+        when(menuService.getMenuList(anyCollection())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            java.util.List<cn.zszj.module.system.dal.dataobject.permission.MenuDO> menus = new java.util.ArrayList<>();
+            if (ids != null) {
+                for (Long id : ids) {
+                    cn.zszj.module.system.dal.dataobject.permission.MenuDO mm =
+                            new cn.zszj.module.system.dal.dataobject.permission.MenuDO();
+                    mm.setId(id);
+                    menus.add(mm);
+                }
+            }
+            return menus;
+        });
     }
 
     @Test
