@@ -132,6 +132,11 @@ public class S3FileClient extends AbstractFileClient<S3FileClientConfig> {
             while ((n = is.read(buf)) != -1) {
                 total += n;
                 if (total > maxBytes) {
+                    // codex r3 P1：超限先 abort 断流（否则 close 会继续拉完剩余响应体），再抛出
+                    if (getObjectResponse instanceof software.amazon.awssdk.core.ResponseInputStream
+                            && getObjectResponse instanceof AutoCloseable) {
+                        ((software.amazon.awssdk.core.ResponseInputStream) getObjectResponse).abort();
+                    }
                     throw new IllegalStateException("temp object stream exceeds limit(" + maxBytes + ")");
                 }
                 bos.write(buf, 0, n);
