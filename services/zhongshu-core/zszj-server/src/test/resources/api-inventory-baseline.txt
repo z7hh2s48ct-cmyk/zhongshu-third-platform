@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：331
+# 端点总数：333
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -123,6 +123,7 @@ GET|/admin-api/infra/job/page|ADMIN|PERMISSION|infra:job:query|infra|JobControll
 GET|/admin-api/infra/redis/get-monitor-info|ADMIN|PERMISSION|infra:redis:get-monitor-info|infra|RedisController
 GET|/admin-api/system/area/get-by-ip|ADMIN|AUTHENTICATED|-|system|AreaController
 GET|/admin-api/system/area/tree|ADMIN|AUTHENTICATED|-|system|AreaController
+GET|/admin-api/system/audit-event/page|ADMIN|PERMISSION|system:audit:query|system|AuditEventController
 GET|/admin-api/system/auth/get-permission-info|ADMIN|AUTHENTICATED|-|system|AuthController
 GET|/admin-api/system/auth/social-auth-redirect|ADMIN|ANONYMOUS|-|system|AuthController
 GET|/admin-api/system/dept/get|ADMIN|PERMISSION|system:dept:query|system|DeptController
@@ -244,6 +245,7 @@ POST|/admin-api/infra/file/upload-credential|ADMIN|PERMISSION|infra:file:create|
 POST|/admin-api/infra/file/upload|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/job/create|ADMIN|PERMISSION|infra:job:create|infra|JobController
 POST|/admin-api/infra/job/sync|ADMIN|PERMISSION|infra:job:create|infra|JobController
+POST|/admin-api/system/audit-event/clean|ADMIN|PERMISSION|system:audit:clean|system|AuditEventController
 POST|/admin-api/system/auth/login|ADMIN|ANONYMOUS|-|system|AuthController
 POST|/admin-api/system/auth/logout|ADMIN|ANONYMOUS|-|system|AuthController
 POST|/admin-api/system/auth/refresh-token|ADMIN|ANONYMOUS|-|system|AuthController
