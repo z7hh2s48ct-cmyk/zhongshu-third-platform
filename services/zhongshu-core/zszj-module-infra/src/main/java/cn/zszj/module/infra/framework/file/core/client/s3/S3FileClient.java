@@ -109,8 +109,19 @@ public class S3FileClient extends AbstractFileClient<S3FileClientConfig> {
 
     @Override
     public String presignPutUrl(String path) {
+        return presignPutUrl(path, null);
+    }
+
+    /**
+     * ZS-FILE-003 codex r0 P2：带有效期的预签名上传——凭证 30 分钟过期时签名同步失效，
+     * 杜绝凭证过期但 PUT 仍有效的重写窗口。
+     */
+    @Override
+    public String presignPutUrl(String path, Integer expirationSeconds) {
+        java.time.Duration duration = expirationSeconds != null
+                ? java.time.Duration.ofSeconds(expirationSeconds) : EXPIRATION_DEFAULT;
         return presigner.presignPutObject(PutObjectPresignRequest.builder()
-                .signatureDuration(EXPIRATION_DEFAULT)
+                .signatureDuration(duration)
                 .putObjectRequest(b -> b.bucket(config.getBucket()).key(path)).build())
                 .url().toString();
     }

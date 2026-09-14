@@ -1,4 +1,5 @@
 -- ZS-FILE-003：预签名直传凭证——绑定主体/租户/临时键/大小/类型/有效期，一次性完成确认。
+CREATE SEQUENCE IF NOT EXISTS infra_file_upload_credential_seq START 1;
 CREATE TABLE IF NOT EXISTS infra_file_upload_credential (
     id int8 NOT NULL,
     credential_token varchar(64) NOT NULL,

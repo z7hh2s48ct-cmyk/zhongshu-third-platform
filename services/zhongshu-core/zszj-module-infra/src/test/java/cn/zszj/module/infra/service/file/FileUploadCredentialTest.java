@@ -75,6 +75,9 @@ public class FileUploadCredentialTest extends BaseDbUnitTest {
             when(masterClient.presignPutUrl(anyString())).thenAnswer(inv ->
                     "https://oss.example.com/" + inv.getArgument(0, String.class)
                             + "?X-Amz-Signature=stub");
+            when(masterClient.presignPutUrl(anyString(), org.mockito.ArgumentMatchers.any())).thenAnswer(inv ->
+                    "https://oss.example.com/" + inv.getArgument(0, String.class)
+                            + "?X-Amz-Signature=stub&exp=" + inv.getArgument(1));
             when(masterClient.upload(any(), anyString(), anyString())).thenAnswer(inv -> {
                 String path = inv.getArgument(1, String.class);
                 objectStore.put(path, inv.getArgument(0, byte[].class));
@@ -107,9 +110,9 @@ public class FileUploadCredentialTest extends BaseDbUnitTest {
     }
 
     private byte[] simulateClientPut(String uploadUrl, byte[] content) {
-        // 从 stub 的 uploadUrl 中解析临时键（url = https://oss.example.com/<tempPath>?签名）
-        String tempPath = uploadUrl.replace("https://oss.example.com/", "")
-                .replace("?X-Amz-Signature=stub", "");
+        // 从 stub 的 uploadUrl 中解析临时键（url = https://oss.example.com/<tempPath>?签名参数）
+        String tempPath = uploadUrl.replace("https://oss.example.com/", "");
+        tempPath = tempPath.substring(0, tempPath.indexOf('?'));
         objectStore.put(tempPath, content);
         return content;
     }
@@ -291,6 +294,7 @@ public class FileUploadCredentialTest extends BaseDbUnitTest {
         FileClient localLike = mock(FileClient.class);
         when(localLike.getId()).thenReturn(9L);
         when(localLike.presignPutUrl(anyString())).thenThrow(new UnsupportedOperationException("不支持的操作"));
+        when(localLike.presignPutUrl(anyString(), org.mockito.ArgumentMatchers.any())).thenThrow(new UnsupportedOperationException("不支持的操作"));
         when(fileConfigService.getMasterFileClient()).thenReturn(localLike);
 
         ServiceException ex = assertThrows(ServiceException.class,

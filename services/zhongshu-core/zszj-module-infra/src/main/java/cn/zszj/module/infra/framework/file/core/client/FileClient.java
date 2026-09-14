@@ -53,6 +53,14 @@ public interface FileClient {
     }
 
     /**
+     * ZS-FILE-003：带有效期的预签名上传地址——凭证有效期与签名有效期共用同一截止时间。
+     * 不支持时回退到无参版本（由调用方禁用直传兜底）。
+     */
+    default String presignPutUrl(String path, Integer expirationSeconds) {
+        return presignPutUrl(path);
+    }
+
+    /**
      * 生成文件预签名地址，用于读取
      *
      * @param url 完整的文件访问地址
