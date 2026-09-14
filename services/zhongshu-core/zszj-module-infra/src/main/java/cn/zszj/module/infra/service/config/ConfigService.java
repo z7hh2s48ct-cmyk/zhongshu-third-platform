@@ -1,8 +1,11 @@
 package cn.zszj.module.infra.service.config;
 
 import cn.zszj.framework.common.pojo.PageResult;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigChangeHistoryPageReqVO;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigChangeHistoryRespVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigPageReqVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigRespVO;
+import cn.zszj.module.infra.controller.admin.config.vo.ConfigRestoreReqVO;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
 import jakarta.validation.Valid;
@@ -86,5 +89,23 @@ public interface ConfigService {
      * @return 敏感级
      */
     ConfigSensitiveClassifier.SensitiveLevel classifySensitive(ConfigDO config);
+
+    /**
+     * ZS-CFG-004 B04：恢复参数配置至指定历史记录的变更前值（审查后恢复）。
+     *
+     * 仅回写 value（key/visible/category/name 均不动），走与更新同一值校验与乐观锁契约；
+     * 秘密/敏感参数的历史值已脱敏（******），不可自动恢复；恢复动作落变更历史与统一审计。
+     *
+     * @param reqVO 恢复信息（配置编号、目标历史编号、当前乐观锁版本、审查依据）
+     */
+    void restoreConfig(@Valid ConfigRestoreReqVO reqVO);
+
+    /**
+     * ZS-CFG-004 B04：获得参数配置变更历史分页（敏感/秘密配置整页掩码输出）。
+     *
+     * @param reqVO 分页条件（按配置编号）
+     * @return 变更历史分页
+     */
+    PageResult<ConfigChangeHistoryRespVO> getConfigChangeHistoryPage(@Valid ConfigChangeHistoryPageReqVO reqVO);
 
 }

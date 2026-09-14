@@ -1,13 +1,16 @@
 package cn.zszj.module.infra.service.config;
 
+import cn.zszj.framework.common.biz.system.audit.AuditPort;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.zszj.module.infra.dal.dataobject.config.ConfigDO;
+import cn.zszj.module.infra.dal.mysql.config.ConfigChangeHistoryMapper;
 import cn.zszj.module.infra.dal.mysql.config.ConfigMapper;
 import cn.zszj.module.infra.enums.config.ConfigTypeEnum;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import jakarta.annotation.Resource;
@@ -27,7 +30,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>基于 H2 内存数据库 {@link BaseDbUnitTest}。</p>
  */
-@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class, ConfigValueValidator.class})
+@Import({ConfigServiceImpl.class, ConfigSensitiveClassifier.class, ConfigValueValidator.class,
+        ConfigChangeRecorder.class})
 public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
 
     @Resource
@@ -38,6 +42,12 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
 
     @Resource
     private ConfigValueValidator configValueValidator;
+
+    @Resource
+    private ConfigChangeHistoryMapper configChangeHistoryMapper;
+
+    @MockitoBean
+    private AuditPort auditPort; // ZS-CFG-004 B04：变更审计 Port 假件（真实 JdbcAuditPort 落 system 模块）
 
     // ========== 1. 非法值不进运行、不落库 ==========
 
@@ -274,6 +284,12 @@ public class ConfigServiceImplValueValidationTest extends BaseDbUnitTest {
         ReflectionTestUtils.setField(bareService, "configMapper", configMapper);
         ReflectionTestUtils.setField(bareService, "sensitiveClassifier", new ConfigSensitiveClassifier());
         ReflectionTestUtils.setField(bareService, "configValueValidator", configValueValidator);
+        // ZS-CFG-004 B04：变更留痕依赖一并注入（真实历史 Mapper + 审计 Port 假件）
+        ConfigChangeRecorder bareRecorder = new ConfigChangeRecorder();
+        ReflectionTestUtils.setField(bareRecorder, "configChangeHistoryMapper", configChangeHistoryMapper);
+        ReflectionTestUtils.setField(bareRecorder, "auditPort", auditPort);
+        ReflectionTestUtils.setField(bareRecorder, "sensitiveClassifier", new ConfigSensitiveClassifier());
+        ReflectionTestUtils.setField(bareService, "configChangeRecorder", bareRecorder);
 
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger conflictCount = new AtomicInteger(0);
