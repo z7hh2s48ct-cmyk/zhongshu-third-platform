@@ -5,6 +5,7 @@ import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.zszj.framework.common.pojo.PageResult;
@@ -15,6 +16,7 @@ import cn.zszj.framework.tenant.core.util.TenantUtils;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.infra.enums.file.FileScopeEnum;
+import cn.zszj.module.infra.framework.file.config.FileProperties;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePageReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePresignedUrlRespVO;
@@ -36,6 +38,11 @@ import java.util.Objects;
 import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DANGEROUS_CONTENT;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CONCURRENT_LIMIT;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PUBLIC_TYPE_NOT_ALLOWED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_SIZE_EXCEED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_TYPE_MISMATCH;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_SCOPE_INVALID;
 
 /**
@@ -59,7 +66,7 @@ public class FileServiceImpl implements FileService {
      * 算法：当前时间戳（毫秒）+ 5 位随机数；目的是保证文件的唯一性，避免覆盖
      * 定制：可按需调整成 UUID、或者其他方式
      */
-    static boolean PATH_SUFFIX_TIMESTAMP_ENABLE = false;
+    static boolean PATH_SUFFIX_TIMESTAMP_ENABLE = true; // ZS-FILE-002：服务端唯一对象键（同日同名不覆盖）
     /**
      * 后缀是否作为上级目录
      *
@@ -72,6 +79,26 @@ public class FileServiceImpl implements FileService {
     private FileConfigService fileConfigService;
     @Resource
     private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
+    @Resource
+    private cn.zszj.module.infra.framework.file.config.FileProperties fileProperties;
+
+    /**
+     * ZS-FILE-002 codex r0 P2：在途上传许可（批量/内存占用预算）。包级可见便于测试注入许可。
+     */
+    java.util.concurrent.Semaphore uploadPermits;
+
+    private java.util.concurrent.Semaphore uploadPermits() {
+        if (uploadPermits == null) {
+            synchronized (this) {
+                if (uploadPermits == null) {
+                    uploadPermits = new java.util.concurrent.Semaphore(
+                            fileProperties.getMaxConcurrentUploads() != null
+                                    ? fileProperties.getMaxConcurrentUploads() : 32);
+                }
+            }
+        }
+        return uploadPermits;
+    }
 
     @Resource
     private FileMapper fileMapper;
@@ -84,24 +111,47 @@ public class FileServiceImpl implements FileService {
     @Override
     @SneakyThrows
     public String createFile(byte[] content, String name, String directory, String type) {
+        // ZS-FILE-002 codex r0 P2：在途上传准入（内存占用预算），超出即拒绝
+        boolean acquired = uploadPermits().tryAcquire();
+        if (!acquired) {
+            throw exception(FILE_UPLOAD_CONCURRENT_LIMIT);
+        }
+        try {
+            return doCreateFile(content, name, directory, type);
+        } finally {
+            uploadPermits.release();
+        }
+    }
+
+    @SneakyThrows
+    private String doCreateFile(byte[] content, String name, String directory, String type) {
         // 1.1 处理 name 的合法性，禁止携带目录路径
         name = FilePathUtils.validateFileName(name);
 
-        // 1.2.1 处理 type 为空的情况
-        if (StrUtil.isEmpty(type)) {
-            type = FileTypeUtils.getMineType(content, name);
+        // 1.2.1 ZS-FILE-002：大小限额（service 层显式，不依赖 multipart 兜底）
+        if (content.length > fileProperties.getMaxSize()) {
+            throw exception(FILE_SIZE_EXCEED, content.length, fileProperties.getMaxSize());
         }
-        // 1.2.2 处理 name 为空的情况
+        // 1.2.2 codex r0 P1：服务端以【纯内容】探测类型（不含文件名提示）——文件名参与探测会自证
+        // （未知二进制随 fake.png 名被升级为 image/png 通过白名单）；调用方声明的 type 一律不信任。
+        // 未知内容保持 octet-stream，不凭扩展名升级为可信类型
+        String declaredType = type;
+        type = FileTypeUtils.getMineType(content);
+        // 1.2.3 处理 name 为空：以内容散列为名（原行为保留）
         if (StrUtil.isEmpty(name)) {
             name = DigestUtil.sha256Hex(content);
         }
+        // 1.2.4 无扩展名时按探测类型补全（基于纯内容探测，可信）
         if (StrUtil.isEmpty(FileUtil.extName(name))) {
-            // 如果 name 没有后缀 type，则补充后缀
             String extension = FileTypeUtils.getExtension(type);
             if (StrUtil.isNotEmpty(extension)) {
                 name = name + extension;
             }
         }
+        // 1.2.4 codex r0 P1：危险扩展名黑名单作用于【补全后的最终名】且优先于一致性校验
+        validateDangerExtension(name);
+        // 1.2.5 codex r0 P2：一致性按探测 MIME 的【合法扩展名集合】归一比较（jpg/jpeg/jfif 同为 image/jpeg）        // 1.2.2 处理 name 为空的情况
+        validateExtensionConsistency(name, type);
 
         // 2.1 生成上传的 path，需要保证唯一
         String path = generateUploadPath(name, directory);
@@ -134,8 +184,9 @@ public class FileServiceImpl implements FileService {
         }
         String suffix = null;
         if (PATH_SUFFIX_TIMESTAMP_ENABLE) {
-            // 5 位随机数，避免同一毫秒内的重复
-            suffix = String.valueOf(System.currentTimeMillis()) + RandomUtil.randomInt(10000, 100000);
+            // ZS-FILE-002 codex r1 P2：UUID 熵增——原毫秒+5 位随机每毫秒仅 9 万种，
+            // 同毫秒并发同名仍有 1/90000 撞键概率；UUID 32 hex 使碰撞概率可忽略
+            suffix = IdUtil.fastSimpleUUID();
         }
 
         // 2.1 先拼接 suffix 后缀
@@ -287,6 +338,12 @@ public class FileServiceImpl implements FileService {
 
 
     /**
+     * ZS-FILE-002 codex r1 P2：ZIP 容器家族扩展名（纯内容探测为 application/zip，但业务扩展名合法）
+     */
+    private static final java.util.Set<String> ZIP_CONTAINER_EXTENSIONS = java.util.Set.of(
+            "jar", "war", "ear", "apk", "docx", "xlsx", "pptx", "odt", "ods", "odp", "epub");
+
+    /**
      * ZS-FILE-001.A：当前登录用户编号；匿名/系统上下文返回 0（owner 列 NOT NULL DEFAULT 0 语义一致）。
      */
     private Long currentUserOrZero() {
@@ -352,9 +409,67 @@ public class FileServiceImpl implements FileService {
             throw exception(FILE_SCOPE_INVALID);
         }
         FileDO file = validateFileExists(id);
+        // ZS-FILE-002（codex r1 P2）：转 PUBLIC 需类型【精确匹配】公开素材白名单——
+        // 前缀匹配 image/ 会放进 image/svg+xml（可携带脚本，存储型 XSS 面）
+        if (FileScopeEnum.PUBLIC.getScope().equals(scope)
+                && CollUtil.isNotEmpty(fileProperties.getPublicAllowedTypes())
+                && fileProperties.getPublicAllowedTypes().stream()
+                        .noneMatch(allowed -> file.getType() != null
+                                && file.getType().equalsIgnoreCase(allowed))) {
+            throw exception(FILE_PUBLIC_TYPE_NOT_ALLOWED, file.getType());
+        }
         FileDO updateObj = new FileDO().setId(file.getId()).setScope(scope);
         fileMapper.updateById(updateObj);
     }
 
     // ZS-FILE-001.A 类尾占位
+
+    /**
+     * ZS-FILE-002：扩展名/MIME 伪装校验——探测类型可解析出扩展名、且文件名带扩展名时，
+     * 二者必须一致；无法判定（octet-stream/文件名无扩展名）跳过。
+     */
+    private void validateExtensionConsistency(String name, String detectedType) {
+        if (StrUtil.isEmpty(detectedType) || "application/octet-stream".equals(detectedType)) {
+            return; // 内容无法判定：不凭扩展名升级为可信类型，直接放行（后续无个人敏感面）
+        }
+        // codex r0 P2：按探测 MIME 的【合法扩展名集合】归一比较（jpg/jpeg/jfif 同为 image/jpeg，
+        // 首选扩展名会误拒 .jpeg/.jfif）；集合为空（注册表无扩展名）跳过
+        String nameExt = FileUtil.extName(name);
+        if (StrUtil.isEmpty(nameExt)) {
+            return;
+        }
+        // codex r1 P2：ZIP 容器兼容——jar/war/docx/xlsx 等纯内容探测为 application/zip，
+        // 其扩展名集合不含真实业务扩展名；属已知容器形态则放行（内容仍是合法 ZIP 容器）
+        if ("application/zip".equals(detectedType)
+                && ZIP_CONTAINER_EXTENSIONS.contains(nameExt.toLowerCase())) {
+            return;
+        }
+        try {
+            List<String> aliases = org.apache.tika.mime.MimeTypes.getDefaultMimeTypes()
+                    .forName(detectedType).getExtensions().stream()
+                    .map(ext -> StrUtil.removePrefix(ext, ".").toLowerCase())
+                    .toList();
+            if (CollUtil.isEmpty(aliases)) {
+                return;
+            }
+            if (!aliases.contains(nameExt.toLowerCase())) {
+                throw exception(FILE_TYPE_MISMATCH, detectedType, nameExt);
+            }
+        } catch (org.apache.tika.mime.MimeTypeException ex) {
+            // 未知 MIME 注册项：跳过一致性校验
+        }
+    }
+
+    /**
+     * ZS-FILE-002：危险扩展名隔离——按最终扩展名命中黑名单即拒绝上传。
+     */
+    private void validateDangerExtension(String name) {
+        String ext = StrUtil.emptyIfNull(FileUtil.extName(name)).toLowerCase();
+        if (StrUtil.isNotEmpty(ext) && fileProperties.getDangerExtensions().stream()
+                .anyMatch(d -> d.equalsIgnoreCase(ext))) {
+            throw exception(FILE_DANGEROUS_CONTENT, ext);
+        }
+    }
+
+    // ZS-FILE-002 类尾占位
 }

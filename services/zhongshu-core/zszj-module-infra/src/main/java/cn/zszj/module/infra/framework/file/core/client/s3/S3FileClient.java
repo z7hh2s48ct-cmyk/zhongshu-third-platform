@@ -63,6 +63,8 @@ public class S3FileClient extends AbstractFileClient<S3FileClientConfig> {
                 .region(region)
                 .endpointOverride(endpoint)
                 .serviceConfiguration(serviceConfiguration)
+                // ZS-FILE-002 codex r0 P2：外部存储超时合同（慢存储不得持续占用上传线程）
+                .overrideConfiguration(o -> o.apiCallTimeout(java.time.Duration.ofSeconds(60)))
                 .build();
         presigner = S3Presigner.builder()
                 .credentialsProvider(credentialsProvider)

@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * @author ZS-FILE-001.A
  */
-@Import(FileServiceImpl.class)
+@Import({FileServiceImpl.class, cn.zszj.module.infra.framework.file.config.FileConfiguration.class})
 public class FileServiceAuthorizationTest extends BaseDbUnitTest {
 
     @Resource

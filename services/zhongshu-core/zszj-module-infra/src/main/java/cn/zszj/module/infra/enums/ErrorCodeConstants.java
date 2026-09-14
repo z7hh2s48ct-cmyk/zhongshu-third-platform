@@ -40,6 +40,12 @@ public interface ErrorCodeConstants {
     ErrorCode FILE_PATH_EXISTS = new ErrorCode(1_001_003_000, "文件路径已存在");
     ErrorCode FILE_NOT_EXISTS = new ErrorCode(1_001_003_001, "文件不存在");
     // ZS-FILE-001.A：文件可见范围非法
+    // ZS-FILE-002：上传用途、内容校验与唯一对象键
+    ErrorCode FILE_SIZE_EXCEED = new ErrorCode(1_001_003_006, "文件大小（{}）超过上限（{}）");
+    ErrorCode FILE_TYPE_MISMATCH = new ErrorCode(1_001_003_007, "文件内容与扩展名不符：探测类型（{}）与扩展名（{}）不一致，疑似伪装");
+    ErrorCode FILE_DANGEROUS_CONTENT = new ErrorCode(1_001_003_008, "文件扩展名（{}）属于危险类型，禁止上传");
+    ErrorCode FILE_UPLOAD_CONCURRENT_LIMIT = new ErrorCode(1_001_003_010, "上传并发已达上限，请稍后重试");
+    ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");
     ErrorCode FILE_PATH_INVALID = new ErrorCode(1_001_003_003, "文件路径不正确");
