@@ -1,5 +1,6 @@
 package cn.zszj.module.infra.framework.outbox;
 
+import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.util.json.JsonUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import lombok.extern.slf4j.Slf4j;
@@ -8,14 +9,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.NoTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import javax.sql.DataSource;
 import java.sql.PreparedStatement;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Map;
 
@@ -35,60 +39,82 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.OUTBOX_EVENT_WRITE_F
  *       主键由 DB 生成（{@link GeneratedKeyHolder} + 指定生成列 {@code id}），替代供体 PG 专用 {@code RETURNING id}；
  *       {@code payload/headers} 经 {@link JsonUtils} 序列化落 {@code text}（JSON 串），替代供体 PG 专用
  *       {@code jsonb}，双方言可移植（均循 ZS-AUDIT-001 JdbcAuditPort 先例）；</li>
- *   <li><b>事务上下文强制</b>：append 必须在业务事务内调用，无事务即拒绝且不代开——供体无此约束，
- *       无事务调用会静默自提交，丢失「业务回滚无事件」保证；</li>
+ *   <li><b>事务上下文强制（同数据源）</b>：append 必须在<b>绑定本数据源</b>的业务事务内调用——
+ *       线程有事务但本数据源未参与（如他数据源事务管理器开启的事务）同样拒绝，REQUIRED 模板在该情形下
+ *       会另开事务静默自提交，丢失「业务回滚无事件」保证；无事务即拒绝，不代开事务；</li>
  *   <li><b>租户上下文强制</b>：技术租户一律取自 {@link TenantContextHolder} 当前上下文，缺失即拒绝——
  *       供体「缺 tenant 默认写 0」会伪造归属，已去除；消息合同不含租户字段，调用方无法跨租户串用；</li>
- *   <li>fail-closed：{@code eventType}/{@code actorType} 必填；序列化/写入失败先将所参与事务标记
- *       rollback-only 再抛出，纵使调用方吞掉异常，业务也无法「无事件而提交」。</li>
+ *   <li><b>fail-closed 全覆盖</b>：{@code eventType}/{@code actorType} 必填；事务/租户守卫失败时尽力将
+ *       当前事务标记 rollback-only（@Transactional 场景可标记，编程式事务无关联状态时仅拒绝），
+ *       租户校验/必填校验/序列化/写入失败在事务模板内统一标记 rollback-only 再抛出——纵使调用方吞掉异常，
+ *       业务也无法「无事件而提交」；</li>
+ *   <li>{@code next_retry_at} 由应用侧时钟写入（与派发器领取/租约/退避同一时钟基准，避免 DB 与应用时钟
+ *       混用造成领取提前/延迟）；{@code create_time} 仍由 DB 默认值填充（非比较字段，循 audit 惯例）。</li>
  * </ul>
  */
 @Repository
 @Slf4j
 public class JdbcReliableEventPort implements ReliableEventPort {
 
-    /** 事件插入语句；{@code id} 由 DB 生成、{@code create_time/status/retry_count/next_retry_at} 由 DB 默认值填充，均不在列。 */
+    /** 事件插入语句；{@code id/create_time} 由 DB 生成，{@code status/retry_count} 由 DB 默认值填充。 */
     private static final String INSERT_SQL = "INSERT INTO outbox_event "
-            + "(event_type, biz_type, biz_id, biz_version, payload, headers, tenant_id, actor_type, actor_id, trace_id) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            + "(event_type, biz_type, biz_id, biz_version, payload, headers, tenant_id, actor_type, actor_id, trace_id, next_retry_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     private final JdbcTemplate jdbcTemplate;
 
+    /** 本端口绑定的业务数据源——事务守卫据其校验「当前线程事务是否确实绑定了本数据源连接」。 */
+    private final DataSource dataSource;
+
     /**
-     * REQUIRED 事务模板：加入调用方业务事务（不新开——事务上下文守卫已在进入前强制存在），
-     * 序列化/写入失败可标记其 rollback-only（fail-closed 兜底）。
+     * REQUIRED 事务模板：加入调用方业务事务（不新开——事务/数据源守卫已在进入前强制存在），
+     * 租户/必填/序列化/写入失败可标记其 rollback-only（fail-closed 兜底）。
      */
     private final TransactionTemplate callerTransactionTemplate;
 
     public JdbcReliableEventPort(DataSource dataSource, PlatformTransactionManager transactionManager) {
         this.jdbcTemplate = new JdbcTemplate(dataSource);
+        this.dataSource = dataSource;
         this.callerTransactionTemplate = new TransactionTemplate(transactionManager);
         this.callerTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
     }
 
     @Override
     public long append(OutboxEventMessage message) {
-        // ① 事务上下文强制：必须在业务事务内调用（同库同事务，业务回滚则事件一并回滚）；无事务即拒绝，不代开。
-        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw exception(OUTBOX_EVENT_TRANSACTION_REQUIRED);
+        // ① 事务上下文强制（同数据源）：必须存在线程事务且本数据源连接已绑定该事务——
+        //    仅检查线程有事务时，他数据源事务管理器开启的事务会让 REQUIRED 模板在本数据源另开事务静默自提交；
+        //    守卫在事务模板之外抛出（此时尚无本模板事务可标记），尽力标记当前事务 rollback-only 后拒绝。
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || TransactionSynchronizationManager.getResource(dataSource) == null) {
+            return failClosed(exception(OUTBOX_EVENT_TRANSACTION_REQUIRED));
         }
-        // ② 租户上下文强制：技术租户一律取自当前上下文，缺失即拒绝，不默认写 0（不伪造归属）。
-        Long tenantId = TenantContextHolder.getTenantId();
-        if (tenantId == null) {
-            throw exception(OUTBOX_EVENT_TENANT_CONTEXT_REQUIRED);
-        }
-        validateRequired(message);
         Long eventId = callerTransactionTemplate.execute(status -> {
             try {
+                // ② 租户上下文强制：技术租户一律取自当前上下文，缺失即拒绝，不默认写 0（不伪造归属）。
+                Long tenantId = TenantContextHolder.getTenantId();
+                if (tenantId == null) {
+                    throw exception(OUTBOX_EVENT_TENANT_CONTEXT_REQUIRED);
+                }
+                validateRequired(message);
                 return doAppend(message, tenantId);
             } catch (RuntimeException ex) {
-                // fail-closed：序列化/写入失败即标记所参与事务 rollback-only 再抛出，
+                // fail-closed：租户/必填/序列化/写入任一失败即标记所参与事务 rollback-only 再抛出，
                 // 纵使调用方吞掉异常，业务事务也无法「无事件而提交」。
                 status.setRollbackOnly();
                 throw ex;
             }
         });
         return eventId != null ? eventId : -1L;
+    }
+
+    /** 模板外守卫失败：尽力标记当前事务 rollback-only（@Transactional 场景可标记；编程式事务无关联状态，忽略），再抛出。 */
+    private long failClosed(ServiceException ex) {
+        try {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        } catch (NoTransactionException ignored) {
+            // 编程式（TransactionTemplate）事务无 aspect 关联状态，无法经此标记；模板内失败路径仍可标记
+        }
+        throw ex;
     }
 
     /** fail-closed 必填校验：缺失即抛，杜绝无类型的模糊事件进入投递。 */
@@ -126,6 +152,7 @@ public class JdbcReliableEventPort implements ReliableEventPort {
                 ps.setString(8, message.getActorType().name());
                 ps.setString(9, message.getActorId());
                 ps.setString(10, message.getTraceId());
+                ps.setTimestamp(11, new Timestamp(System.currentTimeMillis()));
                 return ps;
             }, keyHolder);
         } catch (DataAccessException e) {

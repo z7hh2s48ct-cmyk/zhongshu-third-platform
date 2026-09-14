@@ -65,7 +65,7 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         TenantContextHolder.setTenantId(1L);
     }
 
-    /** 测试投递 Sink：可配置支持的事件类型与失败模式，记录投递内容供断言。 */
+    /** 测试投递 Sink：可配置支持的事件类型与失败模式，记录投递内容与投递时的租户上下文供断言。 */
     @org.springframework.stereotype.Component
     public static class RecordingSink implements OutboxEventSink {
 
@@ -75,13 +75,25 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
 
         private volatile boolean failOnDeliver = false;
 
+        private volatile boolean failOnSupports = false;
+
+        /** deliver 执行时线程的租户上下文（应等于事件租户，而非 dispatcher 调用线程的原上下文）。 */
+        private volatile Long deliveredTenantId;
+
+        private volatile boolean deliveredIgnore;
+
         @Override
         public boolean supports(String eventType) {
+            if (failOnSupports) {
+                throw new IllegalStateException("supports 模拟异常");
+            }
             return supportedTypes.contains(eventType);
         }
 
         @Override
         public void deliver(OutboxEventRecord event) throws Exception {
+            deliveredTenantId = TenantContextHolder.getTenantId();
+            deliveredIgnore = TenantContextHolder.isIgnore();
             if (failOnDeliver) {
                 throw new IllegalStateException("sink 模拟投递失败");
             }
@@ -91,7 +103,10 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         public void reset(Set<String> supportedTypes) {
             this.supportedTypes = supportedTypes;
             this.failOnDeliver = false;
+            this.failOnSupports = false;
             this.delivered.clear();
+            this.deliveredTenantId = null;
+            this.deliveredIgnore = false;
         }
 
     }
@@ -100,7 +115,8 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
      *  与 Java 侧毫秒参数比较在同毫秒内会出现「刚插入即不可领取」的粒度假阴性。 */
     private long insertPendingEvent(String eventType) {
         jdbcTemplate.update("INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type, "
-                        + "next_retry_at) VALUES (?, 'infra_file', '2048', '{}', 1, 'SYSTEM', ?)",
+                        + "actor_id, trace_id, next_retry_at) "
+                        + "VALUES (?, 'infra_file', '2048', '{}', 1, 'SYSTEM', 'ut-worker', 'trace-ut', ?)",
                 eventType, new Timestamp(System.currentTimeMillis() - 1000));
         Long id = jdbcTemplate.queryForObject(
                 "SELECT id FROM outbox_event WHERE event_type = ? ORDER BY id DESC LIMIT 1", Long.class, eventType);
@@ -253,6 +269,9 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         assertEquals(1L, record.getTenantId().longValue(), "Record 应带回技术租户上下文");
         assertEquals("{\"fileId\":2048}", record.getPayload());
         assertEquals("{\"hint\":\"ut\"}", record.getHeaders(), "Record 应带回投递附带头");
+        assertEquals("SYSTEM", record.getActorType(), "Record 应带回事件主体（事件合同）");
+        assertEquals("ut-worker", record.getActorId());
+        assertEquals("trace-ut", record.getTraceId());
         assertEquals("DISPATCHED", loadRow(eventId).get("status"));
     }
 
@@ -289,6 +308,50 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         assertTrue(dispatcher.claim(DISPATCHER, INSTANCE_A, 30, 10).isEmpty(), "未到退避点的事件不得领取");
         makeDue(eventId);
         assertEquals(1, dispatcher.claim(DISPATCHER, INSTANCE_A, 30, 10).size(), "到期后应可领取");
+    }
+
+    /**
+     * 用例 10（codex r0 P1 跨租户串用）：Sink 投递在事件自身租户上下文内执行——即使 dispatcher 调用线程
+     * 持有其他租户上下文（或忽略租户），Sink 读到的也是事件租户；投递完成后调用线程上下文恢复原值。
+     */
+    @Test
+    public void testDispatchOnce_sinkRunsInEventTenantContextAndRestoresCallerContext() {
+        long eventId = insertPendingEvent("USER_MESSAGE_SEND");
+        makeDue(eventId);
+        sink.reset(Set.of("USER_MESSAGE_SEND"));
+
+        TenantContextHolder.setTenantId(99L);
+        TenantContextHolder.setIgnore(true);
+        try {
+            assertEquals(1, dispatcher.dispatchOnce(DISPATCHER, INSTANCE_A, 30, 10, 60));
+        } finally {
+            assertEquals(99L, TenantContextHolder.getTenantId(), "投递后调用线程上下文应恢复原租户");
+            assertTrue(TenantContextHolder.isIgnore(), "投递后调用线程上下文应恢复原忽略标志");
+            TenantContextHolder.setIgnore(false);
+            TenantContextHolder.setTenantId(1L);
+        }
+
+        assertEquals(1, sink.delivered.size());
+        assertEquals(1L, sink.deliveredTenantId, "Sink 应在事件租户上下文内执行，而非调用线程的原租户");
+        assertFalse(sink.deliveredIgnore, "Sink 执行期间忽略租户标志应被解除");
+        assertEquals("DISPATCHED", loadRow(eventId).get("status"));
+    }
+
+    /** 用例 11（codex r0 P2 批次隔离）：任一事件的 supports() 抛异常只推进该事件失败退避，不中断本批其余事件。 */
+    @Test
+    public void testDispatchOnce_sinkSelectionFailureIsIsolatedPerEvent() {
+        long first = insertPendingEvent("USER_MESSAGE_SEND");
+        long second = insertPendingEvent("USER_MESSAGE_SEND");
+        makeDue(first);
+        makeDue(second);
+        sink.reset(Set.of("USER_MESSAGE_SEND"));
+        sink.failOnSupports = true;
+
+        assertEquals(2, dispatcher.dispatchOnce(DISPATCHER, INSTANCE_A, 30, 10, 60), "本批应完整领取");
+        assertEquals(1, ((Number) loadRow(first).get("retry_count")).intValue(), "supports 异常应按失败推进第一事件");
+        assertEquals(1, ((Number) loadRow(second).get("retry_count")).intValue(), "supports 异常应按失败推进第二事件");
+        assertTrue(String.valueOf(loadRow(first).get("last_error")).contains("supports 模拟异常"));
+        assertEquals(0, sink.delivered.size(), "supports 异常不得触发投递");
     }
 
 }

@@ -1,5 +1,8 @@
 package cn.zszj.module.infra.framework.outbox;
 
+import cn.zszj.framework.common.util.json.JsonUtils;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
+import cn.zszj.framework.tenant.core.util.TenantUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,6 +18,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -23,19 +27,26 @@ import java.util.UUID;
  * <p>合同（docs/05 ZS-JOB-002 调整条款落地）：
  * <ul>
  *   <li>领取使用 {@code FOR UPDATE SKIP LOCKED} + 事件级租约（claim_expires_at），多实例不重复领取，
- *       崩溃实例的租约到期后事件可被其他实例重领；时间参数全部由应用侧计算传入（双方言可移植、单一时钟源）；</li>
+ *       崩溃实例的租约到期后事件可被其他实例重领；时间的写入与比较全部由应用侧参数化（同 JdbcReliableEventPort
+ *       时钟基准，双方言可移植）；</li>
  *   <li><b>每次领取唯一凭证（claim_token，每事件一份）</b>：complete/fail 必须携带当前凭证——供体仅以 instanceId 做
  *       claimed_by 匹配，同实例租约过期重领后旧执行者仍能确认新领取；凭证为每事件每次领取新生成的 UUID，
  *       过期旧执行者（含同实例旧线程）无法覆盖新领取状态（栅栏）；</li>
  *   <li>领取以单个短事务原子完成：SELECT ... FOR UPDATE SKIP LOCKED 锁行 + 同事务内回填领取字段。
  *       等价于供体的 {@code UPDATE ... RETURNING} 单语句，拆两步系双方言可移植要求（H2 不支持
  *       UPDATE..RETURNING），事务内行锁保证两步间无他实例插入竞争；</li>
- *   <li>Sink 投递在领取/确认短事务之外：成功标记 DISPATCHED，失败退避重试，超过 5 次进入 DEAD 人工处置
- *       （重试/DEAD 台账与告警归 ZS-JOB-004）；</li>
+ *   <li>Sink 投递在领取/确认短事务之外：<b>在事件自身租户上下文内执行</b>（{@link TenantUtils#execute}，
+ *       投递前后恢复调用线程上下文，杜绝跨租户串用）；成功标记 DISPATCHED，失败退避重试，超过 5 次进入
+ *       DEAD 人工处置（重试/DEAD 台账与告警归 ZS-JOB-004）；</li>
  *   <li>Sink 必须幂等（at-least-once：租约过期重领、投递成功但确认丢失都会重投）；无 Sink 声明支持的事件
- *       按失败退避进入可见失败（重试至 DEAD），不丢弃；</li>
+ *       按失败退避进入可见失败（重试至 DEAD），不丢弃；逐事件异常隔离——任一事件的 Sink 选择/投递异常
+ *       不中断本批其余事件；</li>
  *   <li><b>派发事务与业务事务分离</b>：{@link #dispatchOnce} 必须在无事务上下文中调用——领取/确认各自独立
- *       短事务；若被误包进业务事务，租约与确认会延迟提交并放大重复投递，故 fail-fast 拒绝。</li>
+ *       短事务；若被误包进业务事务，租约与确认会延迟提交并放大重复投递，故 fail-fast 拒绝；
+ *       {@code claim/complete/fail} 为包内可见（public 入口仅 {@code dispatchOnce/heartbeat}），
+ *       防止外部调用绕过无事务守卫；</li>
+ *   <li>失败原因（{@code last_error} 与 WARN 日志）经 {@link LogSanitizeUtils} 净化并限长——异常消息可能
+ *       携带凭据/签名 URL，与 ZS-AUDIT-002 脱敏惯例一致。</li>
  * </ul>
  */
 @Slf4j
@@ -45,9 +56,12 @@ public class OutboxDispatcherService {
     /** 连续失败上限，达到即转 DEAD 人工处置（台账/恢复控制台归 ZS-JOB-004）。 */
     private static final int MAX_RETRY_BEFORE_DEAD = 5;
 
+    /** last_error 限长（脱敏后仍超长则截断，防异常正文撑爆存储/日志）。 */
+    private static final int MAX_ERROR_LENGTH = 512;
+
     /** 领取候选查询：PENDING + 已到期 + 租约空闲（无租约或已过期），SKIP LOCKED 跳过他实例持锁行，稳定 id 排序。 */
     private static final String CLAIM_SELECT_SQL = "SELECT id, event_type, biz_type, biz_id, biz_version, "
-            + "payload, headers, tenant_id, retry_count FROM outbox_event "
+            + "payload, headers, tenant_id, retry_count, actor_type, actor_id, trace_id FROM outbox_event "
             + "WHERE status = 'PENDING' AND next_retry_at <= ? "
             + "AND (claim_expires_at IS NULL OR claim_expires_at < ?) "
             + "ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED";
@@ -111,11 +125,11 @@ public class OutboxDispatcherService {
     /**
      * 领取一批到期事件：FOR UPDATE SKIP LOCKED + 过期租约回收 + 每事件签发唯一领取凭证。
      *
-     * <p>候选锁定与领取标记在单个事务内原子完成（见类注释）；返回记录携带 tenant/header/bizVersion 上下文
-     * 与各自领取凭证。
+     * <p>候选锁定与领取标记在单个事务内原子完成（见类注释）；返回记录携带完整事件合同上下文与各自领取凭证。
+     * 包内可见：public 投递入口是 {@link #dispatchOnce}（其无事务守卫不可绕过）。
      */
-    public List<OutboxEventRecord> claim(String dispatcherName, String instanceId,
-                                         long leaseSeconds, int maxEvents) {
+    List<OutboxEventRecord> claim(String dispatcherName, String instanceId,
+                                  long leaseSeconds, int maxEvents) {
         String claimedBy = instanceId + "@" + dispatcherName;
         return claimTemplate.execute(status -> {
             Timestamp now = currentTimestamp();
@@ -132,14 +146,14 @@ public class OutboxDispatcherService {
     }
 
     /** 投递成功确认：仅当前凭证可确认，返回 false 表示凭证已过期（事件已被重领，本轮确认丢失，待新执行者重投）。 */
-    public boolean complete(long eventId, String claimToken) {
+    boolean complete(long eventId, String claimToken) {
         return jdbcTemplate.update(COMPLETE_SQL, currentTimestamp(), eventId, claimToken) == 1;
     }
 
     /** 投递失败登记：推进退避（达上限转 DEAD）并释放租约；返回 false 表示凭证已过期（不得推进新领取）。 */
-    public boolean fail(long eventId, String claimToken, String error, long backoffSeconds) {
+    boolean fail(long eventId, String claimToken, String error, long backoffSeconds) {
         Timestamp now = currentTimestamp();
-        return jdbcTemplate.update(FAIL_SQL, error, plusSeconds(now, backoffSeconds),
+        return jdbcTemplate.update(FAIL_SQL, sanitizeError(error), plusSeconds(now, backoffSeconds),
                 MAX_RETRY_BEFORE_DEAD, eventId, claimToken) == 1;
     }
 
@@ -160,16 +174,18 @@ public class OutboxDispatcherService {
         String claimedBy = instanceId + "@" + dispatcherName;
         List<OutboxEventRecord> events = claim(dispatcherName, instanceId, leaseSeconds, maxEvents);
         for (OutboxEventRecord event : events) {
-            OutboxEventSink sink = sinks.stream()
-                    .filter(s -> s.supports(event.getEventType())).findFirst().orElse(null);
-            if (sink == null) {
-                log.warn("[dispatchOnce][事件 {}({}) 无 Sink 声明支持，按失败退避进入可见失败]",
-                        event.getEventId(), event.getEventType());
-                fail(event.getEventId(), event.getClaimToken(), "NO_SINK_SUPPORTS_EVENT_TYPE", backoffSeconds);
-                continue;
-            }
+            // 逐事件异常隔离：Sink 选择/投递的任何异常只推进该事件的失败退避，不中断本批其余事件
             try {
-                sink.deliver(event);
+                OutboxEventSink sink = sinks.stream()
+                        .filter(s -> s.supports(event.getEventType())).findFirst().orElse(null);
+                if (sink == null) {
+                    log.warn("[dispatchOnce][事件 {}({}) 无 Sink 声明支持，按失败退避进入可见失败]",
+                            event.getEventId(), event.getEventType());
+                    fail(event.getEventId(), event.getClaimToken(), "NO_SINK_SUPPORTS_EVENT_TYPE", backoffSeconds);
+                    continue;
+                }
+                // 投递在事件自身租户上下文内执行（投递前后恢复调用线程上下文，杜绝跨租户串用）
+                deliverInTenantContext(event, sink);
                 if (!complete(event.getEventId(), event.getClaimToken())) {
                     // 确认丢失：领取期间租约过期已被重领（新凭证生效）。本轮投递已发生，at-least-once 合同
                     // 要求 Sink 幂等去重；旧领取不能覆盖新状态
@@ -177,19 +193,51 @@ public class OutboxDispatcherService {
                             event.getEventId());
                 }
             } catch (Exception e) {
-                log.warn("[dispatchOnce][事件 {} 投递失败: {}]", event.getEventId(), e.getMessage());
+                log.warn("[dispatchOnce][事件 {} 投递失败: {}]", event.getEventId(), sanitizeError(e.getMessage()));
                 fail(event.getEventId(), event.getClaimToken(), e.getMessage(), backoffSeconds);
             }
         }
         return events.size();
     }
 
-    /** 候选行 → 领取记录（claimedBy/claimToken 由本次领取按事件签发，经同事务标记回填落库）。 */
+    /** 在事件租户上下文内投递（{@link TenantUtils#execute} finally 恢复调用线程原上下文）；checked 异常经桥接抛出。 */
+    private void deliverInTenantContext(OutboxEventRecord event, OutboxEventSink sink) throws Exception {
+        Exception[] holder = new Exception[1];
+        TenantUtils.execute(event.getTenantId(), () -> {
+            try {
+                sink.deliver(event);
+            } catch (Exception e) {
+                holder[0] = e;
+            }
+        });
+        if (holder[0] != null) {
+            throw holder[0];
+        }
+    }
+
+    /** 候选行 → 领取记录（完整事件合同 + 本次领取签发的 claimedBy/claimToken，经同事务标记回填落库）。 */
     private OutboxEventRecord mapCandidate(ResultSet rs, String claimedBy, String claimToken) throws SQLException {
         return new OutboxEventRecord(
                 rs.getLong("id"), rs.getString("event_type"), rs.getString("biz_type"), rs.getString("biz_id"),
                 rs.getString("biz_version"), rs.getString("payload"), rs.getString("headers"),
-                rs.getLong("tenant_id"), rs.getInt("retry_count"), claimedBy, claimToken);
+                rs.getLong("tenant_id"), rs.getInt("retry_count"),
+                rs.getString("actor_type"), rs.getString("actor_id"), rs.getString("trace_id"),
+                claimedBy, claimToken);
+    }
+
+    /**
+     * 失败原因净化（循 ZS-AUDIT-002 脱敏惯例）：异常消息可能携带凭据/签名 URL/响应正文，
+     * 以单键 JSON 经 {@link LogSanitizeUtils#sanitizeJson} 净化后限长落 {@code last_error} 与日志；
+     * 净化失败只留占位符，不落原文。
+     */
+    private String sanitizeError(String rawMessage) {
+        String message = rawMessage == null ? "unknown" : rawMessage;
+        try {
+            String json = LogSanitizeUtils.sanitizeJson(JsonUtils.toJsonString(Map.of("error", message)));
+            return json.length() > MAX_ERROR_LENGTH ? json.substring(0, MAX_ERROR_LENGTH) : json;
+        } catch (Exception e) {
+            return "{\"error\":\"(异常消息脱敏失败已省略)\"}";
+        }
     }
 
     private static Timestamp currentTimestamp() {

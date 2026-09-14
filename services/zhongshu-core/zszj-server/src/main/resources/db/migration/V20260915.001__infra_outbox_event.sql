@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS outbox_event (
     trace_id varchar(64) NULL,
     create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    CONSTRAINT ck_outbox_event_status CHECK (status IN ('PENDING', 'DISPATCHED', 'DEAD'))
+    CONSTRAINT ck_outbox_event_status CHECK (status IN ('PENDING', 'DISPATCHED', 'DEAD')),
+    CONSTRAINT ck_outbox_event_retry_count CHECK (retry_count >= 0)
 );
 -- 领取路径索引：PENDING + 到期时间 + 稳定排序（SKIP LOCKED 跳过被锁行后按 id 有界领取）
 CREATE INDEX IF NOT EXISTS idx_outbox_event_claim ON outbox_event (status, next_retry_at, id);

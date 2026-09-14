@@ -142,20 +142,47 @@ public class OutboxEventPortTest extends BaseDbUnitTest {
         assertEquals(0, countOutbox(), "被拒绝的写入不应落库");
     }
 
-    /** 用例 5（fail-closed 必填校验）：message/eventType/actorType 缺失即拒绝，事件不落库。 */
+    /**
+     * 用例 5（fail-closed 必填校验）：message/eventType/actorType 缺失即拒绝，事件不落库。
+     * 每个守卫失败各自独立事务验证：异常传出即回滚（codex r0 后守卫失败会标记 rollback-only，
+     * 同事务连续验证会在提交时升级为 UnexpectedRollbackException，故不再共事务）。
+     */
     @Test
     public void testAppend_missingRequiredFieldsRejected() {
-        transactionTemplate.executeWithoutResult(status -> {
-            assertEquals(OUTBOX_EVENT_FIELD_MISSING.getCode(),
-                    assertThrows(ServiceException.class, () -> eventPort.append(null)).getCode());
-            assertEquals(OUTBOX_EVENT_FIELD_MISSING.getCode(), assertThrows(ServiceException.class,
-                    () -> eventPort.append(message().eventType(null).build())).getCode());
-            assertEquals(OUTBOX_EVENT_FIELD_MISSING.getCode(), assertThrows(ServiceException.class,
-                    () -> eventPort.append(message().eventType("  ").build())).getCode());
-            assertEquals(OUTBOX_EVENT_FIELD_MISSING.getCode(), assertThrows(ServiceException.class,
-                    () -> eventPort.append(message().actorType(null).build())).getCode());
-        });
+        assertThrows(ServiceException.class, () -> transactionTemplate.executeWithoutResult(
+                status -> eventPort.append(null)));
+        assertThrows(ServiceException.class, () -> transactionTemplate.executeWithoutResult(
+                status -> eventPort.append(message().eventType(null).build())));
+        assertThrows(ServiceException.class, () -> transactionTemplate.executeWithoutResult(
+                status -> eventPort.append(message().eventType("  ").build())));
+        assertThrows(ServiceException.class, () -> transactionTemplate.executeWithoutResult(
+                status -> eventPort.append(message().actorType(null).build())));
         assertEquals(0, countOutbox(), "fail-closed 拒绝的事件不应落库");
+    }
+
+    /**
+     * 用例 5b（codex r0 P1）：调用方在业务事务内吞掉必填/租户守卫异常，业务仍不能提交——
+     * 守卫失败已将所参与事务标记 rollback-only，提交时升级为 UnexpectedRollbackException，
+     * 杜绝「业务提交却无事件」。
+     */
+    @Test
+    public void testAppend_swallowedGuardFailuresStillRollBackBusiness() {
+        // 吞掉缺 actorType 的守卫异常 → 事务 rollback-only → 提交抛 UnexpectedRollbackException
+        assertThrows(UnexpectedRollbackException.class, () -> transactionTemplate.executeWithoutResult(status -> {
+            assertThrows(ServiceException.class, () -> eventPort.append(message().actorType(null).build()));
+        }));
+        assertEquals(0, countOutbox());
+
+        // 吞掉缺租户上下文的守卫异常 → 同样 rollback-only
+        assertThrows(UnexpectedRollbackException.class, () -> transactionTemplate.executeWithoutResult(status -> {
+            TenantContextHolder.clear();
+            try {
+                assertThrows(ServiceException.class, () -> eventPort.append(message().build()));
+            } finally {
+                TenantContextHolder.setTenantId(1L);
+            }
+        }));
+        assertEquals(0, countOutbox());
     }
 
     /**
