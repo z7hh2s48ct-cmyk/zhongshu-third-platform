@@ -142,6 +142,14 @@
 |---|---|---|---|---|
 | ZS-FILE-001.A 技术账号/tenant 私有文件归属与授权 | `a6de4c86`（feat/file-001-a，合并 `27d7f550`） | ✅ 评审通过（r0→r2 三弧） | [codex-ZS-FILE-001.A.md](codex-ZS-FILE-001.A.md) | r0 3×P1+3×P2+P3（PRIVATE 只查租户不查归属/presigned create 冒领/S3 直链绕过授权/PUBLIC 登录后 404/迁移无归属恢复/测试未证隔离/错误码冲突）→ r2 **PASS/0 发现**。（注：V1.40 收口时漏登本索引行，2026-09-14 由 ZS-BPM-001 收口会话补登） |
 
+## B06 多端前端专项评审状态
+
+> 新一轮评审：B06「多端前端」批次（区别于上方 B03 接口与安全链路、B04 文件专项——这里审的是 admin-web / miniapp 两端前端交付代码）。评审工具、严重度定义、后续处理约定均沿用上文。ZS-CLIENT-002.A 为该批次首份完成的 codex 评审、也是首个纯移动端（miniapp）路由授权守卫评审；因 codex `read-only` sandbox 无法建临时文件跑 Vitest，四弧均改用**直接 node transpile 内存复现**每条判定（各轮 stdout 附 `{"route":...,"allowed":...}` 复现证据），单测通过性以本机 vitest 75/75 为准，循 ZS-CLIENT-003 移动域先例不另存 raw。
+
+| 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
+|---|---|---|---|---|---|
+| ZS-CLIENT-002.A 移动端服务端授权导航注册表与直达页守卫 | `8b5ac0c0`（feat/client-002-a，合并 `57363732`） | 6 files, +571/-1 | ✅ 评审通过（r0→r3 四弧） | [codex-ZS-CLIENT-002.A.md](codex-ZS-CLIENT-002.A.md) | codex（`gpt-6-astra`/`xhigh`/`read-only`）r0 FAIL 1×P1（未注册业务路由默认放行）+1×P2（BPM 各页权限压平为 task:query）→ 修复四级默认拒绝 + BPM_SHARED_APPROVAL_PERMISSIONS 多入口权限；r1 FAIL 1×P1（默认拒绝误伤 BPM detail/audit/create、IM contact 兄弟/跨包页）→ 修复 EXTRA_ROUTE_ACCESS 显式补登 + ancestorPrefixes 继承；r2 0×P0/P1+2×P2（P2-1 子目录拒绝被模块并集兜底覆盖→移除步骤4模块并集、步骤3命中即返回；P2-2 停用模块页空权限集放行撞 501→延后）；r3 0×P0/P1（r1-P1+r2-P2-1 双归零）+2×P2（后代言权限并入父作用域、共享表单动作权限被 query 覆盖→延后）达收口阀值。弧内已修 4（r0-P1/r0-P2/r1-P1/r2-P2-1）、阻塞项 0；余 3×P2 同属「前缀继承模型精度」主题（服务端 `@PreAuthorize` 为真实安全边界、客户端守卫为纵深防御 UX 层），依「后续处理约定」第 2 条延后登记 ZS-CLIENT-002.B（B08）整体处置，循 ZS-FILE-003、ZS-SEC-010 P2 延后先例。验证：vitest 75/75（router-access 39+interceptor 26+http 10）、lint/type-check/build:h5/build:mp 全绿 EXIT=0 |
+
 ## B09 技术准备先行评审状态
 
 | 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
