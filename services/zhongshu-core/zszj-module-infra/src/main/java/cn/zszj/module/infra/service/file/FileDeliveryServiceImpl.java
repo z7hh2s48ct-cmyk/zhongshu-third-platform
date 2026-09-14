@@ -12,6 +12,7 @@ import cn.zszj.module.infra.dal.dataobject.file.FileDeliveryTicketDO;
 import cn.zszj.module.infra.dal.mysql.file.FileDeliveryTicketMapper;
 import cn.zszj.module.infra.dal.mysql.file.FileMapper;
 import cn.zszj.module.infra.framework.file.core.client.FileClient;
+import cn.zszj.framework.common.biz.system.permission.PermissionCommonApi;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,9 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
     /** 票据/下载会话有效期（分钟）：与 FILE-003 上传凭证 30 分钟合同对齐。 */
     private static final int TICKET_EXPIRE_MINUTES = 30;
 
+    /** 服务端分块上限（字节）：单次取流至多 1MiB，保证在途撤权重检间隔与单块内存有界（codex r0 P2）。 */
+    private static final long MAX_CHUNK_BYTES = 1024L * 1024L;
+
     @Resource
     private FileDeliveryTicketMapper deliveryTicketMapper;
 
@@ -51,6 +55,9 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
 
     @Resource
     private FileConfigService fileConfigService;
+
+    @Resource
+    private PermissionCommonApi permissionCommonApi;
 
     // ========== 签发 ==========
 
@@ -100,12 +107,13 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
         if (FileDeliveryTicketDO.STATUS_REVOKED.equals(ticket.getStatus())) {
             throw exception(FILE_DELIVERY_TICKET_REVOKED);
         }
-        // 已兑换：同主体同登录会话幂等返回既有会话（断线重连不新建）；换登录会话重放拒绝
+        // 已兑换：同主体同登录会话幂等返回既有会话（断线重连不新建）；换登录会话重放拒绝。
+        // 幂等返回前重检（codex r0 P2）：过期与当前读授权——不向调用方返回已失效的会话
         if (FileDeliveryTicketDO.STATUS_REDEEMED.equals(ticket.getStatus())) {
             if (!StrUtil.equals(loginSession, ticket.getLoginSession())) {
                 throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
             }
-            return buildSessionResponse(ticket);
+            return returnExistingSession(ticket, loginUser);
         }
         if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
             throw exception(FILE_DELIVERY_TICKET_EXPIRED);
@@ -134,12 +142,12 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
                 .eq(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_WAITING)
                 .gt(FileDeliveryTicketDO::getExpiresTime, now));
         if (affected == 0) {
-            // 并发竞态：重读核对——同主体同登录会话已兑换则幂等返回，其余拒绝（不新建会话）
+            // 并发竞态：重读核对——同主体同登录会话已兑换则幂等返回（同样先重检），其余拒绝（不新建会话）
             FileDeliveryTicketDO current = deliveryTicketMapper.selectByTicketHash(ticket.getTicketHash());
             if (current != null && FileDeliveryTicketDO.STATUS_REDEEMED.equals(current.getStatus())
                     && loginUser.getId().equals(current.getOwnerUserId())
                     && StrUtil.equals(loginSession, current.getLoginSession())) {
-                return buildSessionResponse(current);
+                return returnExistingSession(current, loginUser);
             }
             throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
         }
@@ -178,8 +186,8 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
                 || !loginUser.getTenantId().equals(ticket.getTenantId())) {
             throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
         }
-        // 对象与读权限重检（每次取流均重检撤权状态）
         FileDO file = requireFile(ticket.getFileId());
+        // 读权限重检（每次取流均重检撤权状态）
         try {
             fileService.validateFileReadable(file, loginUser);
         } catch (Exception ex) {
@@ -187,26 +195,49 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
             throw exception(FILE_DELIVERY_TICKET_REVOKED);
         }
 
-        // 后端鉴权取流：按同一不可变版本读取，Range 语义 [start, endInclusive] 越界收敛到内容末尾
-        byte[] content = getFileContent(file);
-        long totalSize = content.length;
+        // Range 语义 [start, endInclusive]：先以资产元数据校验边界，并以【服务端分块上限】收敛——
+        // 客户端自选边界不得放大单块规模架空在途撤权重检（codex r0 P2）
+        long totalSize = file.getSize() != null ? file.getSize() : 0L;
         long begin = start != null ? start : 0L;
-        long end = endInclusive != null ? endInclusive : totalSize - 1;
-        if (begin < 0 || end < begin || begin >= totalSize) {
+        long requestedEnd = endInclusive != null ? endInclusive : totalSize - 1;
+        if (begin < 0 || requestedEnd < begin || begin >= totalSize) {
             throw exception(FILE_DELIVERY_SESSION_INVALID);
         }
-        end = Math.min(end, totalSize - 1);
+        long end = Math.min(requestedEnd, Math.min(begin + MAX_CHUNK_BYTES - 1, totalSize - 1));
+        // 后端鉴权取流：按同一不可变版本读取。存储级真 Range 读取归 FileClient 存储适配扩展（FILE-004.B/联调），
+        // 本批次以「分块上限 × 上传 max-size 合同」保证单次读取与授权检查间隔有界
+        byte[] content = getFileContent(file);
+        int from = (int) begin;
+        int to = (int) Math.min(end, content.length - 1L);
+        if (from > to) {
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
         FileDeliveryChunkRespVO respVO = new FileDeliveryChunkRespVO();
-        respVO.setContent(Arrays.copyOfRange(content, (int) begin, (int) (end + 1)));
-        respVO.setTotalSize(totalSize);
-        respVO.setLast(end >= totalSize - 1);
+        respVO.setContent(Arrays.copyOfRange(content, from, to + 1));
+        respVO.setTotalSize((long) content.length);
+        respVO.setLast(to >= content.length - 1);
         return respVO;
     }
 
     // ========== 撤权 ==========
 
     @Override
-    public void revokeDelivery(String deliverySessionId) {
+    public void revokeDelivery(String deliverySessionId, LoginUser loginUser) {
+        requireLoginUser(loginUser);
+        FileDeliveryTicketDO ticket = deliveryTicketMapper.selectByDeliverySessionId(deliverySessionId);
+        if (ticket == null) {
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
+        }
+        // 撤权授权（codex r0 P1）：本人（owner·tenant 匹配）或同租户管理员（infra:file:query）——
+        // 表为 @TenantIgnore 全局表，必须显式校验，防止仅凭他人会话 ID（含跨租户）撤权
+        boolean ownerMatched = loginUser.getId().equals(ticket.getOwnerUserId())
+                && loginUser.getTenantId().equals(ticket.getTenantId());
+        boolean managerMatched = !ownerMatched
+                && loginUser.getTenantId().equals(ticket.getTenantId())
+                && hasQueryPermission(loginUser);
+        if (!ownerMatched && !managerMatched) {
+            throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
         deliveryTicketMapper.update(null, new LambdaUpdateWrapper<FileDeliveryTicketDO>()
                 .set(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_REVOKED)
                 .eq(FileDeliveryTicketDO::getDeliverySessionId, deliverySessionId)
@@ -218,6 +249,18 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
     private void requireLoginUser(LoginUser loginUser) {
         if (loginUser == null || loginUser.getId() == null || loginUser.getTenantId() == null) {
             throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+    }
+
+    /**
+     * 管理面权限判定（与 @ss.hasPermission 同源 PermissionCommonApi）；系统异常保守拒绝。
+     */
+    private boolean hasQueryPermission(LoginUser loginUser) {
+        try {
+            return permissionCommonApi.hasAnyPermissions(loginUser.getId(), "infra:file:query");
+        } catch (Exception ex) {
+            log.warn("[hasQueryPermission][用户({}) 权限查询失败，保守拒绝]", loginUser.getId(), ex);
+            return false;
         }
     }
 
@@ -253,6 +296,24 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
         respVO.setDeliverySessionId(ticket.getDeliverySessionId());
         respVO.setTotalSize(file.getSize());
         return respVO;
+    }
+
+    /**
+     * 幂等返回既有下载会话前的重检（codex r0 P2）：已过期或当前读授权已回收时，
+     * 不向调用方返回「看似有效」的会话。
+     */
+    private FileDeliverySessionRespVO returnExistingSession(FileDeliveryTicketDO ticket, LoginUser loginUser) {
+        if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
+            throw exception(FILE_DELIVERY_TICKET_EXPIRED);
+        }
+        FileDO file = requireFile(ticket.getFileId());
+        try {
+            fileService.validateFileReadable(file, loginUser);
+        } catch (Exception ex) {
+            log.warn("[returnExistingSession][票据({}) 读权限已回收，按撤权拒绝 file({})]", ticket.getId(), file.getId(), ex);
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
+        return buildSessionResponse(ticket);
     }
 
 }

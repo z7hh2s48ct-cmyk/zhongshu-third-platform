@@ -225,7 +225,8 @@ public class FileDeliveryTicketTest extends BaseDbUnitTest {
         LoginUser owner = user(101L, 1L);
         FileDeliverySessionRespVO session = issueAndRedeem(file, owner, "sess-101", "download");
 
-        deliveryService.revokeDelivery(session.getDeliverySessionId());
+        // 撤权（本人）：owner·tenant 匹配（codex r0 P1：撤权须授权，仅凭会话 ID 不得撤他人会话）
+        deliveryService.revokeDelivery(session.getDeliverySessionId(), owner);
 
         ServiceException ex = assertThrows(ServiceException.class, () -> deliveryService.readDeliveryChunk(
                 session.getDeliverySessionId(), 0L, 99L, owner, "sess-101"));
@@ -287,8 +288,8 @@ public class FileDeliveryTicketTest extends BaseDbUnitTest {
                 session.getDeliverySessionId(), 0L, 99L, owner, "sess-101");
         assertArrayEquals(slice(content, 0, 99), c1.getContent());
 
-        // 在途撤权
-        deliveryService.revokeDelivery(session.getDeliverySessionId());
+        // 在途撤权（本人）
+        deliveryService.revokeDelivery(session.getDeliverySessionId(), owner);
 
         // 后续分块必须被重检拦截，停止输出
         ServiceException ex = assertThrows(ServiceException.class, () -> deliveryService.readDeliveryChunk(

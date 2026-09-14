@@ -60,8 +60,12 @@ public interface FileDeliveryService {
     /**
      * 撤权：终止下载会话（在途传输的后续分块将被重检拦截）。
      *
+     * 授权：本人（owner·tenant 匹配）或同租户管理员（infra:file:query）——
+     * 仅凭他人/跨租户的 deliverySessionId 不得撤权。
+     *
      * @param deliverySessionId 下载会话 ID
+     * @param loginUser         操作主体
      */
-    void revokeDelivery(String deliverySessionId);
+    void revokeDelivery(String deliverySessionId, LoginUser loginUser);
 
 }
