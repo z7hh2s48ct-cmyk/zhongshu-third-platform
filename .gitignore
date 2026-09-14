@@ -40,5 +40,10 @@ dist-prod/
 tools/
 
 # 步骤⑤ git worktree 并行编排：在工作区内建的隔离树容器（--wt-root <repo>/.wt）。
-# 各 worktree 内容独立跟踪，容器目录须忽略，以维持「主树 status 仅 outputs/ 未跟踪」的隔离不变量。
+# 各 worktree 内容独立跟踪，容器目录须忽略，以维持「主树 status 干净」的隔离不变量。
 .wt/
+
+# outputs/ 工作痕迹整体隔离：临时日志（*.log）、codex 原始评审 JSON/TXT、
+# 一次性 patch_*.py、review-* 隔离副本、任务运行时报告与 3D 模型资产等
+# 均属于本地工作产物，不入库；权威评审处置文档归档路径为 docs/reviews/。
+outputs/
