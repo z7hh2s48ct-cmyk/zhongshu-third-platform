@@ -20,8 +20,13 @@ import cn.zszj.module.infra.framework.file.config.FileProperties;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePageReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePresignedUrlRespVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCompleteReqVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateReqVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO;
 import cn.zszj.module.infra.dal.dataobject.file.FileDO;
+import cn.zszj.module.infra.dal.dataobject.file.FileUploadCredentialDO;
 import cn.zszj.module.infra.dal.mysql.file.FileMapper;
+import cn.zszj.module.infra.dal.mysql.file.FileUploadCredentialMapper;
 import cn.zszj.module.infra.framework.file.core.client.FileClient;
 import cn.zszj.module.infra.framework.file.core.utils.FilePathUtils;
 import cn.zszj.module.infra.framework.file.core.utils.FileTypeUtils;
@@ -32,12 +37,21 @@ import org.springframework.security.access.AccessDeniedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
 import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PRESIGN_NOT_SUPPORTED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_NOT_EXISTS;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_EXPIRED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_ALREADY_USED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_FORBIDDEN;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_TEMP_EMPTY;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_TEMP_SIZE_MISMATCH;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_TEMP_HASH_MISMATCH;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DANGEROUS_CONTENT;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CONCURRENT_LIMIT;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PUBLIC_TYPE_NOT_ALLOWED;
@@ -81,6 +95,8 @@ public class FileServiceImpl implements FileService {
     private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
     @Resource
     private cn.zszj.module.infra.framework.file.config.FileProperties fileProperties;
+    @Resource
+    private FileUploadCredentialMapper fileUploadCredentialMapper;
 
     /**
      * ZS-FILE-002 codex r0 P2：在途上传许可（批量/内存占用预算）。包级可见便于测试注入许可。
@@ -463,12 +479,163 @@ public class FileServiceImpl implements FileService {
     /**
      * ZS-FILE-002：危险扩展名隔离——按最终扩展名命中黑名单即拒绝上传。
      */
+    /**
+     * ZS-FILE-003：凭证创建时声明 scope 为 PUBLIC 的类型白名单校验
+     */
+    private void validatePublicScopeWhitelist(String scope, String contentType) {
+        if (FileScopeEnum.PUBLIC.getScope().equals(scope)
+                && CollUtil.isNotEmpty(fileProperties.getPublicAllowedTypes())
+                && fileProperties.getPublicAllowedTypes().stream()
+                .noneMatch(allowed -> contentType != null && contentType.equalsIgnoreCase(allowed))) {
+            throw exception(FILE_PUBLIC_TYPE_NOT_ALLOWED, contentType);
+        }
+    }
+
     private void validateDangerExtension(String name) {
         String ext = StrUtil.emptyIfNull(FileUtil.extName(name)).toLowerCase();
         if (StrUtil.isNotEmpty(ext) && fileProperties.getDangerExtensions().stream()
                 .anyMatch(d -> d.equalsIgnoreCase(ext))) {
             throw exception(FILE_DANGEROUS_CONTENT, ext);
         }
+    }
+
+    // ========== ZS-FILE-003：预签名直传凭证与完成确认 ==========
+
+    private static final String TEMP_PATH_PREFIX = "temp/";
+    private static final long CREDENTIAL_EXPIRE_MINUTES = 30;
+
+    @Override
+    @SuppressWarnings("RedundantThrows")
+    public cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO createUploadCredential(
+            cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateReqVO reqVO) {
+        // 1. 复用 FILE-002 合同：大小限额 / 危险扩展名 / PUBLIC 白名单（按声明）
+        if (reqVO.getSize() > fileProperties.getMaxSize()) {
+            throw exception(FILE_SIZE_EXCEED, reqVO.getSize(), fileProperties.getMaxSize());
+        }
+        String name = FilePathUtils.validateFileName(reqVO.getName());
+        validateDangerExtension(name);
+        validatePublicScopeWhitelist(reqVO.getScope(), reqVO.getContentType());
+
+        // 2. master 客户端必须支持 presign——local 等禁用直传，走服务端受控上传（不降低校验）
+        FileClient client = fileConfigService.getMasterFileClient();
+        if (client == null) {
+            throw exception(FILE_PRESIGN_NOT_SUPPORTED);
+        }
+        // 3. 服务端生成临时对象键（temp/ 前缀 + UUID，主体只能写临时区，键不经过客户端）
+        String tempPath = TEMP_PATH_PREFIX + IdUtil.fastSimpleUUID() + "/" + name;
+        String uploadUrl;
+        try {
+            uploadUrl = client.presignPutUrl(tempPath);
+        } catch (UnsupportedOperationException ex) {
+            throw exception(FILE_PRESIGN_NOT_SUPPORTED);
+        }
+
+        // 4. 落凭证记录：绑定主体/租户/临时键/大小/类型/有效期
+        FileUploadCredentialDO credential = new FileUploadCredentialDO()
+                .setCredentialToken(IdUtil.fastSimpleUUID())
+                .setConfigId(client.getId())
+                .setOwnerUserId(currentUserOrZero())
+                .setPurpose(reqVO.getPurpose())
+                .setTempPath(tempPath)
+                .setFileName(name)
+                .setContentType(reqVO.getContentType())
+                .setDeclaredSize(reqVO.getSize())
+                .setScope(StrUtil.blankToDefault(reqVO.getScope(), FileScopeEnum.PRIVATE.getScope()))
+                .setStatus(FileUploadCredentialDO.STATUS_WAITING_UPLOAD)
+                .setExpiresTime(LocalDateTime.now().plusMinutes(CREDENTIAL_EXPIRE_MINUTES));
+        fileUploadCredentialMapper.insert(credential);
+
+        cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO respVO =
+                new cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO()
+                        .setCredentialToken(credential.getCredentialToken())
+                        .setUploadUrl(uploadUrl)
+                        .setTempPath(tempPath)
+                        .setExpiresTime(credential.getExpiresTime());
+        return respVO;
+    }
+
+    @Override
+    @SuppressWarnings("SneakyThrows")
+    public Long completeUpload(cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCompleteReqVO reqVO) throws Exception {
+        // 1. 读凭证（不信任客户端 configId/path/url——一切以凭证记录为准）
+        FileUploadCredentialDO credential = fileUploadCredentialMapper.selectByToken(reqVO.getCredentialToken());
+        if (credential == null) {
+            throw exception(FILE_UPLOAD_CREDENTIAL_NOT_EXISTS);
+        }
+        // 2. 归属校验：凭证绑定 owner>0 时必须与当前登录主体匹配（匿名/无主体/他人凭证均拒绝）
+        Long loginUserId = currentUserOrZero();
+        if (credential.getOwnerUserId() != null && credential.getOwnerUserId() > 0
+                && !Objects.equals(credential.getOwnerUserId(), loginUserId)) {
+            throw exception(FILE_UPLOAD_CREDENTIAL_FORBIDDEN);
+        }
+        // 3. 状态预检：已完成凭证快速失败（避免进入临时对象读取后才报错），并发下仍由步骤 8 的
+        //    CAS 原子迁移兜底（两请求同时通过预检时仅一个 affected=1）
+        if (FileUploadCredentialDO.STATUS_COMPLETED.equals(credential.getStatus())) {
+            throw exception(FILE_UPLOAD_CREDENTIAL_ALREADY_USED);
+        }
+        // 4. 过期校验
+        if (LocalDateTime.now().isAfter(credential.getExpiresTime())) {
+            throw exception(FILE_UPLOAD_CREDENTIAL_EXPIRED);
+        }
+
+        // 4. 读取临时对象内容（快照进内存）——空上传/未上传拒绝
+        FileClient client = fileConfigService.getFileClient(credential.getConfigId());
+        if (client == null) {
+            throw exception(FILE_PRESIGN_NOT_SUPPORTED);
+        }
+        byte[] content = client.getContent(credential.getTempPath());
+        if (content == null || content.length == 0) {
+            throw exception(FILE_UPLOAD_TEMP_EMPTY);
+        }
+        // 5. 实际大小与凭证声明一致性校验
+        if (content.length != credential.getDeclaredSize()) {
+            throw exception(FILE_UPLOAD_TEMP_SIZE_MISMATCH, content.length, credential.getDeclaredSize());
+        }
+        // 6. FILE-002 硬化复验：服务端按实际内容探测类型 + 伪装/危险扩展校验（不信任凭证声明的类型）
+        String detectedType = FileTypeUtils.getMineType(content);
+        validateDangerExtension(credential.getFileName());
+        validateExtensionConsistency(credential.getFileName(), detectedType);
+
+        // 7. 发布为正式对象：正式键服务端生成（与临时键物理隔离），写入即锁定快照——
+        //    PUT URL 之后重用只会改写临时键，不影响已发布的正式对象
+        String finalName = credential.getFileName();
+        String path = generateUploadPath(finalName, null);
+        String url = client.upload(content, path, detectedType);
+
+        // 8. 核验正式对象散列与快照一致（复制/写入不可靠时回滚）
+        byte[] published = client.getContent(path);
+        if (published == null
+                || !Objects.equals(DigestUtil.sha256Hex(content), DigestUtil.sha256Hex(published))) {
+            throw exception(FILE_UPLOAD_TEMP_HASH_MISMATCH);
+        }
+
+        // 9. 落正式文件记录（FILE-001.A 归属语义：owner/tenant/PRIVATE-白名单 scope）
+        FileDO file = new FileDO().setConfigId(credential.getConfigId())
+                .setName(credential.getFileName()).setPath(path).setUrl(url)
+                .setType(detectedType).setSize((long) content.length)
+                .setOwnerUserId(credential.getOwnerUserId())
+                .setScope(credential.getScope());
+        file.setTenantId(TenantContextHolder.getTenantId());
+        fileMapper.insert(file);
+
+        // 10. 凭证一次性原子迁移（并发/重复确认仅一个成功），清理临时对象
+        int updated = fileUploadCredentialMapper.updateStatusToCompletedIfWaiting(credential.getId(), file.getId());
+        if (updated == 0) {
+            // 并发确认：另一请求已完成，本请求视为重复——回滚本次发布（删除正式记录与对象），不生成重复资产
+            fileMapper.deleteById(file.getId());
+            try {
+                client.delete(path);
+            } catch (Exception cleanupEx) {
+                log.warn("[completeUpload][清理并发重复发布对象({}) 失败]", path, cleanupEx);
+            }
+            throw exception(FILE_UPLOAD_CREDENTIAL_ALREADY_USED);
+        }
+        try {
+            client.delete(credential.getTempPath());
+        } catch (Exception cleanupEx) {
+            log.warn("[completeUpload][清理临时对象({}) 失败，不阻塞返回]", credential.getTempPath(), cleanupEx);
+        }
+        return file.getId();
     }
 
     // ZS-FILE-002 类尾占位

@@ -130,6 +130,22 @@ public class FileController {
         writeAttachment(response, filename, content);
     }
 
+    @PostMapping("/upload-credential")
+    @Operation(summary = "创建预签名直传凭证", description = "ZS-FILE-003：凭证绑定主体/临时键/有效期，凭据仅可写临时区")
+    @PreAuthorize("@ss.hasPermission('infra:file:create')")
+    public CommonResult<cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO> createUploadCredential(
+            @Valid @RequestBody cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateReqVO reqVO) {
+        return success(fileService.createUploadCredential(reqVO));
+    }
+
+    @PostMapping("/upload-complete")
+    @Operation(summary = "直传完成确认", description = "ZS-FILE-003：服务端核验临时对象后发布正式资产（一次性确认）")
+    @PreAuthorize("@ss.hasPermission('infra:file:create')")
+    public CommonResult<Long> completeUpload(
+            @Valid @RequestBody cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCompleteReqVO reqVO) throws Exception {
+        return success(fileService.completeUpload(reqVO));
+    }
+
     @PutMapping("/update-scope")
     @Operation(summary = "调整文件可见范围", description = "ZS-FILE-001.A：PUBLIC=公开素材（匿名可读）；PRIVATE=私有附件（默认）")
     @Parameter(name = "id", description = "编号", required = true)

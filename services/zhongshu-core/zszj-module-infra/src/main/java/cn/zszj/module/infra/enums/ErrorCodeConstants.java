@@ -45,6 +45,15 @@ public interface ErrorCodeConstants {
     ErrorCode FILE_TYPE_MISMATCH = new ErrorCode(1_001_003_007, "文件内容与扩展名不符：探测类型（{}）与扩展名（{}）不一致，疑似伪装");
     ErrorCode FILE_DANGEROUS_CONTENT = new ErrorCode(1_001_003_008, "文件扩展名（{}）属于危险类型，禁止上传");
     ErrorCode FILE_UPLOAD_CONCURRENT_LIMIT = new ErrorCode(1_001_003_010, "上传并发已达上限，请稍后重试");
+    // ZS-FILE-003：预签名直传凭证
+    ErrorCode FILE_UPLOAD_CREDENTIAL_NOT_EXISTS = new ErrorCode(1_001_003_020, "上传凭证不存在或已失效");
+    ErrorCode FILE_UPLOAD_CREDENTIAL_EXPIRED = new ErrorCode(1_001_003_021, "上传凭证已过期");
+    ErrorCode FILE_UPLOAD_CREDENTIAL_ALREADY_USED = new ErrorCode(1_001_003_022, "上传凭证已使用，不能重复确认");
+    ErrorCode FILE_UPLOAD_CREDENTIAL_FORBIDDEN = new ErrorCode(1_001_003_023, "上传凭证不属于当前用户");
+    ErrorCode FILE_UPLOAD_TEMP_EMPTY = new ErrorCode(1_001_003_024, "临时对象不存在或为空上传");
+    ErrorCode FILE_UPLOAD_TEMP_SIZE_MISMATCH = new ErrorCode(1_001_003_025, "实际上传大小（{}）与凭证声明（{}）不一致");
+    ErrorCode FILE_UPLOAD_TEMP_HASH_MISMATCH = new ErrorCode(1_001_003_026, "正式资产散列核验失败，已回滚");
+    ErrorCode FILE_PRESIGN_NOT_SUPPORTED = new ErrorCode(1_001_003_027, "当前存储不支持预签名直传，请使用服务端上传");
     ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");
