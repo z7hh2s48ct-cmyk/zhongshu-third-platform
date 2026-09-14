@@ -3,6 +3,7 @@ package cn.zszj.module.system.framework.audit.core;
 import cn.zszj.framework.common.biz.system.audit.AuditEventMessage;
 import cn.zszj.framework.common.biz.system.audit.AuditPort;
 import cn.zszj.framework.common.util.json.JsonUtils;
+import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -198,7 +199,9 @@ public class JdbcAuditPort implements AuditPort {
             return null;
         }
         try {
-            return JsonUtils.toJsonString(detail);
+            // ZS-AUDIT-002：写时脱敏——审计历史不可改写，敏感字段（凭据/密码等）必须在落库前净化，
+            // 复用 ZS-SEC-007 LogSanitizeUtils 同一规则集（键归一模糊匹配 + 递归掩码 + 失败只记摘要）
+            return LogSanitizeUtils.sanitizeJson(JsonUtils.toJsonString(detail));
         } catch (Exception e) {
             log.error("[serializeDetail] 审计明细序列化失败 detail={}", detail, e);
             throw exception(AUDIT_EVENT_DETAIL_SERIALIZE_FAILED);

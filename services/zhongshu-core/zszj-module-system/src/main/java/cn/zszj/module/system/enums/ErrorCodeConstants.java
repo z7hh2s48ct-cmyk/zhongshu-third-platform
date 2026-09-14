@@ -102,6 +102,7 @@ public interface ErrorCodeConstants {
     ErrorCode AUDIT_EVENT_FIELD_MISSING = new ErrorCode(1_002_010_000, "审计事件缺少必填字段({})，拒绝写入");
     ErrorCode AUDIT_EVENT_DETAIL_SERIALIZE_FAILED = new ErrorCode(1_002_010_001, "审计事件明细序列化失败");
     ErrorCode AUDIT_EVENT_WRITE_FAILED = new ErrorCode(1_002_010_002, "审计事件写入失败");
+    ErrorCode AUDIT_EVENT_CLEAN_FAILED = new ErrorCode(1_002_010_003, "审计事件清理失败：{}");
 
     // ========== 短信渠道 1-002-011-000 ==========
     ErrorCode SMS_CHANNEL_NOT_EXISTS = new ErrorCode(1_002_011_000, "短信渠道不存在");
