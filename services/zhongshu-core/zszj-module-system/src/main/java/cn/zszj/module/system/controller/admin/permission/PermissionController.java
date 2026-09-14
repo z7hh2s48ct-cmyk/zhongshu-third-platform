@@ -37,7 +37,7 @@ public class PermissionController {
     @Operation(summary = "赋予角色菜单")
     @PreAuthorize("@ss.hasPermission('system:permission:assign-role-menu')")
     public CommonResult<Boolean> assignRoleMenu(@Validated @RequestBody PermissionAssignRoleMenuReqVO reqVO) {
-        // ZS-CFG-003.B GAP-3：移除上游 yudao 遗留的 handleTenantMenu 套餐静默过滤（removeIf 丢弃套餐外菜单）。
+        // ZS-CFG-003.B GAP-3：移除上游项目遗留的 handleTenantMenu 套餐静默过滤（removeIf 丢弃套餐外菜单）。
         // 静默过滤会在服务端校验之前吞掉越界菜单，把「越界显式拒绝（TENANT_PACKAGE_MENU_EXCEED，见
         // PermissionServiceImpl#validateMenusInTenantPackage）」降级为「部分成功」——请求 code=0 但越界菜单
         // 未写入，违反 ZS-CFG-003.B「套餐回收后直调拒绝」的安全合同（SYS-001.A 真实 HTTP 回归 SYS-ROLE-N1 实证）。

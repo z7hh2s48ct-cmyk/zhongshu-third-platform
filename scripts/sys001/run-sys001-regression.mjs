@@ -389,7 +389,7 @@ const report = {
     {
       id: 'GAP-3 真实 PG 上 assign-role-menu 越界既不拒绝也不落库（已修复——根因并非 TypeHandler/依赖）',
       severity: '已修复：根因为控制器套餐静默过滤；SYS-ROLE-N1 已转正式断言，真实 PG 复验 49/49',
-      phenomenon: '【根因更正】初判「JacksonTypeHandler 泛型擦除 × MP 3.5.17」不成立：真相是 PermissionController.assignRoleMenu 的上游 yudao 遗留 handleTenantMenu 在服务端校验前静默 removeIf 套餐外菜单，把「越界显式拒绝（TENANT_PACKAGE_MENU_EXCEED 1002016005）」降级为「部分成功」（code=0、无 INSERT、越界行=0）；H2 服务层测试直调 service 不经控制器，故「同路径守卫通过」属测试层级差异而非数据库差异。修复=删除控制器静默过滤（失效 TenantService 注入一并清理）+ 同提交补菜单存在性显式校验（MENU_NOT_EXISTS，堵系统租户伪造 ID 悬空记录，codex r0 P2）。',
+      phenomenon: '【根因更正】初判「JacksonTypeHandler 泛型擦除 × MP 3.5.17」不成立：真相是 PermissionController.assignRoleMenu 的上游项目遗留 handleTenantMenu 在服务端校验前静默 removeIf 套餐外菜单，把「越界显式拒绝（TENANT_PACKAGE_MENU_EXCEED 1002016005）」降级为「部分成功」（code=0、无 INSERT、越界行=0）；H2 服务层测试直调 service 不经控制器，故「同路径守卫通过」属测试层级差异而非数据库差异。修复=删除控制器静默过滤（失效 TenantService 注入一并清理）+ 同提交补菜单存在性显式校验（MENU_NOT_EXISTS，堵系统租户伪造 ID 悬空记录，codex r0 P2）。',
       attribution: '修复归口 ZS-CFG-003.B（GAP-3 控制器修复提交）；ZS-DB-001 依赖升级不再为本项所需（仅余 GAP-1 根因修复诉求）；SYS-ROLE-N1 已摘出 REGISTERED_GAPS 转正式安全断言。',
     },
     {
