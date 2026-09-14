@@ -4,6 +4,9 @@ import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePageReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePresignedUrlRespVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCompleteReqVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateReqVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO;
 import cn.zszj.module.infra.dal.dataobject.file.FileDO;
 import jakarta.validation.constraints.NotEmpty;
 
@@ -110,4 +113,16 @@ public interface FileService {
      * ZS-FILE-001.A（codex r0 P2）：下载场景跨租户定位文件记录（PUBLIC 对任意来源同址可用）
      */
     FileDO getFileByConfigIdAndPathIgnoreTenant(Long configId, String path);
+
+    /**
+     * ZS-FILE-003：创建预签名直传凭证——绑定主体/租户/临时键/大小/类型/有效期；
+     * 平台凭据只允许写临时区。local 等不支持 presign 的存储抛 FILE_PRESIGN_NOT_SUPPORTED。
+     */
+    FileUploadCredentialCreateRespVO createUploadCredential(FileUploadCredentialCreateReqVO reqVO);
+
+    /**
+     * ZS-FILE-003：完成确认——一次性原子迁移凭证状态，服务端读取临时对象校验大小/散列后
+     * 发布为正式资产并核验最终散列；不信任客户端 URL/configId/校验声明。
+     */
+    Long completeUpload(FileUploadCredentialCompleteReqVO reqVO) throws Exception;
 }

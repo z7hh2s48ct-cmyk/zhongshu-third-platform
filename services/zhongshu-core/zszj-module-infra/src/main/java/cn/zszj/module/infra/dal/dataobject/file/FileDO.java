@@ -63,5 +63,9 @@ public class FileDO extends TenantBaseDO {
      * 文件大小
      */
     private Long size;
+    /**
+     * 内容 SHA-256 摘要（ZS-FILE-003：下载内容与入库散列一致的验收基准）
+     */
+    private String fileHash;
 
 }

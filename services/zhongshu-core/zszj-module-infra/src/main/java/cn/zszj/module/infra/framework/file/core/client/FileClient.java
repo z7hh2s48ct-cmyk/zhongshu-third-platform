@@ -33,6 +33,24 @@ public interface FileClient {
     void delete(String path) throws Exception;
 
     /**
+     * ZS-FILE-003 codex r1 P1：有界读取——内容超过 maxBytes 立即抛出（拒绝完成确认），
+     * 保证超限对象不会被发布为正式资产。默认实现读后即检；各客户端可覆写为真流式截断。
+     */
+    default byte[] getContentBounded(String path, long maxBytes) {
+        try {
+            byte[] content = getContent(path);
+            if (content != null && content.length > maxBytes) {
+                throw new IllegalStateException("temp object exceeds limit: " + content.length);
+            }
+            return content;
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("bounded read failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * 获得文件的内容
      *
      * @param path 相对路径
@@ -50,6 +68,14 @@ public interface FileClient {
      */
     default String presignPutUrl(String path) {
         throw new UnsupportedOperationException("不支持的操作");
+    }
+
+    /**
+     * ZS-FILE-003：带有效期的预签名上传地址——凭证有效期与签名有效期共用同一截止时间。
+     * 不支持时回退到无参版本（由调用方禁用直传兜底）。
+     */
+    default String presignPutUrl(String path, Integer expirationSeconds) {
+        return presignPutUrl(path);
     }
 
     /**

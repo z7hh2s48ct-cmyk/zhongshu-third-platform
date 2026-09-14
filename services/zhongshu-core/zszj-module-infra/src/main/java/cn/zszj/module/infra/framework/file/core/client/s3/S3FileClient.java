@@ -107,10 +107,61 @@ public class S3FileClient extends AbstractFileClient<S3FileClientConfig> {
         return IoUtil.readBytes(client.getObject(getRequest));
     }
 
+    /**
+     * ZS-FILE-003 codex r2 P1：S3 真流式有界读取——先 headObject 取长度（超限即中止，不拉体），
+     * 再 getObject 流式逐块读取，累计超 maxBytes 立即中止并关闭响应，杜绝堆耗尽。
+     */
+    @Override
+    public byte[] getContentBounded(String path, long maxBytes) {
+        software.amazon.awssdk.services.s3.model.HeadObjectResponse head = client.headObject(
+                software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                        .bucket(config.getBucket()).key(path).build());
+        if (head.contentLength() > maxBytes) {
+            throw new IllegalStateException("temp object size(" + head.contentLength()
+                    + ") exceeds limit(" + maxBytes + ")");
+        }
+        try (software.amazon.awssdk.core.ResponseInputStream<software.amazon.awssdk.services.s3.model.GetObjectResponse> getObjectResponse =
+                     client.getObject(software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                             .bucket(config.getBucket()).key(path).build());
+             java.io.InputStream is = getObjectResponse) {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(
+                    (int) Math.min(head.contentLength() + 1, Integer.MAX_VALUE));
+            byte[] buf = new byte[8192];
+            long total = 0;
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                total += n;
+                if (total > maxBytes) {
+                    // codex r3 P1：超限先 abort 断流（否则 close 会继续拉完剩余响应体），再抛出
+                    if (getObjectResponse instanceof software.amazon.awssdk.core.ResponseInputStream
+                            && getObjectResponse instanceof AutoCloseable) {
+                        ((software.amazon.awssdk.core.ResponseInputStream) getObjectResponse).abort();
+                    }
+                    throw new IllegalStateException("temp object stream exceeds limit(" + maxBytes + ")");
+                }
+                bos.write(buf, 0, n);
+            }
+            return bos.toByteArray();
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("getContentBounded io error: " + ex.getMessage(), ex);
+        }
+    }
+
     @Override
     public String presignPutUrl(String path) {
+        return presignPutUrl(path, null);
+    }
+
+    /**
+     * ZS-FILE-003 codex r0 P2：带有效期的预签名上传——凭证 30 分钟过期时签名同步失效，
+     * 杜绝凭证过期但 PUT 仍有效的重写窗口。
+     */
+    @Override
+    public String presignPutUrl(String path, Integer expirationSeconds) {
+        java.time.Duration duration = expirationSeconds != null
+                ? java.time.Duration.ofSeconds(expirationSeconds) : EXPIRATION_DEFAULT;
         return presigner.presignPutObject(PutObjectPresignRequest.builder()
-                .signatureDuration(EXPIRATION_DEFAULT)
+                .signatureDuration(duration)
                 .putObjectRequest(b -> b.bucket(config.getBucket()).key(path)).build())
                 .url().toString();
     }
