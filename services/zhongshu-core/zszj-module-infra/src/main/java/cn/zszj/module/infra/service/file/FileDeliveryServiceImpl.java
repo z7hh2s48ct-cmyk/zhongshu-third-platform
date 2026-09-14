@@ -183,10 +183,20 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
             throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
         }
         // 登录会话绑定：会话标识为服务端 token 派生（SHA-256）。同主体且标识变化（令牌刷新/重登录）
-        // → 重绑定续传（codex r1 P2：令牌刷新不得中断交付）
+        // → 重绑定续传（codex r1 P2：令牌刷新不得中断交付）。
+        // codex r2 P1：仅定点更新 login_session，且条件化于「仍 REDEEMED 且未过期」——
+        // 整行 updateById 会把读取快照中的 REDEEMED 状态写回，逆转并发撤权
         if (!StrUtil.equals(loginSession, ticket.getLoginSession())) {
+            int rebound = deliveryTicketMapper.update(null, new LambdaUpdateWrapper<FileDeliveryTicketDO>()
+                    .set(FileDeliveryTicketDO::getLoginSession, loginSession)
+                    .eq(FileDeliveryTicketDO::getId, ticket.getId())
+                    .eq(FileDeliveryTicketDO::getStatus, FileDeliveryTicketDO.STATUS_REDEEMED)
+                    .gt(FileDeliveryTicketDO::getExpiresTime, LocalDateTime.now()));
+            if (rebound == 0) {
+                // 并发撤权/过期发生在读取与重绑定之间：拒绝本次取流
+                throw exception(FILE_DELIVERY_TICKET_REVOKED);
+            }
             ticket.setLoginSession(loginSession);
-            deliveryTicketMapper.updateById(ticket);
             log.debug("[readDeliveryChunk][会话({}) 登录会话重绑定（同主体令牌变更）]", deliverySessionId);
         }
         FileDO file = requireFile(ticket.getFileId());
@@ -222,6 +232,13 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
         }
         if (content == null) {
             throw exception(FILE_NOT_EXISTS);
+        }
+        // codex r2 P2：范围读取返回长度必须等于请求长度——存储/元数据不一致（对象短于记录 size）
+        // 显式失败，不得以空块或短块伪装「有效续传/完成」
+        if (content.length != readLength) {
+            log.error("[readDeliveryChunk][文件({}) 存储范围读取长度（{}）与请求（{}）不符，疑似元数据不一致]",
+                    file.getId(), content.length, readLength);
+            throw exception(FILE_DELIVERY_SESSION_INVALID);
         }
         FileDeliveryChunkRespVO respVO = new FileDeliveryChunkRespVO();
         respVO.setContent(content);
