@@ -64,13 +64,15 @@ public class ConfigChangeAuditRestoreTest extends BaseDbUnitTest {
 
         configService.updateConfig(buildUpdateReqVO(config, "http://v2", 3));
 
-        // 历史行：前后值明文（NORMAL 不脱敏）、前后版本
+        // 历史行：前后值明文（NORMAL 不脱敏）、前后版本、显式脱敏标志为 FALSE
         ConfigChangeHistoryDO history = latestHistory(config.getId());
         assertEquals(ConfigChangeHistoryDO.TYPE_UPDATE, history.getChangeType());
         assertEquals("http://v1", history.getOldValue());
         assertEquals("http://v2", history.getNewValue());
         assertEquals(3, history.getOldVersion());
         assertEquals(4, history.getNewVersion());
+        assertEquals(Boolean.FALSE, history.getOldValueRedacted());
+        assertEquals(Boolean.FALSE, history.getNewValueRedacted());
         // 审计：OBJECT_UPDATED + SUCCESS + 脱敏摘要（NORMAL 记原值摘要）
         ArgumentCaptor<AuditEventMessage> captor = ArgumentCaptor.forClass(AuditEventMessage.class);
         verify(auditPort).record(captor.capture());
@@ -91,10 +93,12 @@ public class ConfigChangeAuditRestoreTest extends BaseDbUnitTest {
 
         configService.updateConfig(buildUpdateReqVO(config, "new-secret", 1));
 
-        // 历史行只落掩码，明文不落历史（敏感旧值不写审计原文）
+        // 历史行只落掩码，明文不落历史（敏感旧值不写审计原文）；显式脱敏标志为 TRUE
         ConfigChangeHistoryDO history = latestHistory(config.getId());
         assertEquals(ConfigSensitiveClassifier.MASK_VALUE, history.getOldValue());
         assertEquals(ConfigSensitiveClassifier.MASK_VALUE, history.getNewValue());
+        assertEquals(Boolean.TRUE, history.getOldValueRedacted());
+        assertEquals(Boolean.TRUE, history.getNewValueRedacted());
         // 审计明细只装掩码摘要
         ArgumentCaptor<AuditEventMessage> captor = ArgumentCaptor.forClass(AuditEventMessage.class);
         verify(auditPort).record(captor.capture());
@@ -214,6 +218,25 @@ public class ConfigChangeAuditRestoreTest extends BaseDbUnitTest {
         assertEquals(1, configChangeHistoryMapper.selectList(
                 ConfigChangeHistoryDO::getConfigId, config.getId()).size());
         verify(auditPort, org.mockito.Mockito.times(1)).record(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void restoreConfig_normalLiteralMaskValue_restorable() {
+        // r0 P2：NORMAL 配置的字面 ****** 与脱敏哨兵同形，可恢复性以显式标志判定，不做值形推断
+        ConfigDO config = insertConfig("test.restore.literal-mask", "******", true, 1);
+        configService.updateConfig(buildUpdateReqVO(config, "changed", 1));
+        assertEquals("******", latestHistory(config.getId()).getOldValue());
+        assertEquals(Boolean.FALSE, latestHistory(config.getId()).getOldValueRedacted());
+
+        ConfigRestoreReqVO reqVO = new ConfigRestoreReqVO();
+        reqVO.setId(config.getId());
+        reqVO.setHistoryId(latestHistory(config.getId()).getId());
+        reqVO.setVersion(2);
+        reqVO.setReason("恢复 NORMAL 配置的字面 ****** 值");
+        configService.restoreConfig(reqVO);
+
+        assertEquals("******", configMapper.selectById(config.getId()).getValue());
+        assertEquals(3, configMapper.selectById(config.getId()).getVersion());
     }
 
     @Test

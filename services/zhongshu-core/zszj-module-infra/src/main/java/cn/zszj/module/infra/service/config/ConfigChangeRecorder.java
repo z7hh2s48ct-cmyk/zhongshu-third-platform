@@ -126,15 +126,20 @@ public class ConfigChangeRecorder {
     private void recordChange(String eventType, String action, ConfigDO before, ConfigDO after,
                               String changeType, Long historyId, String reason) {
         ConfigDO anchor = after != null ? after : before;
+        boolean oldRedacted = before != null && isRedacted(before);
+        boolean newRedacted = after != null && isRedacted(after);
         String oldMasked = before != null ? maskValue(before) : null;
         String newMasked = after != null ? maskValue(after) : null;
-        // 1. 变更历史（随业务事务）
+        // 1. 变更历史（随业务事务）——显式脱敏标志随值落库（r0 P2：NORMAL 字面 ****** 与哨兵同形，
+        //    可恢复性以标志判定，不做值形推断）
         ConfigChangeHistoryDO history = new ConfigChangeHistoryDO();
         history.setConfigId(anchor.getId());
         history.setConfigKey(anchor.getConfigKey());
         history.setChangeType(changeType);
         history.setOldValue(oldMasked);
+        history.setOldValueRedacted(oldRedacted);
         history.setNewValue(newMasked);
+        history.setNewValueRedacted(newRedacted);
         history.setOldVersion(before != null ? before.getVersion() : null);
         history.setNewVersion(after != null ? after.getVersion() : null);
         history.setOperatorId(resolveActorId());
@@ -188,6 +193,13 @@ public class ConfigChangeRecorder {
         return sensitiveClassifier.classify(config) == ConfigSensitiveClassifier.SensitiveLevel.NORMAL
                 ? config.getValue()
                 : ConfigSensitiveClassifier.MASK_VALUE;
+    }
+
+    /**
+     * 该配置的值是否已被脱敏（敏感级判定），供历史行的显式脱敏标志使用。
+     */
+    private boolean isRedacted(ConfigDO config) {
+        return sensitiveClassifier.classify(config) != ConfigSensitiveClassifier.SensitiveLevel.NORMAL;
     }
 
     /**

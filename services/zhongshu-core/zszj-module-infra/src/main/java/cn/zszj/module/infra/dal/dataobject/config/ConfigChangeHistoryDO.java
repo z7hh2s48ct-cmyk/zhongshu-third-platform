@@ -63,9 +63,20 @@ public class ConfigChangeHistoryDO extends BaseDO {
     private String oldValue;
 
     /**
+     * 变更前值是否脱敏（TRUE=原值敏感已掩码，不可恢复；FALSE=old_value 为字面原值）。
+     * NORMAL 配置的字面 ****** 与脱敏哨兵同形，可恢复性判定以本标志为准，不做值形推断。
+     */
+    private Boolean oldValueRedacted;
+
+    /**
      * 变更后值（秘密/敏感参数为掩码 ******；DELETE 时为 NULL）
      */
     private String newValue;
+
+    /**
+     * 变更后值是否脱敏（语义同 {@link #oldValueRedacted}）。
+     */
+    private Boolean newValueRedacted;
 
     /**
      * 变更前乐观锁版本

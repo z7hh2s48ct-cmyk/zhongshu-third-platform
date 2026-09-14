@@ -255,6 +255,8 @@ CREATE TABLE IF NOT EXISTS "infra_config_history" (
     "new_version" int,
     "operator_id" bigint,
     "reason" varchar(255),
+    "old_value_redacted" bit NOT NULL DEFAULT FALSE,
+    "new_value_redacted" bit NOT NULL DEFAULT FALSE,
     "creator" varchar(64) DEFAULT '',
     "create_time" datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updater" varchar(64) DEFAULT '',

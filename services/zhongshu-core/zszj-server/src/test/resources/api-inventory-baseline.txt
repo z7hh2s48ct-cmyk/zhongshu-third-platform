@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：327
+# 端点总数：331
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -79,6 +79,7 @@ GET|/admin-api/infra/codegen/table/page|ADMIN|PERMISSION|infra:codegen:query|inf
 GET|/admin-api/infra/config/export-excel|ADMIN|PERMISSION|infra:config:export|infra|ConfigController
 GET|/admin-api/infra/config/get-value-by-key|ADMIN|AUTHENTICATED|-|infra|ConfigController
 GET|/admin-api/infra/config/get|ADMIN|PERMISSION|infra:config:query|infra|ConfigController
+GET|/admin-api/infra/config/history/page|ADMIN|PERMISSION|infra:config:query|infra|ConfigController
 GET|/admin-api/infra/config/page|ADMIN|PERMISSION|infra:config:query|infra|ConfigController
 GET|/admin-api/infra/data-source-config/get|ADMIN|PERMISSION|infra:data-source-config:query|infra|DataSourceConfigController
 GET|/admin-api/infra/data-source-config/list|ADMIN|PERMISSION|infra:data-source-config:query|infra|DataSourceConfigController
@@ -238,6 +239,8 @@ POST|/admin-api/infra/demo03-student-erp/demo03-grade/create|ADMIN|PERMISSION|in
 POST|/admin-api/infra/demo03-student-inner/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentInnerController
 POST|/admin-api/infra/demo03-student-normal/create|ADMIN|PERMISSION|infra:demo03-student:create|infra|Demo03StudentNormalController
 POST|/admin-api/infra/file-config/create|ADMIN|PERMISSION|infra:file-config:create|infra|FileConfigController
+POST|/admin-api/infra/file/upload-complete|ADMIN|PERMISSION|infra:file:create|infra|FileController
+POST|/admin-api/infra/file/upload-credential|ADMIN|PERMISSION|infra:file:create|infra|FileController
 POST|/admin-api/infra/file/upload|ADMIN|AUTHENTICATED|-|infra|FileController
 POST|/admin-api/infra/job/create|ADMIN|PERMISSION|infra:job:create|infra|JobController
 POST|/admin-api/infra/job/sync|ADMIN|PERMISSION|infra:job:create|infra|JobController
@@ -289,6 +292,7 @@ POST|/app-api/infra/file/upload|MEMBER|AUTHENTICATED|-|infra|AppFileController
 PUT|/admin-api/infra/api-error-log/update-status|ADMIN|PERMISSION|infra:api-error-log:update-status|infra|ApiErrorLogController
 PUT|/admin-api/infra/codegen/sync-from-db|ADMIN|PERMISSION|infra:codegen:update|infra|CodegenController
 PUT|/admin-api/infra/codegen/update|ADMIN|PERMISSION|infra:codegen:update|infra|CodegenController
+PUT|/admin-api/infra/config/restore|ADMIN|PERMISSION|infra:config:update|infra|ConfigController
 PUT|/admin-api/infra/config/update|ADMIN|PERMISSION|infra:config:update|infra|ConfigController
 PUT|/admin-api/infra/data-source-config/update|ADMIN|PERMISSION|infra:data-source-config:update|infra|DataSourceConfigController
 PUT|/admin-api/infra/demo01-contact/update|ADMIN|PERMISSION|infra:demo01-contact:update|infra|Demo01ContactController

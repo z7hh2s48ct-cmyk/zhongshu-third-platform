@@ -145,9 +145,13 @@ public class ConfigServiceImpl implements ConfigService {
         if (ConfigTypeEnum.SYSTEM.getType().equals(config.getType())) {
             throw exception(CONFIG_CAN_NOT_DELETE_SYSTEM_TYPE);
         }
-        // 删除
-        configMapper.deleteById(id);
-        // ZS-CFG-004 B04：删除留痕
+        // 删除（逻辑删除 UPDATE 自带 deleted=0 条件，affected=0 即并发下已被他方删除，
+        // r0 P2：不得给未实际删除的行记成功审计）
+        int affected = configMapper.deleteById(id);
+        if (affected == 0) {
+            throw exception(CONFIG_NOT_EXISTS);
+        }
+        // ZS-CFG-004 B04：删除留痕——仅对真实删除成功的行留痕
         configChangeRecorder.recordDelete(config);
     }
 
@@ -162,10 +166,13 @@ public class ConfigServiceImpl implements ConfigService {
             }
         });
 
-        // 批量删除
-        configMapper.deleteByIds(ids);
-        // ZS-CFG-004 B04：逐项删除留痕（逐项可查，避免半完成伪报全成功）
-        configs.forEach(configChangeRecorder::recordDelete);
+        // 逐行条件删除并对真实删除成功的行留痕（r0 P2：并发下半删成功不得整批伪报，
+        // 也不得给被并发抢先删除的行记成功审计）
+        configs.forEach(config -> {
+            if (configMapper.deleteById(config.getId()) > 0) {
+                configChangeRecorder.recordDelete(config);
+            }
+        });
     }
 
     @Override
@@ -186,12 +193,13 @@ public class ConfigServiceImpl implements ConfigService {
                     "恢复目标历史与参数配置不匹配：historyId=" + history.getId());
             throw exception(CONFIG_RESTORE_HISTORY_MISMATCH);
         }
-        // 仅 UPDATE/RESTORE 历史可恢复，且 old_value 必须存在且非掩码——
-        // 秘密/敏感参数的历史值落库时已脱敏（******），不可自动恢复（敏感旧值不写审计原文的对称约束）
+        // 仅 UPDATE/RESTORE 历史可恢复，且 old_value 存在且未脱敏——
+        // 秘密/敏感参数的历史值落库时已掩码（显式 oldValueRedacted 标志，r0 P2：不做值形推断，
+        // NORMAL 配置的字面 ****** 可正常恢复），不可自动恢复的须管理员手工重新填写
         boolean restorableType = ConfigChangeHistoryDO.TYPE_UPDATE.equals(history.getChangeType())
                 || ConfigChangeHistoryDO.TYPE_RESTORE.equals(history.getChangeType());
         boolean restorableValue = history.getOldValue() != null
-                && !ConfigSensitiveClassifier.MASK_VALUE.equals(history.getOldValue());
+                && !Boolean.TRUE.equals(history.getOldValueRedacted());
         if (!restorableType || !restorableValue) {
             configChangeRecorder.recordRestoreDenied(config,
                     "历史记录不可自动恢复：changeType=" + history.getChangeType()
@@ -200,8 +208,8 @@ public class ConfigServiceImpl implements ConfigService {
         }
         // 恢复值走与更新同一值校验路径——非法历史值不得进入运行
         configValueValidator.validate(config.getConfigKey(), history.getOldValue());
-        // 与更新同一乐观锁契约：请求版本必须等于当前版本
-        if (!reqVO.getVersion().equals(config.getVersion())) {
+        // 与更新同一乐观锁契约：请求版本必须等于当前版本（null 同样按冲突拒绝，防内部调用绕过校验注解）
+        if (reqVO.getVersion() == null || !reqVO.getVersion().equals(config.getVersion())) {
             throw exception(CONFIG_UPDATE_CONFLICT);
         }
         // 仅回写 value（MP 非空字段更新策略：key/visible/category/name 均不动），版本 +1，条件更新兜底
