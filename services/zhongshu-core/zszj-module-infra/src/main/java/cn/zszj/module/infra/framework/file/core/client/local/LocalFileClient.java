@@ -54,6 +54,27 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
         }
     }
 
+    /**
+     * ZS-FILE-004.A（codex r1 P2）：本地文件真范围读取——RandomAccessFile 定位读取，
+     * 存储流量与内存随分块规模伸缩，不再整文件读取。
+     */
+    @Override
+    public byte[] getContentRange(String path, long start, int length) throws Exception {
+        String filePath = getFilePath(path);
+        java.io.File file = new java.io.File(filePath);
+        if (!file.exists()) {
+            return null;
+        }
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file, "r")) {
+            long seek = Math.min(start, raf.length());
+            int readLength = (int) Math.min(length, raf.length() - seek);
+            byte[] buffer = new byte[Math.max(readLength, 0)];
+            raf.seek(seek);
+            raf.readFully(buffer);
+            return buffer;
+        }
+    }
+
     private String getFilePath(String path) {
         FilePathUtils.validatePath(path);
         Path basePath = Paths.get(config.getBasePath()).toAbsolutePath().normalize();

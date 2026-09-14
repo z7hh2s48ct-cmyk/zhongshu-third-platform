@@ -58,6 +58,28 @@ public interface FileClient {
      */
     byte[] getContent(String path) throws Exception;
 
+    /**
+     * 范围读取（ZS-FILE-004.A）：返回 [start, start+length-1] 区间内容，越界收敛到实际内容末尾。
+     *
+     * <p>使交付分块的存储流量与内存随分块规模伸缩（codex r1 P2）。默认实现整读后裁切
+     * （ftp/sftp 等未实装客户端回退）；local/db/s3 已按客户端能力实装真范围读取。</p>
+     *
+     * @param path   相对路径
+     * @param start  起始字节（含）
+     * @param length 读取长度
+     * @return 范围内容；对象不存在返回 {@code null}
+     * @throws Exception 读取文件时，抛出 Exception 异常
+     */
+    default byte[] getContentRange(String path, long start, int length) throws Exception {
+        byte[] content = getContent(path);
+        if (content == null) {
+            return null;
+        }
+        int from = (int) Math.min(start, content.length);
+        int to = (int) Math.min(start + length, content.length);
+        return java.util.Arrays.copyOfRange(content, from, to);
+    }
+
     // ========== 文件签名，目前仅 S3 支持 ==========
 
     /**

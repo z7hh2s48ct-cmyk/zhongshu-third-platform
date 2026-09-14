@@ -31,6 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -76,8 +77,17 @@ public class FileDeliveryTicketTest extends BaseDbUnitTest {
         masterClient = mock(FileClient.class);
         when(masterClient.getId()).thenReturn(1L);
         try {
-            when(masterClient.getContent(anyString())).thenAnswer(inv ->
-                    objectStore.get(inv.getArgument(0, String.class)));
+            when(masterClient.getContentRange(anyString(), anyLong(), anyInt())).thenAnswer(inv -> {
+                byte[] content = objectStore.get(inv.getArgument(0, String.class));
+                if (content == null) {
+                    return null;
+                }
+                long start = inv.getArgument(1, Long.class);
+                int length = inv.getArgument(2, Integer.class);
+                int from = (int) Math.min(start, content.length);
+                int to = (int) Math.min(start + length, content.length);
+                return Arrays.copyOfRange(content, from, to);
+            });
         } catch (Exception ignored) {
         }
         when(fileConfigService.getMasterFileClient()).thenReturn(masterClient);
@@ -205,17 +215,22 @@ public class FileDeliveryTicketTest extends BaseDbUnitTest {
     // ========== ⑤ 兑换后退出 / 撤权 / 过期拒 ==========
 
     @Test
-    public void afterRedeem_loginSessionMismatch_rejected() {
+    public void afterTokenRefresh_samePrincipal_deliveryContinues_acrossPrincipalRejected() {
         byte[] content = sequencedBytes(200);
         FileDO file = seedReadableFile(content, "PRIVATE", 101L, 1L);
         LoginUser owner = user(101L, 1L);
         FileDeliverySessionRespVO session = issueAndRedeem(file, owner, "sess-101", "download");
 
-        // 退出/换端：登录会话不再匹配——会话 ID 不单独代替认证
+        // 令牌刷新/重登录：同主体新 token 派生新会话标识——重绑定后交付继续（codex r1 P2）
+        FileDeliveryChunkRespVO c1 = deliveryService.readDeliveryChunk(
+                session.getDeliverySessionId(), 0L, 99L, owner, "sess-101-refreshed");
+        assertArrayEquals(slice(content, 0, 99), c1.getContent(), "同主体令牌刷新不得中断交付");
+        // 跨主体持任意会话标识仍拒绝（身份重检先于会话重绑定）
+        LoginUser impostor = user(999L, 1L);
         ServiceException ex = assertThrows(ServiceException.class, () -> deliveryService.readDeliveryChunk(
-                session.getDeliverySessionId(), 0L, 99L, owner, "sess-OTHER"));
-        assertEquals(FILE_DELIVERY_SESSION_INVALID.getCode(), ex.getCode(),
-                "登录会话失配必须拒绝（会话 ID 不代替认证）");
+                session.getDeliverySessionId(), 100L, 199L, impostor, "sess-101"));
+        assertEquals(FILE_DELIVERY_TICKET_FORBIDDEN.getCode(), ex.getCode(),
+                "会话 ID 不能单独代替认证，跨主体必须拒绝");
     }
 
     @Test

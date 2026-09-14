@@ -52,4 +52,19 @@ public class DBFileClient extends AbstractFileClient<DBFileClientConfig> {
         return CollUtil.getLast(list).getContent();
     }
 
+    /**
+     * ZS-FILE-004.A（codex r1 P2）：范围读取——内容存于本库 FileContentDO，整读后内存裁切，
+     * 不产生跨存储流量。
+     */
+    @Override
+    public byte[] getContentRange(String path, long start, int length) {
+        byte[] content = getContent(path);
+        if (content == null) {
+            return null;
+        }
+        int from = (int) Math.min(start, content.length);
+        int to = (int) Math.min(start + length, content.length);
+        return java.util.Arrays.copyOfRange(content, from, to);
+    }
+
 }

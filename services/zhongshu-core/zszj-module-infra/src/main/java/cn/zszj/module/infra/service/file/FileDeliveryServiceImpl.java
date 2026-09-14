@@ -20,7 +20,6 @@ import org.springframework.validation.annotation.Validated;
 
 import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.UUID;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -177,14 +176,18 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
         if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
             throw exception(FILE_DELIVERY_TICKET_EXPIRED);
         }
-        // 登录会话绑定重检（兑换后退出/换端：会话 ID 不单独代替认证）
-        if (!StrUtil.equals(loginSession, ticket.getLoginSession())) {
-            throw exception(FILE_DELIVERY_SESSION_INVALID);
-        }
-        // 主体身份重检（转发会话 ID/地址给他人：owner·tenant 谓词拒绝）
+        // 主体身份重检（转发会话 ID/地址给他人：owner·tenant 谓词拒绝）——必须先于会话重绑定，
+        // 防止跨主体请求污染绑定值
         if (!loginUser.getId().equals(ticket.getOwnerUserId())
                 || !loginUser.getTenantId().equals(ticket.getTenantId())) {
             throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+        // 登录会话绑定：会话标识为服务端 token 派生（SHA-256）。同主体且标识变化（令牌刷新/重登录）
+        // → 重绑定续传（codex r1 P2：令牌刷新不得中断交付）
+        if (!StrUtil.equals(loginSession, ticket.getLoginSession())) {
+            ticket.setLoginSession(loginSession);
+            deliveryTicketMapper.updateById(ticket);
+            log.debug("[readDeliveryChunk][会话({}) 登录会话重绑定（同主体令牌变更）]", deliverySessionId);
         }
         FileDO file = requireFile(ticket.getFileId());
         // 读权限重检（每次取流均重检撤权状态）
@@ -204,18 +207,26 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
             throw exception(FILE_DELIVERY_SESSION_INVALID);
         }
         long end = Math.min(requestedEnd, Math.min(begin + MAX_CHUNK_BYTES - 1, totalSize - 1));
-        // 后端鉴权取流：按同一不可变版本读取。存储级真 Range 读取归 FileClient 存储适配扩展（FILE-004.B/联调），
-        // 本批次以「分块上限 × 上传 max-size 合同」保证单次读取与授权检查间隔有界
-        byte[] content = getFileContent(file);
-        int from = (int) begin;
-        int to = (int) Math.min(end, content.length - 1L);
-        if (from > to) {
+        // 后端鉴权取流：范围读取（codex r1 P2：存储流量与内存随分块伸缩，不整对象拉取），按同一不可变版本交付
+        FileClient client = fileConfigService.getFileClient(file.getConfigId());
+        if (client == null) {
+            throw exception(FILE_NOT_EXISTS);
+        }
+        int readLength = (int) (end - begin + 1);
+        byte[] content;
+        try {
+            content = client.getContentRange(file.getPath(), begin, readLength);
+        } catch (Exception ex) {
+            log.error("[readDeliveryChunk][文件({}) 范围读取失败]", file.getId(), ex);
             throw exception(FILE_DELIVERY_SESSION_INVALID);
         }
+        if (content == null) {
+            throw exception(FILE_NOT_EXISTS);
+        }
         FileDeliveryChunkRespVO respVO = new FileDeliveryChunkRespVO();
-        respVO.setContent(Arrays.copyOfRange(content, from, to + 1));
-        respVO.setTotalSize((long) content.length);
-        respVO.setLast(to >= content.length - 1);
+        respVO.setContent(content);
+        respVO.setTotalSize(totalSize);
+        respVO.setLast(end >= totalSize - 1);
         return respVO;
     }
 
@@ -270,24 +281,6 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
             throw exception(FILE_NOT_EXISTS);
         }
         return file;
-    }
-
-    private byte[] getFileContent(FileDO file) {
-        FileClient client = fileConfigService.getFileClient(file.getConfigId());
-        if (client == null) {
-            throw exception(FILE_NOT_EXISTS);
-        }
-        byte[] content;
-        try {
-            content = client.getContent(file.getPath());
-        } catch (Exception ex) {
-            log.error("[getFileContent][文件({}) 读取失败]", file.getId(), ex);
-            throw exception(FILE_DELIVERY_SESSION_INVALID);
-        }
-        if (content == null) {
-            throw exception(FILE_NOT_EXISTS);
-        }
-        return content;
     }
 
     private FileDeliverySessionRespVO buildSessionResponse(FileDeliveryTicketDO ticket) {

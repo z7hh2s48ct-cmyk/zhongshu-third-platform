@@ -108,6 +108,22 @@ public class S3FileClient extends AbstractFileClient<S3FileClientConfig> {
     }
 
     /**
+     * ZS-FILE-004.A（codex r1 P2）：S3 真范围读取——GetObject 携带 Range 头，
+     * 存储流量与内存随分块规模伸缩，不再整对象拉取。
+     */
+    @Override
+    public byte[] getContentRange(String path, long start, int length) throws Exception {
+        GetObjectRequest getRequest = GetObjectRequest.builder()
+                .bucket(config.getBucket())
+                .key(path)
+                .range("bytes=" + start + "-" + (start + length - 1))
+                .build();
+        try (var responseInputStream = client.getObject(getRequest)) {
+            return IoUtil.readBytes(responseInputStream);
+        }
+    }
+
+    /**
      * ZS-FILE-003 codex r2 P1：S3 真流式有界读取——先 headObject 取长度（超限即中止，不拉体），
      * 再 getObject 流式逐块读取，累计超 maxBytes 立即中止并关闭响应，杜绝堆耗尽。
      */

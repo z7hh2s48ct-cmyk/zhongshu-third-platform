@@ -4,6 +4,7 @@ import cn.hutool.crypto.digest.DigestUtil;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
+import cn.zszj.framework.security.config.SecurityProperties;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliveryChunkRespVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliverySessionRespVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeliveryTicketIssueReqVO;
@@ -41,6 +42,9 @@ public class FileDeliveryController {
 
     @Resource
     private FileDeliveryService fileDeliveryService;
+
+    @Resource
+    private SecurityProperties securityProperties;
 
     @PostMapping("/issue")
     @Operation(summary = "签发一次性交付票据", description = "本人主体绑定；服务端只存散列，token 仅此一次返回")
@@ -96,9 +100,12 @@ public class FileDeliveryController {
     /**
      * 登录会话标识：服务端从当前访问令牌派生（SHA-256），客户端不可自报——
      * 与主体身份双重绑定，退出/重登录自然失效或更换。
+     * 提取源使用认证过滤器同一份 {@link SecurityProperties} 配置（codex r1 P2：不独立硬编码）。
      */
     private String currentLoginSession(HttpServletRequest request) {
-        String token = SecurityFrameworkUtils.obtainAuthorization(request, "Authorization", "token", false);
+        String token = SecurityFrameworkUtils.obtainAuthorization(request,
+                securityProperties.getTokenHeader(), securityProperties.getTokenParameter(),
+                Boolean.TRUE.equals(securityProperties.getTokenParameterEnabled()));
         if (token == null || token.isEmpty()) {
             throw exception(FILE_DELIVERY_SESSION_INVALID);
         }
