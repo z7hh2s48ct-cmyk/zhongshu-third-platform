@@ -430,6 +430,79 @@ test('C1：美元闭合上限预缓存，大输入线性完成（codex r12 P2-8�
   assert.ok(elapsed < 1000, `n=16000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
 });
 
+// ---- C1 r13 回归 ----
+
+test('C1：CAST 与左括号间空白 / 块注释不再漏检（codex r13 P2-1）', () => {
+  const spaced = "SELECT CAST     ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  const commented = "SELECT CAST /*comment*/ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  const lower = "SELECT cast ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  for (const text of [spaced, commented, lower]) {
+    assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message)));
+  }
+});
+
+test('C1：CAST 嵌套括号的 AS 按 AS 所在层判定，外层别名不误报（codex r13 P2-2）', () => {
+  const nested = "SELECT CAST(('CREATE ROLE app LOGIN PASSWORD ') AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', nested).some((i) => /RealSecret123/.test(i.message)));
+  const alias = "SELECT (SELECT CAST('CREATE ROLE app LOGIN PASSWORD ' AS text) AS cmd WHERE current_user = 'app') || quote_literal(current_user);";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', alias).length, 0);
+});
+
+test('C1：注释内 CAST 判定的 openAt 同步填充（codex r13 P2-3）', () => {
+  const text = "SELECT (\n-- SELECT CAST('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');\n1);";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+});
+
+test('C1：注释内嵌套块注释右括号不抵消包装括号（codex r13 P2-4）', () => {
+  const inLine = "SELECT (\n-- SELECT (/* ) */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123');\n1);";
+  const inBlock = "SELECT (\n/* SELECT (/* ) */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123'); */\n1);";
+  for (const text of [inLine, inBlock]) {
+    const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+    assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  }
+});
+
+test('C1：注释内自然语言撇号不开启字符串（codex r13 P2-5）', () => {
+  const text = "SELECT (\n-- application's SELECT ('CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123');\n1);";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+});
+
+test('C1：YAML 属性名点号 / 非 ASCII 完整消费（codex r13 P2-6）', () => {
+  const cases = [
+    "command: &a.b \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"",
+    "command: &锚点 \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"",
+    "command: !a.b \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"",
+  ];
+  for (const line of cases) {
+    assert.ok(checkSecrets('deploy/docker-compose.deploy.yml', line).some((i) => /RealSecret123/.test(i.message)));
+  }
+});
+
+test('C1：片段模式双引号标识符中的 ) 不参与配对（codex r13 P2-7）', () => {
+  const text = "DO $$ BEGIN EXECUTE ((SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE \")\" = 'app')) || quote_literal(current_user); END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).length, 0);
+});
+
+test('C1：片段模式注释跳转受片段边界约束（codex r13 P2-8）', () => {
+  const block = "SELECT $$ (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE /*$$; SELECT $$*/ ) || quote_literal('hello')$$;";
+  const line = "SELECT $$ (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE --$$; SELECT $$\n) || quote_literal('hello')$$;";
+  for (const text of [block, line]) {
+    assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).length, 0);
+  }
+});
+
+test('C1：美元体行注释换行搜索线性完成（codex r13 P2-9）', () => {
+  // 修复前每个美元体都执行无上限 indexOf('\n')，n=64000 实测约 897ms
+  const text = 'SELECT $$--$$;'.repeat(64000);
+  const t0 = performance.now();
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  assert.equal(issues.length, 0);
+  assert.ok(elapsed < 1000, `n=64000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
