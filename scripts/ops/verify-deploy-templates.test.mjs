@@ -503,6 +503,53 @@ test('C1：美元体行注释换行搜索线性完成（codex r13 P2-9）', () =
   assert.ok(elapsed < 1000, `n=64000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
 });
 
+// ---- C1 r14 回归 ----
+
+test('C1：字符串内 -- 不阻断左向 CAST 判定（codex r14 P2-1）', () => {
+  // ' -- ' 位于字符串字面量内，不是行注释；CAST 与左括号跨行仍应识别
+  const pos = "SELECT ' -- ', CAST\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', pos).some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  // 字符串内的 'CAST -- ignored' 不得使 (SELECT ... AS cmd) 被误判为 CAST
+  const neg = "SELECT 'CAST -- ignored' ||\n(SELECT 'CREATE ROLE app LOGIN PASSWORD ' AS cmd WHERE current_user = 'app') || quote_literal(current_user);";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', neg).length, 0);
+  // CAST 与 -- 注释相邻，换行后接左括号
+  const commented = "SELECT CAST--comment\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', commented).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：片段内双引号标识符整体消费，/* 不误开嵌套（codex r14 P2-2）', () => {
+  const plain = "-- SELECT (\"/*\" || 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123') FROM prefixes;";
+  const esc = "-- SELECT (\"a\"\"/*\" || 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123') FROM prefixes;";
+  for (const text of [plain, esc]) {
+    assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  }
+});
+
+test('C1：嵌套块注释第二定界符字符同步标记（codex r14 P2-3）', () => {
+  const text = "/* SELECT (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE /* ok */ current_user = 'app') || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+});
+
+test('C1：WHERE 候选片段结束查找线性完成（codex r14 P2-4）', () => {
+  // 修复前每候选左括号都从 from 起逐位预扫描片段结束，n=8000 实测约 2325ms
+  const text = 'DO $$ BEGIN\n' + "PERFORM (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE true) || quote_literal(current_user);\n".repeat(8000) + 'END $$;';
+  const t0 = performance.now();
+  checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  assert.ok(elapsed < 1000, `n=8000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
+test('C1：CAST 跨行判定无全文 -- 搜索，非线性退化（codex r14 P2-5）', () => {
+  // 修复前每处 CAST 判定对全文做无上限 indexOf('--')，n=32000 实测即达 840ms，n=64000 约 2.7s
+  const text = "SELECT CAST\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user);\n".repeat(64000);
+  const t0 = performance.now();
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  // quote_literal(current_user) 为变量取值，正确行为 0 检出（不误报）
+  assert.equal(issues.length, 0);
+  assert.ok(elapsed < 1000, `n=64000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
