@@ -102,6 +102,13 @@ test('C1：SQL 字符串拼接 quote_literal(:变量) 不误报为硬编码口�
   assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
 });
 
+test('C1：块注释内撇号不干扰——PASSWORD 字面量仍检出（codex r4 P2 修复）', () => {
+  // 注释 application's 的撇号不得让真口令起始引号被误判为闭合（需按 SQL 词法上下文去注释）
+  const text = "/* application's role */ CREATE ROLE app LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
@@ -245,6 +252,18 @@ test('C2：healthcheck 前的低缩进注释行不截断服务块（codex r3 P2 
     '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
   ].join('\n');
   assert.deepEqual(checkProbeConsistency(compose, 'health'), []);
+});
+
+test('C2：probe-less zszj-server 后的同缩进注释不伪造探针证据（codex r4 P2 修复）', () => {
+  // 注释含 healthcheck 与 /actuator/ 字样，不得被当作有效探针证据（跳过注释不纳入块）
+  const compose = [
+    'services:',
+    '  zszj-server:',
+    '    image: zszj-server:latest',
+    '  # TODO: add healthcheck at /actuator/health',
+  ].join('\n');
+  const issues = checkProbeConsistency(compose, 'health');
+  assert.ok(issues.some((i) => i.rule === 'C2-probe' && /zszj-server/.test(i.message)));
 });
 
 // ---- C3 管理路径关闭 ----

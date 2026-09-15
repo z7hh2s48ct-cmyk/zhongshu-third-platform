@@ -69,9 +69,46 @@ function isQuoteOpener(line, quoteIdx) {
   return n % 2 === 0;
 }
 
+/**
+ * 去除 SQL 注释（块注释与 -- 行注释），保留行结构与字符位置（注释字符替换为空格）。
+ * 跟踪字符串字面量状态（含两个连续单引号的转义），避免把字符串内的注释起始符误当注释。
+ * 用于在判定 PASSWORD 字面量前消除注释内撇号对引号奇偶的干扰（codex r4 P2）。
+ * @returns {string[]} 与原文行数一致的「去注释」行数组
+ */
+function stripSqlComments(text) {
+  const out = [];
+  let inBlock = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    let res = '';
+    let inStr = false;
+    let i = 0;
+    while (i < rawLine.length) {
+      const two = rawLine.slice(i, i + 2);
+      if (inBlock) {
+        if (two === '*/') { inBlock = false; res += '  '; i += 2; } else { res += ' '; i += 1; }
+        continue;
+      }
+      if (inStr) {
+        if (two === "''") { res += "''"; i += 2; continue; }
+        if (rawLine[i] === "'") { inStr = false; res += "'"; i += 1; continue; }
+        res += rawLine[i]; i += 1; continue;
+      }
+      if (two === '/*') { inBlock = true; res += '  '; i += 2; continue; }
+      if (two === '--') { res += ' '.repeat(rawLine.length - i); break; }
+      if (rawLine[i] === "'") { inStr = true; res += "'"; i += 1; continue; }
+      res += rawLine[i]; i += 1;
+    }
+    out.push(res);
+  }
+  return out;
+}
+
 export function checkSecrets(relPath, text) {
   const issues = [];
   const lines = text.split(/\r?\n/);
+  // SQL 原生凭据语法仅在 .sql 文件判定，且在「去注释」后的行上做引号奇偶（codex r4 P2）
+  const isSql = /\.sql$/i.test(relPath);
+  const sqlLines = isSql ? stripSqlComments(text) : null;
   lines.forEach((line, i) => {
     const lineNo = i + 1;
     if (/BEGIN (RSA |EC |DSA )?PRIVATE KEY|BEGIN CERTIFICATE/.test(line)) {
@@ -99,21 +136,23 @@ export function checkSecrets(relPath, text) {
         issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: '命令行参数含硬编码凭据: ' + cmdMatch[1] + ' ' + credValue.slice(0, 20) });
       }
     }
-    // SQL/psql 原生硬编码凭据（.sql 初始化脚本，codex r2 P2 修复）
-    // 引号奇偶校验：仅当 PASSWORD/\set 后的引号是字面量「起始」时才判定，
-    // 避免把 SQL 字符串的「闭合引号」误当字面量起始（codex r3 P2）
-    const sqlPwMatch = line.match(SQL_PASSWORD_RE);
-    if (sqlPwMatch && isQuoteOpener(line, sqlPwMatch.index + sqlPwMatch[0].indexOf("'"))) {
-      const v = sqlPwMatch[1];
-      if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
-        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'SQL 中出现硬编码 PASSWORD 字面量: ' + v.slice(0, 20) });
+    // SQL/psql 原生硬编码凭据（仅 .sql；在去注释行上判定，避免注释内撇号干扰奇偶，codex r4 P2）
+    // 引号奇偶校验：仅当 PASSWORD/\set 后的引号是字面量「起始」时才判定（codex r3 P2）
+    if (isSql) {
+      const sline = sqlLines[i];
+      const sqlPwMatch = sline.match(SQL_PASSWORD_RE);
+      if (sqlPwMatch && isQuoteOpener(sline, sqlPwMatch.index + sqlPwMatch[0].indexOf("'"))) {
+        const v = sqlPwMatch[1];
+        if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
+          issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'SQL 中出现硬编码 PASSWORD 字面量: ' + v.slice(0, 20) });
+        }
       }
-    }
-    const sqlSetMatch = line.match(SQL_SETPASS_RE);
-    if (sqlSetMatch && isQuoteOpener(line, sqlSetMatch.index + sqlSetMatch[0].indexOf("'"))) {
-      const v = sqlSetMatch[1];
-      if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
-        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'psql \\set 出现硬编码口令字面量: ' + v.slice(0, 20) });
+      const sqlSetMatch = sline.match(SQL_SETPASS_RE);
+      if (sqlSetMatch && isQuoteOpener(sline, sqlSetMatch.index + sqlSetMatch[0].indexOf("'"))) {
+        const v = sqlSetMatch[1];
+        if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
+          issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'psql \\set 出现硬编码口令字面量: ' + v.slice(0, 20) });
+        }
       }
     }
   });
@@ -167,8 +206,11 @@ function extractServiceBlock(composeText, serviceName) {
   const block = [lines[startIdx]];
   for (let i = startIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    // 空行与注释行属于块内（YAML 注释缩进可低于映射而不结束它，codex r3 P2）
-    if (/^\s*$/.test(line) || /^\s*#/.test(line)) { block.push(line); continue; }
+    // 空行属于块内（YAML 允许）
+    if (/^\s*$/.test(line)) { block.push(line); continue; }
+    // 注释行：跳过——既不终止块（缩进可低于映射，codex r3 P2），
+    // 也不纳入块（防注释内 healthcheck//actuator 字样伪造探针证据，codex r4 P2）
+    if (/^\s*#/.test(line)) { continue; }
     const indent = line.match(/^\s*/)[0].length;
     if (indent <= headerIndent) break;
     block.push(line);
@@ -402,6 +444,9 @@ function selfTest() {
   const sqlConcat = checkSecrets('init.sql', "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec");
   results.push(['C1 正向（SQL 字符串闭合引号不误报）', sqlConcat.length === 0]);
 
+  const sqlCommentApostrophe = checkSecrets('init.sql', "/* application's role */ CREATE ROLE app LOGIN PASSWORD 'RealSecret123';");
+  results.push(['C1 负向（块注释内撇号不干扰，硬编码口令仍检出）', sqlCommentApostrophe.length > 0]);
+
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
 
@@ -416,6 +461,9 @@ function selfTest() {
 
   const commentInBlock = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n  # probe\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
   results.push(['C2 正向（块内低缩进注释不截断）', commentInBlock.length === 0]);
+
+  const commentAsEvidence = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n  # TODO: add healthcheck at /actuator/health', 'health');
+  results.push(['C2 负向（注释不伪造探针证据）', commentAsEvidence.length > 0]);
 
   const blankLineProbe = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
   results.push(['C2 正向（块内空行不误判缺 healthcheck）', blankLineProbe.length === 0]);
