@@ -1091,6 +1091,94 @@ public class JobConsistencyTest extends BaseDbUnitTest {
         assertTrue(ampSummary.contains("authorization=***"));
     }
 
+    @Test
+    public void testScenario23_unicodeWhitespaceBeforeQuotedValueIsMasked() {
+        // codex r4 [P1] regression:
+        // SENSITIVE_KEY_PATTERN \u7684 \s* \u4E0D\u5339\u914D EM SPACE\uFF0C\u5BFC\u81F4 openQuote \u4E3A\u7A7A\u8FDB\u5165\u65E0\u5F15\u53F7\u8DEF\u5F84\u3002
+        // \u65E7\u7248\u626B\u63CF\u5668\u8DF3\u8FC7\u7A7A\u767D\u540E\u5728\u5F15\u53F7\u5904 break\uFF0CvalueEnd==valueStart \u5BFC\u81F4\u4E0D\u8131\u654F\u3002
+        // \u4FEE\u590D\u540E\uFF1A\u7A7A\u767D\u8DF3\u8FC7\u540E\u53D1\u73B0\u5F15\u53F7 \u2192 \u8C03\u7528 scanQuotedValueEnd \u6D88\u8D39\u5F15\u53F7\u503C\u3002
+        String emSpaceBeforeQuote = "password=\u2003\"alpha\"";
+        String ideographicSpaceBeforeQuote = "token=\u3000'secret_value'";
+        String afterDelimiter = "password=alpha,token=\u2003\"bravo\"";
+
+        jobTenantResultService.saveTenantResultsAsync(9017L, TenantJobExecutionResult.builder()
+                .totalTenants(3).successCount(0).failureCount(3)
+                .perTenantResults(Map.of(
+                        851L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(emSpaceBeforeQuote).build(),
+                        852L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(ideographicSpaceBeforeQuote).build(),
+                        853L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(afterDelimiter).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9017L);
+        assertEquals(3, details.size());
+
+        // EM SPACE + \u53CC\u5F15\u53F7\u503C\uFF1A\u5FC5\u987B\u6574\u4F53 mask
+        String s1 = findByTenantId(details, 851L).getErrorSummary();
+        assertFalse(s1.contains("alpha"), "Quoted value after EM SPACE leaked: " + s1);
+        assertTrue(s1.contains("password=***"));
+
+        // IDEOGRAPHIC SPACE + \u5355\u5F15\u53F7\u503C
+        String s2 = findByTenantId(details, 852L).getErrorSummary();
+        assertFalse(s2.contains("secret_value"), "Quoted value after IDEOGRAPHIC SPACE leaked: " + s2);
+        assertTrue(s2.contains("token=***"));
+
+        // \u9017\u53F7\u5206\u9694 + EM SPACE + \u5F15\u53F7\u503C\uFF1A\u4E24\u4E2A\u952E\u90FD\u5FC5\u987B\u72EC\u7ACB mask
+        String s3 = findByTenantId(details, 853L).getErrorSummary();
+        assertFalse(s3.contains("alpha"), "First value leaked: " + s3);
+        assertFalse(s3.contains("bravo"), "Second value after delimiter+whitespace leaked: " + s3);
+        assertTrue(s3.contains("password=***"));
+        assertTrue(s3.contains("token=***"));
+    }
+
+    @Test
+    public void testScenario24_nbspAndZwspAfterDelimiterDoNotBypassMasking() {
+        // codex r4 [P1] regression:
+        // Character.isWhitespace() \u4E0D\u5305\u542B NBSP(U+00A0)/ZWSP(U+200B)\uFF0C
+        // \u5BFC\u81F4\u5206\u9694\u7B26 lookahead \u65E0\u6CD5\u8DF3\u8FC7\u8FD9\u4E9B\u5B57\u7B26\u627E\u5230\u4E0B\u4E00\u4E2A\u654F\u611F\u952E\u3002
+        // \u4FEE\u590D\u540E\uFF1AisSpaceLike() \u8986\u76D6 isWhitespace + isSpaceChar + ZWSP + BOM\u3002
+        String nbspDelimiter = "password=alpha,\u00A0token=\"bravo\"";
+        String zwspDelimiter = "secret=one;\u200Bapi_key=two";
+        String figureSpaceDelimiter = "pwd=x&\u2007authorization=y";
+
+        jobTenantResultService.saveTenantResultsAsync(9018L, TenantJobExecutionResult.builder()
+                .totalTenants(3).successCount(0).failureCount(3)
+                .perTenantResults(Map.of(
+                        861L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(nbspDelimiter).build(),
+                        862L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(zwspDelimiter).build(),
+                        863L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(figureSpaceDelimiter).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9018L);
+        assertEquals(3, details.size());
+
+        // NBSP \u5728\u9017\u53F7\u540E\uFF1A\u4E24\u4E2A\u952E\u90FD\u5FC5\u987B\u72EC\u7ACB mask
+        String s1 = findByTenantId(details, 861L).getErrorSummary();
+        assertFalse(s1.contains("alpha"), "First value leaked (NBSP): " + s1);
+        assertFalse(s1.contains("bravo"), "Second value leaked (NBSP): " + s1);
+        assertTrue(s1.contains("password=***"));
+        assertTrue(s1.contains("token=\"***\""));
+
+        // ZWSP \u5728\u5206\u53F7\u540E
+        String s2 = findByTenantId(details, 862L).getErrorSummary();
+        assertFalse(s2.contains("one"), "First value leaked (ZWSP): " + s2);
+        assertFalse(s2.contains("two"), "Second value leaked (ZWSP): " + s2);
+        assertTrue(s2.contains("secret=***"));
+        assertTrue(s2.contains("api_key=***"));
+
+        // FIGURE SPACE \u5728 & \u540E
+        String s3 = findByTenantId(details, 863L).getErrorSummary();
+        assertFalse(s3.contains("=x"), "First value leaked (FIGURE SPACE): " + s3);
+        assertFalse(s3.contains("=y"), "Second value leaked (FIGURE SPACE): " + s3);
+        assertTrue(s3.contains("pwd=***"));
+        assertTrue(s3.contains("authorization=***"));
+    }
+
     // ==================== 测试辅助 ====================
 
     /**

@@ -196,26 +196,29 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
             if (c == '"' || c == '\'') {
                 break;
             }
-            // codex r3 [P1] fix: unified Unicode whitespace handling
-            // (previously only space/tab were skipped; other Unicode whitespace caused break,
-            //  leaving credentials after e.g. EM SPACE exposed)
-            if (Character.isWhitespace(c)) {
+            // codex r4 [P1] fix: use isSpaceLike to cover ALL Unicode space characters
+            // (isWhitespace misses NBSP/FIGURE SPACE; isSpaceChar misses EM SPACE in some contexts)
+            if (isSpaceLike(c)) {
                 int j = i;
-                while (j < text.length() && Character.isWhitespace(text.charAt(j))) {
+                while (j < text.length() && isSpaceLike(text.charAt(j))) {
                     j++;
                 }
                 if (isSensitiveKeyAt(text, j)) {
                     break;
                 }
+                // codex r4 [P1] fix: if whitespace leads to a quote, consume the quoted value
+                // (SENSITIVE_KEY_PATTERN\'s \s* does not match Unicode whitespace like EM SPACE,
+                //  so openQuote is empty and we enter unquoted path despite a quoted value following)
+                if (j < text.length() && (text.charAt(j) == '"' || text.charAt(j) == '\'')) {
+                    return scanQuotedValueEnd(text, j + 1, text.charAt(j));
+                }
                 i = j;
                 continue;
             }
-            // codex r3 [P1] fix: recognize adjacent sensitive key after delimiter
-            // (previously comma/semicolon/ampersand were consumed as value chars,
-            //  causing the next sensitive key to be eaten and its value left exposed)
+            // codex r4 [P1] fix: delimiter lookahead uses isSpaceLike for broader coverage
             if (c == ',' || c == ';' || c == '&') {
                 int j = i + 1;
-                while (j < text.length() && Character.isWhitespace(text.charAt(j))) {
+                while (j < text.length() && isSpaceLike(text.charAt(j))) {
                     j++;
                 }
                 if (isSensitiveKeyAt(text, j)) {
@@ -231,6 +234,20 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
     /**
      * 判断 text[pos..] 是否以敏感键 + 分隔符开头
      */
+    /**
+     * 判断字符是否为“空白类”字符，覆盖所有 Unicode 空白/零宽字符。
+     * <ul>
+     *   <li>{@link Character#isWhitespace} — 标准空白 + EM SPACE + IDEOGRAPHIC SPACE 等</li>
+     *   <li>{@link Character#isSpaceChar} — NBSP (U+00A0) + FIGURE SPACE (U+2007) + NARROW NBSP (U+202F)</li>
+     *   <li>U+200B ZWSP — 零宽空格（Java 两个 API 均不覆盖）</li>
+     *   <li>U+FEFF BOM/ZWNBSP — 字节序标记/零宽不断空格</li>
+     * </ul>
+     */
+    private static boolean isSpaceLike(char c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c)
+                || c == '\u200B' || c == '\uFEFF';
+    }
+
     private static boolean isSensitiveKeyAt(String text, int pos) {
         if (pos >= text.length()) {
             return false;
