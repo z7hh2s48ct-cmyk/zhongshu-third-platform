@@ -291,13 +291,9 @@ public class FileServiceImpl implements FileService {
         FileDO file = validateFileExists(id);
         // 1.2 校验路径合法性，避免误删文件存储器中的其他文件
         FilePathUtils.validatePath(file.getPath());
-        // 1.3 引用保护（ZS-FILE-005.A）：存在进行中的交付会话（REDEEMED 未过期）→ 拒绝删除，
-        //     不误删仍被引用的对象
-        if (CollUtil.isNotEmpty(deliveryTicketMapper.selectActiveRedeemedByFileId(id, LocalDateTime.now()))) {
-            throw exception(FILE_DELETE_REFERENCED);
-        }
 
-        // 2 中间态推进（ZS-FILE-005.A）：非 DELETING 态（含存量/历史值）条件推进为 DELETING 可恢复中间态；
+        // 2 中间态推进（ZS-FILE-005.A，codex r0 P1：先锁定删除意图——兑换/取流侧据 DELETING 拒绝，
+        //   使引用检查与兑换串行化）：非 DELETING 态（含存量/历史值）条件推进为 DELETING 可恢复中间态；
         //   已处于 DELETING（人工对账重试）直接继续；并发双删败者按「删除进行中」拒绝
         if (!FileDO.STATUS_DELETING.equals(file.getStatus())) {
             int affected = fileMapper.update(null, new LambdaUpdateWrapper<FileDO>()
@@ -309,7 +305,17 @@ public class FileServiceImpl implements FileService {
             }
         }
 
-        // 3 从文件存储器中删除；失败保留 DELETING 可恢复记录并上抛——中段失败不假报成功
+        // 3 引用保护（ZS-FILE-005.A）：中间态锁定后复查进行中的交付会话——命中则回退 PUBLISHED 并拒绝，
+        //   不误删仍被引用的对象（转移后新建兑换已被 DELETING 检查拒绝，引用集不再增长）
+        if (CollUtil.isNotEmpty(deliveryTicketMapper.selectActiveRedeemedByFileId(id, LocalDateTime.now()))) {
+            fileMapper.update(null, new LambdaUpdateWrapper<FileDO>()
+                    .set(FileDO::getStatus, FileDO.STATUS_PUBLISHED)
+                    .eq(FileDO::getId, id)
+                    .eq(FileDO::getStatus, FileDO.STATUS_DELETING));
+            throw exception(FILE_DELETE_REFERENCED);
+        }
+
+        // 4 从文件存储器中删除；失败保留 DELETING 可恢复记录并上抛——中段失败不假报成功
         FileClient client = fileConfigService.getFileClient(file.getConfigId());
         Assert.notNull(client, "客户端({}) 不能为空", file.getConfigId());
         try {
@@ -319,7 +325,7 @@ public class FileServiceImpl implements FileService {
             throw ex;
         }
 
-        // 4 对象已删除 → 删除记录
+        // 5 对象已删除 → 删除记录
         fileMapper.deleteById(id);
     }
 
@@ -359,7 +365,35 @@ public class FileServiceImpl implements FileService {
     @Override
     public void reconcileCleanupFile(Long id) throws Exception {
         // 人工对账重试：对象仍在则重试删除，对象已不存在则仅移除可恢复记录；非中间态走正常删除守卫
-        deleteFile(id);
+        try {
+            deleteFile(id);
+        } catch (Exception ex) {
+            // codex r0 P2：区分「对象已确认不存在」与其它存储失败——前者允许仅清理元数据
+            //（如 SFTP delete 对缺失对象抛 SSH_FX_NO_SUCH_FILE，会使对账路径永久卡死）
+            FileDO file = fileMapper.selectById(id);
+            if (file != null && isObjectConfirmedAbsent(file)) {
+                log.warn("[reconcileCleanupFile][文件({}) 对象已确认不存在，仅移除 DELETING 记录]", id);
+                fileMapper.deleteById(id);
+                return;
+            }
+            throw ex;
+        }
+    }
+
+    /**
+     * 对象存在性确认（对账重试失败后的保守探测）：读不到即认定缺失；探测自身失败则保守保留记录。
+     */
+    private boolean isObjectConfirmedAbsent(FileDO file) {
+        FileClient client = fileConfigService.getFileClient(file.getConfigId());
+        if (client == null) {
+            return false;
+        }
+        try {
+            return client.getContentRange(file.getPath(), 0, 1) == null;
+        } catch (Exception probeEx) {
+            log.warn("[isObjectConfirmedAbsent][文件({}) 存在性探测失败，保守保留记录]", file.getId(), probeEx);
+            return false;
+        }
     }
 
     private FileDO validateFileExists(Long id) {

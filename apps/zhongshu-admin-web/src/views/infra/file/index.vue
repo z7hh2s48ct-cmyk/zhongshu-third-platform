@@ -230,10 +230,18 @@ const handleDeleteBatch = async () => {
   try {
     // 删除的二次确认
     await message.delConfirm()
-    // 发起批量删除
-    await FileApi.deleteFileList(checkedIds.value)
+    // 发起批量删除（ZS-FILE-005.A：逐项结果——部分失败须如实呈现，不伪报全成功）
+    const data = await FileApi.deleteFileList(checkedIds.value)
     checkedIds.value = []
-    message.success(t('common.delSuccess'))
+    if (data.failures && data.failures.length > 0) {
+      message.warning(
+        data.successIds.length > 0
+          ? `${t('common.delSuccess')}；${data.failures.length} 项删除失败：${data.failures.map((f) => '#' + f.id).join('、')}`
+          : `${data.failures.length} 项全部删除失败：${data.failures.map((f) => '#' + f.id).join('、')}`
+      )
+    } else {
+      message.success(t('common.delSuccess'))
+    }
     // 刷新列表
     await getList()
   } catch {}

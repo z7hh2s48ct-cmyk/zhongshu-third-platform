@@ -117,8 +117,12 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
         if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
             throw exception(FILE_DELIVERY_TICKET_EXPIRED);
         }
-        // 交付重检（读授权在签发后可能被回收：角色撤权、scope 调整等）——失败按撤权拒绝
+        // 交付重检（codex r0 P1：资产已进入删除中间态 → 拒绝新建会话，使引用检查与兑换串行化）
         FileDO file = requireFile(ticket.getFileId());
+        if (FileDO.STATUS_DELETING.equals(file.getStatus())) {
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
+        // 读授权在签发后可能被回收（角色撤权、scope 调整等）——失败按撤权拒绝
         try {
             fileService.validateFileReadable(file, loginUser);
         } catch (Exception ex) {
@@ -200,6 +204,10 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
             log.debug("[readDeliveryChunk][会话({}) 登录会话重绑定（同主体令牌变更）]", deliverySessionId);
         }
         FileDO file = requireFile(ticket.getFileId());
+        // 资产已进入删除中间态：在途会话一并终止（codex r0 P1）
+        if (FileDO.STATUS_DELETING.equals(file.getStatus())) {
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
+        }
         // 读权限重检（每次取流均重检撤权状态）
         try {
             fileService.validateFileReadable(file, loginUser);
