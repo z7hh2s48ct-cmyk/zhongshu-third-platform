@@ -144,6 +144,61 @@ test('C1：compose 内嵌 psql -c 的 PASSWORD 字面量仍检出（codex r5 P2-
   assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
 });
 
+// ---- C1 codex r6 回归（候选独立解析 + YAML 隔离 + 词法补全） ----
+
+test('C1：同行安全拼接不消费后续真口令候选（codex r6 P2-1）', () => {
+  // 首个候选的拼接闭合引号不得跨过并吞掉第二个 PASSWORD 候选（matchAll 非重叠陷阱）
+  const text = "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(current_user); CREATE ROLE x LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：YAML 注释撇号不跨行污染——DQ 内嵌 SQL 真口令检出（codex r6 P2-2）', () => {
+  const text = "# application's init\ncommand: [\"psql\", \"-c\", \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"]";
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：YAML 单引号标量双撇号转义解码后检出真口令（codex r6 P2-2）', () => {
+  // YAML SQ 标量内 '' 转义为一个单引号字符（解码前直接按 SQL 看会漏检）
+  const text = "command: ['psql', '-c', 'CREATE ROLE app LOGIN PASSWORD ''RealSecret123'';']";
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：注释内安全拼接不误报（codex r6 P2-3）', () => {
+  // 注释内被注释掉的拼接表达式：闭合引号角色应正确识别，不得报硬编码字面量
+  const text = "-- SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
+test('C1：YAML DQ 内安全拼接不误报（codex r6 P2-3）', () => {
+  const text = '[\"psql\", \"-c\", \"SELECT \'CREATE ROLE app LOGIN PASSWORD \' || quote_literal(:\'app_pass\') \\gexec\"]';
+  assert.deepEqual(checkSecrets('deploy/docker-compose.deploy.yml', text), []);
+});
+
+test('C1：quote_literal 硬编码参数检出、变量参数不报（codex r6 P2-4）', () => {
+  const bad = checkSecrets('deploy/postgres-init/01-create-app-role.sql', "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal('RealSecret123') \\gexec");
+  assert.ok(bad.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+  const ok = checkSecrets('deploy/postgres-init/01-create-app-role.sql', "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec");
+  assert.deepEqual(ok, []);
+});
+
+test('C1：E 串反斜杠转义不吞后续口令（codex r6 P2-5）', () => {
+  // E'application\'s' 的转义引号不得被当成闭引号，使后续真口令起始引号被误判为开串
+  const text = "SELECT E'application\\'s'; CREATE ROLE app LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：非 ASCII 美元 tag 识别；标识符内 $tag$ 不开启美元引用（codex r6 P2-6）', () => {
+  const nonAscii = "SELECT $标签$application's$标签$; CREATE ROLE app LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', nonAscii);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+  const ident = "CREATE TABLE foo$tag$(id int); SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', ident), []);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
