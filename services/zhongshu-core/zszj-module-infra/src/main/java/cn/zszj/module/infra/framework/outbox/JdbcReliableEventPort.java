@@ -79,8 +79,7 @@ public class JdbcReliableEventPort implements ReliableEventPort {
     public JdbcReliableEventPort(DataSource dataSource, PlatformTransactionManager transactionManager) {
         this.jdbcTemplate = new JdbcTemplate(dataSource);
         this.dataSource = dataSource;
-        this.callerTransactionTemplate = new TransactionTemplate(transactionManager);
-        this.callerTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_MANDATORY);
+        this.callerTransactionTemplate = OutboxTransactions.mandatoryTemplate(dataSource, transactionManager);
     }
 
     @Override

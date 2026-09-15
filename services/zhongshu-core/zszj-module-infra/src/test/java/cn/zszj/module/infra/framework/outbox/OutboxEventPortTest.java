@@ -229,4 +229,51 @@ public class OutboxEventPortTest extends BaseDbUnitTest {
         assertNull(row.get("biz_version"));
     }
 
+    /**
+     * 用例 9（codex r2 P1 同源配对）：TM 与数据源非同源配对（他数据源的 DataSourceTransactionManager）
+     * 在构造期即拒绝——MANDATORY 只证明该 TM 存在事务，错配时 JDBC 写入会走本数据源 autocommit 连接
+     * 静默自提交（业务回滚而事件留存，且无异常可捕获），必须启动即失败。
+     */
+    @Test
+    public void testConstructor_rejectsMismatchedTransactionManager() {
+        DataSource otherDataSource =
+                new org.springframework.jdbc.datasource.DriverManagerDataSource("jdbc:h2:mem:outbox-other;MODE=MySQL;DB_CLOSE_DELAY=-1");
+        org.springframework.jdbc.datasource.DataSourceTransactionManager otherTxManager =
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(otherDataSource);
+        assertThrows(IllegalArgumentException.class, () -> new JdbcReliableEventPort(dataSource, otherTxManager));
+    }
+
+    /**
+     * 用例 10（codex r1 探针回归）：线程仅绑定本数据源的普通查询级连接（transactionActive=false，
+     * 非真实事务）时 append 必须拒绝——MANDATORY 在 TM 层校验真实事务，不另开事务。
+     */
+    @Test
+    public void testAppend_rejectsNonTransactionalConnectionBinding() throws Exception {
+        java.sql.Connection connection = dataSource.getConnection();
+        org.springframework.jdbc.datasource.ConnectionHolder holder =
+                new org.springframework.jdbc.datasource.ConnectionHolder(connection);
+        org.springframework.transaction.support.TransactionSynchronizationManager.bindResource(dataSource, holder);
+        try {
+            ServiceException e = assertThrows(ServiceException.class, () -> eventPort.append(message().build()));
+            assertEquals(OUTBOX_EVENT_TRANSACTION_REQUIRED.getCode(), e.getCode());
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.unbindResource(dataSource);
+            connection.close();
+        }
+        assertEquals(0, countOutbox(), "被拒绝的写入不应落库");
+    }
+
+    /**
+     * 用例 11（持久回归）：调用方吞掉写入期 DataAccessException（超长字段触发），业务仍不能提交——
+     * 写入失败路径同样标记 rollback-only。
+     */
+    @Test
+    public void testAppend_swallowedWriteFailureStillRollsBackBusiness() {
+        assertThrows(UnexpectedRollbackException.class, () -> transactionTemplate.executeWithoutResult(status -> {
+            assertThrows(ServiceException.class,
+                    () -> eventPort.append(message().eventType("x".repeat(200)).build()));
+        }));
+        assertEquals(0, countOutbox());
+    }
+
 }

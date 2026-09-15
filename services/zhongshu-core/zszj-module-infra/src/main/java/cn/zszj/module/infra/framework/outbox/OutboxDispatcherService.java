@@ -98,8 +98,7 @@ public class OutboxDispatcherService {
     public OutboxDispatcherService(DataSource dataSource, PlatformTransactionManager transactionManager,
                                    List<OutboxEventSink> sinks) {
         this.jdbcTemplate = new JdbcTemplate(dataSource);
-        this.claimTemplate = new TransactionTemplate(transactionManager);
-        this.claimTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+        this.claimTemplate = OutboxTransactions.requiredTemplate(dataSource, transactionManager);
         this.sinks = sinks == null ? List.of() : sinks;
     }
 

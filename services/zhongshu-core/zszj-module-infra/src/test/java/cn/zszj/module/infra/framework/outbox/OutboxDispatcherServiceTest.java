@@ -301,6 +301,17 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         assertTrue(leaseExpires.after(new Timestamp(System.currentTimeMillis())), "租约应指向未来");
     }
 
+    /** 用例 13（codex r2 P1 同源配对）：派发器同样强制 TM 与数据源同源配对，错配构造期即拒绝。 */
+    @Test
+    public void testConstructor_rejectsMismatchedTransactionManager() {
+        DataSource otherDataSource =
+                new org.springframework.jdbc.datasource.DriverManagerDataSource("jdbc:h2:mem:outbox-other-d;MODE=MySQL;DB_CLOSE_DELAY=-1");
+        org.springframework.jdbc.datasource.DataSourceTransactionManager otherTxManager =
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(otherDataSource);
+        assertThrows(IllegalArgumentException.class,
+                () -> new OutboxDispatcherService(dataSource, otherTxManager, List.of()));
+    }
+
     /** 用例 9：claim 不触碰未到期（next_retry_at 在未来）的事件。 */
     @Test
     public void testClaim_skipsNotYetDueEvents() {
