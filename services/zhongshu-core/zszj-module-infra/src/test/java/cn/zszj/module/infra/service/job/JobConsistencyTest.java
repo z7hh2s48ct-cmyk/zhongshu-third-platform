@@ -861,6 +861,69 @@ public class JobConsistencyTest extends BaseDbUnitTest {
         assertDoesNotThrow(() -> jobSchedulerReconciler.reconcileJob(job.getId()));
     }
 
+    @Test
+    public void testScenario16_redactionHandlesPunctuationInsideQuotedValue() {
+        // codex r1 [P1] regression:
+        // 旧 pattern 将引号值中的标点/空格当停止符，只 mask 第一段，会在摘要中泄露凭证后缀
+        String quotedWithComma = "{\"password\":\"alpha,beta\"}";
+        String quotedWithSpace = "{\"password\":\"alpha beta gamma\"}";
+        String unquotedWithComma = "password=alpha,beta";
+
+        jobTenantResultService.saveTenantResultsAsync(9012L, TenantJobExecutionResult.builder()
+                .totalTenants(3).successCount(0).failureCount(3)
+                .perTenantResults(Map.of(
+                        801L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(quotedWithComma).build(),
+                        802L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(quotedWithSpace).build(),
+                        803L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(unquotedWithComma).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9012L);
+        assertEquals(3, details.size());
+
+        // 引号值含逗号：必须整个引号内容都被 mask，不能留下 "beta"
+        String commaSummary = findByTenantId(details, 801L).getErrorSummary();
+        assertFalse(commaSummary.contains("alpha"));
+        assertFalse(commaSummary.contains("beta"));
+        assertTrue(commaSummary.contains("\"password\":\"***\""));
+
+        // 引号值含空格：必须整个引号内容都被 mask，不能留下 "gamma"
+        String spaceSummary = findByTenantId(details, 802L).getErrorSummary();
+        assertFalse(spaceSummary.contains("alpha"));
+        assertFalse(spaceSummary.contains("gamma"));
+        assertTrue(spaceSummary.contains("\"password\":\"***\""));
+
+        // 非引号值含逗号：恢复旧版 \S+ 对标点的支持，不能只 mask "alpha" 留下 ",beta"
+        String bareSummary = findByTenantId(details, 803L).getErrorSummary();
+        assertFalse(bareSummary.contains("alpha"));
+        assertFalse(bareSummary.contains("beta"));
+        assertTrue(bareSummary.contains("password=***"));
+    }
+
+    @Test
+    public void testScenario17_tenantDetailsArePurgedEvenWhenFresherThanParentLog() {
+        // codex r1 [P2] regression:
+        // 明细在执行结束后创建，父日志在执行开始前创建，两者 create_time 可能跨越保留截止日：
+        // 父日志已过期（到期删除）、明细尚未过期（未到期删除），旧 SQL 按明细 create_time 清理会留下孤儿。
+        // 新 SQL JOIN 父日志按父日志 create_time 判定过期，确保级联语义。
+        LocalDateTime expiredParent = LocalDateTime.now().minusDays(30);
+        Long parentLogId = jobLogService.createJobLog(1L, expiredParent, WHITELISTED_HANDLER, null, 1);
+        JobLogDO parentLog = new JobLogDO();
+        parentLog.setId(parentLogId);
+        parentLog.setCreateTime(expiredParent);
+        jobLogMapper.updateById(parentLog);
+
+        // 明细 create_time 保持默认（now），模拟“明细比父日志新”的真实时序
+        JobTenantResultDO freshDetail = newTenantDetail(parentLogId, 901L);
+        jobTenantResultMapper.insert(freshDetail);
+
+        // 父日志过期→清理→明细必须一并消失（旧 SQL 会因为明细 create_time 新而留下孤儿）
+        assertEquals(1, jobLogService.cleanJobLog(14, 100));
+        assertNull(jobLogMapper.selectById(parentLogId));
+        assertEquals(0, jobTenantResultService.getJobTenantResultList(parentLogId).size());
+    }
     // ==================== 测试辅助 ====================
 
     /**

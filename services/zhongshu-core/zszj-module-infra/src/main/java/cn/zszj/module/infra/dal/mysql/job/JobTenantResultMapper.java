@@ -42,18 +42,23 @@ public interface JobTenantResultMapper extends BaseMapperX<JobTenantResultDO> {
     }
 
     /**
-     * 物理删除指定时间之前的租户级明细
+     * 物理删除父执行日志已过期的租户级明细
      *
      * 与父执行日志（infra_job_log）共用同一保留期：父日志被 JobLogCleanJob 物理删除后，
      * 明细既无法回连 handler/param，也没有任何查询入口，会成为永久留存的死数据。
-     * 明细与父日志同时创建，create_time 基本一致，因此按自身 create_time 清理即等价于级联删除。
      *
-     * @param createTime 最大时间
+     * codex r1 指出：明细在执行结束后创建，父日志在执行开始前创建，两者 create_time
+     * 可能跨越保留截止日期（父日志已过期、明细尚未过期），按明细自身 create_time 清理
+     * 会留下孤儿。改为 JOIN 父日志按父日志 create_time 判定过期，确保级联语义。
+     *
+     * @param createTime 父日志的最大时间
      * @param limit      删除条数，防止一次删除太多
      * @return 删除条数
      */
     @Delete("DELETE FROM infra_job_tenant_result WHERE id IN "
-            + "(SELECT id FROM infra_job_tenant_result WHERE create_time < #{createTime} LIMIT #{limit})")
+            + "(SELECT t.id FROM infra_job_tenant_result t "
+            + "INNER JOIN infra_job_log l ON t.job_log_id = l.id "
+            + "WHERE l.create_time < #{createTime} LIMIT #{limit})")
     Integer deleteByCreateTimeLt(@Param("createTime") LocalDateTime createTime, @Param("limit") Integer limit);
 
 }
