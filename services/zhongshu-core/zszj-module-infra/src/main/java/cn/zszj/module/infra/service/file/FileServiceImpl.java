@@ -364,20 +364,33 @@ public class FileServiceImpl implements FileService {
 
     @Override
     public void reconcileCleanupFile(Long id) throws Exception {
-        // 人工对账重试：对象仍在则重试删除，对象已不存在则仅移除可恢复记录；非中间态走正常删除守卫
-        try {
+        // 引用保护同样适用于对账路径（codex r1 P2-1：对账回退不得绕过引用保护）
+        FileDO file = validateFileExists(id);
+        FilePathUtils.validatePath(file.getPath());
+        if (CollUtil.isNotEmpty(deliveryTicketMapper.selectActiveRedeemedByFileId(id, LocalDateTime.now()))) {
+            throw exception(FILE_DELETE_REFERENCED);
+        }
+        // 仅对 DELETING 记录做「存储失败 → 存在性探测 → 仅移除记录」的回退；
+        // PUBLISHED 记录（对账期间被引用回退/误对账）走正常删除守卫
+        if (!FileDO.STATUS_DELETING.equals(file.getStatus())) {
             deleteFile(id);
+            return;
+        }
+        FileClient client = fileConfigService.getFileClient(file.getConfigId());
+        Assert.notNull(client, "客户端({}) 不能为空", file.getConfigId());
+        try {
+            client.delete(file.getPath());
         } catch (Exception ex) {
             // codex r0 P2：区分「对象已确认不存在」与其它存储失败——前者允许仅清理元数据
             //（如 SFTP delete 对缺失对象抛 SSH_FX_NO_SUCH_FILE，会使对账路径永久卡死）
-            FileDO file = fileMapper.selectById(id);
-            if (file != null && isObjectConfirmedAbsent(file)) {
+            if (isObjectConfirmedAbsent(file)) {
                 log.warn("[reconcileCleanupFile][文件({}) 对象已确认不存在，仅移除 DELETING 记录]", id);
                 fileMapper.deleteById(id);
                 return;
             }
             throw ex;
         }
+        fileMapper.deleteById(id);
     }
 
     /**

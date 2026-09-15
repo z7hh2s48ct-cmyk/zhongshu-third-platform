@@ -204,11 +204,9 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
             log.debug("[readDeliveryChunk][会话({}) 登录会话重绑定（同主体令牌变更）]", deliverySessionId);
         }
         FileDO file = requireFile(ticket.getFileId());
-        // 资产已进入删除中间态：在途会话一并终止（codex r0 P1）
-        if (FileDO.STATUS_DELETING.equals(file.getStatus())) {
-            throw exception(FILE_DELIVERY_TICKET_REVOKED);
-        }
-        // 读权限重检（每次取流均重检撤权状态）
+        // 读权限重检（每次取流均重检撤权状态）。
+        // 注：不在此检查资产 DELETING——引用保护命中时删除会回退 PUBLISHED（codex r1 P2-2），
+        // DELETING 仅是瞬态；取流侧仅兑换被 DELETING 阻断，存量会话由引用保护与对象删除事实兜底
         try {
             fileService.validateFileReadable(file, loginUser);
         } catch (Exception ex) {
