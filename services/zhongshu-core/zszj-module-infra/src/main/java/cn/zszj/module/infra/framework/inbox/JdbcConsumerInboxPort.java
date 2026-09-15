@@ -50,11 +50,10 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.INBOX_TRANSACTION_RE
  *   <li><b>参数冲突不当相同成功</b>：同键不同 payload_hash → PARAM_CONFLICT（供体 body_hash 语义推广）；
  *       分类顺序：既有记录先按状态复判（COMPLETED 可重放 / UNKNOWN 须回查 / IN_FLIGHT 并发），
  *       版本护栏仅作用于将执行副作用的首抢/重领路径（codex r0 P2：STALE 不得吞掉可重放结果与回查合同）；</li>
- *   <li><b>版本乱序护栏（对象级串行化）</b>：checkVersionStale 时对同对象最新已完成记录
- *       {@code FOR UPDATE} 行锁——新旧版本事件在此行上串行，后到者持锁后读到已提交的最新版本，
- *       旧版本 STALE_VERSION 拒绝（codex r0 P1：无锁快照可被并发反超，旧版本后提交覆盖新状态；
- *       同时只锁/读单行，不随历史增长放大，codex r0 P2）；可解析整数才比较（非数值语义由事件类型
- *       解释，D-07 登记）；</li>
+ *   <li><b>版本乱序护栏（对象级串行化）</b>：checkVersionStale 时经独立水位行
+ *       {@code inbox_object_watermark}（唯一键 INSERT-or-LOCK，行锁持至业务事务提交，占坑语义含已提交的
+ *       失败占位）——新旧版本事件在此互斥，旧版本 STALE_VERSION 拒绝；仅对可解析整数版本比较
+ *       （非数值语义由事件类型解释，D-07 登记）；</li>
  *   <li><b>可回查中间态且有确认出口</b>：RESULT_UNKNOWN 经 {@link #resolveAfterVerification}
  *       按回查依据推进（codex r0 P1：无出口则永久悬挂）；FAILED 重入即重领（retry_count 语义=
  *       已记录失败次数，由 fail 递增、重领不重复递增）；失败留痕不落原文（循 ZS-JOB-002 惯例）；
@@ -90,6 +89,10 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
     private static final String INSERT_SQL = "INSERT INTO inbox_event "
             + "(consumer, event_key, payload_hash, status, biz_type, biz_id, biz_version, tenant_id, trace_id) "
             + "VALUES (?, ?, ?, 'PROCESSING', ?, ?, ?, ?, ?)";
+
+    /** 处理记录行锁定重读（codex r3：FAILED 分支不得依据过期快照判定——先锁行取最新状态再过护栏）。 */
+    private static final String SELECT_BY_ID_FOR_UPDATE_SQL = "SELECT " + RECORD_COLUMNS + " FROM inbox_event "
+            + "WHERE id = ? AND tenant_id = ? FOR UPDATE";
 
     private static final String RECLAIM_FAILED_SQL = "UPDATE inbox_event "
             + "SET status = 'PROCESSING', last_error = NULL "
@@ -178,22 +181,28 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             case "RESULT_UNKNOWN":
                 return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_RESULT_UNKNOWN, existing);
             case "FAILED":
-                // 失败重入即重领（将重新执行副作用，先过版本护栏）；retry_count 已由 fail 递增（已记录失败
-                // 次数），重领不重复递增；条件更新防并发抢领竞争，竞争后按实际状态有界复判（codex r0/r1）
+                // 失败重入即重领。先锁定处理记录行并重读当前状态（codex r3 发现1：过期 FAILED 快照不得直接
+                // 判定——并发他事务可能已推进为 COMPLETED/RESULT_UNKNOWN，锁序统一为「记录行 → 水位行」）；
+                // retry_count 为已记录失败次数（fail 递增、重领不递增）；条件更新防并发抢领竞争（codex r0/r1）
+                List<InboxRecord> locked = jdbcTemplate.query(SELECT_BY_ID_FOR_UPDATE_SQL, this::mapRow,
+                        existing.getInboxId(), tenantId);
+                InboxRecord current = locked.isEmpty() ? existing : locked.get(0);
+                if (!"FAILED".equals(current.getStatus())) {
+                    if (depth < 1) {
+                        return handleExisting(command, tenantId, current, depth + 1);
+                    }
+                    throw new IllegalStateException("Inbox 并发复判后仍处竞争状态: " + current.getStatus());
+                }
                 if (staleVersion(command, tenantId)) {
-                    return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, existing);
+                    return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, current);
                 }
-                int reclaimed = jdbcTemplate.update(RECLAIM_FAILED_SQL, existing.getInboxId(), tenantId);
-                if (reclaimed == 1) {
-                    return new InboxTryBegin(InboxTryBegin.Outcome.RETRIED_CLAIMED,
-                            withStatusAndRetry(existing, "PROCESSING", existing.getRetryCount()));
+                int reclaimed = jdbcTemplate.update(RECLAIM_FAILED_SQL, current.getInboxId(), tenantId);
+                if (reclaimed != 1) {
+                    throw new IllegalStateException("Inbox 持行锁重领失败: " + current.getInboxId());
                 }
-                // 竞争落败：同键重试通常同版本，落败者抬升为同值无实质影响（codex r2 登记）；按实际状态有界复判
-                if (depth < 1) {
-                    return handleExisting(command, tenantId,
-                            findByKey(tenantId, command.getConsumer(), command.getEventKey()), depth + 1);
-                }
-                throw new IllegalStateException("Inbox 并发复判后仍处竞争状态: " + existing.getStatus());
+                // 重读返回（codex r3 发现2：retry_count/last_error 与持久化状态一致，不用过期快照构造）
+                return new InboxTryBegin(InboxTryBegin.Outcome.RETRIED_CLAIMED,
+                        findByKey(tenantId, current.getConsumer(), current.getEventKey()));
             default:
                 throw new IllegalStateException("Inbox 未知状态: " + existing.getStatus());
         }

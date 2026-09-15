@@ -219,7 +219,7 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
 
     /** 用例 8（失败重试）：fail 后重入即重领（retry_count+1，状态回 PROCESSING），可重新处理。 */
     @Test
-    public void testFail_thenRetriedClaimIncrementsRetryCount() {
+    public void testFail_thenRetriedClaimKeepsRecordedFailureCount() {
         long inboxId = transactionTemplate.execute(status -> {
             InboxTryBegin first = inboxPort.tryBegin(command().build());
             assertTrue(inboxPort.fail(first.getRecord().getInboxId(),
@@ -234,7 +234,8 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
         transactionTemplate.executeWithoutResult(status -> {
             InboxTryBegin retry = inboxPort.tryBegin(command().build());
             assertEquals(InboxTryBegin.Outcome.RETRIED_CLAIMED, retry.getOutcome());
-            assertEquals(1, retry.getRecord().getRetryCount(), "重领后计数保持 fail 记录的失败次数（重领不重复递增）");
+            assertEquals(1, retry.getRecord().getRetryCount(), "重领后计数保持 fail 记录的失败次数（重领不递增）");
+            assertNull(retry.getRecord().getLastError(), "重领应清空上次失败描述");
         });
         assertEquals("PROCESSING", loadRow(inboxId).get("status"));
     }

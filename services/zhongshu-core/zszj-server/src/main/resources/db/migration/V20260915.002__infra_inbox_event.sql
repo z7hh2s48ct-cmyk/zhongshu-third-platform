@@ -32,7 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_inbox_event_biz ON inbox_event (biz_type, biz_id)
 CREATE INDEX IF NOT EXISTS idx_inbox_event_tenant ON inbox_event (tenant_id);
 
 -- 对象版本水位表（codex r1：版本乱序护栏的稳定串行化点）——以 (tenant, consumer, biz_type, biz_id) 为唯一键，
--- version_watermark 为单调已应用版本水位；tryBegin 过护栏时 INSERT-or-LOCK 该行（行锁持至业务事务提交，
+-- version_watermark 为单调版本水位（占坑语义：tryBegin 过护栏即抬升，含已提交的失败占位；业务整体回滚则一并回落）；tryBegin 过护栏时 INSERT-or-LOCK 该行（行锁持至业务事务提交，
 -- 新旧版本事件在此互斥），通过后同事务抬水位——副作用与水位同生共死，杜绝无锁快照反超与首次处理无锁场景。
 CREATE SEQUENCE IF NOT EXISTS inbox_object_watermark_seq START 1;
 CREATE TABLE IF NOT EXISTS inbox_object_watermark (
