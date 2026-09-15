@@ -105,13 +105,16 @@ function newlineWithin(text, from, limit) {
 
 /**
  * CAST 调用左括号判定（r13 P2-1；r14 P2-1/P2-5 重写为 ctxMap 感知左向扫描；
- * r15 P2-1/P2-2 改注释区间表驱动）：自左括号左向跳过空白与注释区间，读取完整
+ * r15 P2-1/P2-2 改注释区间表驱动；r16 P2-2 区间跳转前置于片段 ctx 检查）：
+ * 自左括号左向跳过空白与注释区间，读取完整
  * 标识符词并要求恰为 CAST。注释区间取 buildParenDepthMap 的 commentLeft /
  * commentRight 表——普通注释与片段内局部注释（美元体文本里的块注释与行注释）
  * 同表同路径整段跳过：
  *   - 原 ctxMap 注释标记整段跳过会被注释内配对引号的 CTX_SINGLE_QUOTE 闭引号
  *     标记打断（r15 P2-1 漏检修复）；
- *   - 片段模式原仅跳空白、不跳局部注释（r15 P2-2 漏检修复）。
+ *   - 片段模式原仅跳空白、不跳局部注释（r15 P2-2 漏检修复）；
+ *   - 区间跳转须先于片段 ctx 边界检查——美元体行注释内配对引号的 CTX_SINGLE_QUOTE
+ *     闭引号标记同样不得阻断整段跳过（r16 P2-2 漏检修复）。
  * 片段内（注释 / 美元引用）不越出片段边界（r13 P2-3）；包含左括号自身的区间
  * （包着左括号的注释 / 片段环境）不跳过；无全文搜索 / 回溯，每字符 O(1)（r14 P2-5）。
  * 词边界完整（xCAST( / 1CAST( 不误认定）。
@@ -128,9 +131,11 @@ function isCastCallParen(text, ctxMap, openPos, commentLeft, commentRight) {
   let k = openPos - 1;
   for (;;) {
     if (k < 0) return false;
-    if (openInFrag && ctxMap[k] !== openCtx) break; // 越出片段边界：不在片段外继续找词
+    // r16 P2-2：区间跳转先于片段 ctx 边界检查——注释区间本身即真实注释边界证据，
+    // 区间内配对引号的闭引号标记不得阻断整段跳过
     const l = commentLeft[k];
     if (l >= 0 && commentRight[k] <= openPos) { k = l - 1; continue; } // 注释区间整段跳过（含左括号自身的区间不跳）
+    if (openInFrag && ctxMap[k] !== openCtx) break; // 越出片段边界：不在片段外继续找词
     if (/\s/.test(text[k])) { k -= 1; continue; }
     break;
   }
@@ -997,13 +1002,17 @@ function buildParenDepthMap(text, ctxMap) {
       k += 1;
     }
   };
-  // r15 P2-1/P2-2：注释区间表构建——供 isCastCallParen 左向整段跳过注释。
+  // r15 P2-1/P2-2；r16 P2-1/P2-3：注释区间表构建——供 isCastCallParen 左向整段跳过注释。
   //   fillSpan：把 [s, e) 内尚未标记的字符补填为区间 [s, e)；遇到已填（更内层）
   //     段整段跳跃，分摊每字符 O(1)、总量 O(n)；
   //   markInnerCommentSpans：片段文本内按独立词法配对块注释——引号（'' / "" /
   //     \' 转义）整体消费、层内未闭合引号不吞关闭当前层的定界符（与 fillFragment
   //     同约束）；只处理块注释配对（行注释内的块注释符与块注释内的行注释符均无
   //     注释语义）；未闭合段不填（保守保持既有行为）。
+  //   调用约定（r16）：真实块注释（普通 / 美元体）的外层区间由 skipBlockComment 的
+  //   真实嵌套边界独立 fillSpan——注释内引号无词法语义，片段配对不得改写外层终点；
+  //   片段配对范围仅取定界符之间的文本。美元体行注释与普通行注释一致：先标记
+  //   文本内局部块注释、再回填整行。
   const fillSpan = (s, e) => {
     let t = s;
     while (t < e) {
@@ -1073,8 +1082,11 @@ function buildParenDepthMap(text, ctxMap) {
       // 定初始深度（避免 skipBlockComment 重复计入 '/*' 一层）
       i = skipBlockComment(text, i, text[i] === '/' && text[i + 1] === '*' ? 0 : 1);
       fillFragment(start, i);
-      // r15 P2-1/P2-2：注释区间表——片段自身 '/*' 进栈，匹配闭合时整段回填
-      markInnerCommentSpans(start, i);
+      // r15 P2-1/P2-2；r16 P2-1：片段文本内局部块注释独立配对（引号语义）、
+      // 外层区间按 skipBlockComment 的真实嵌套边界整段回填——注释内引号无
+      // 词法语义（如 /* "/*" */ */），片段引号消费不得改写外层区间终点
+      markInnerCommentSpans(start + 2, i - 2);
+      fillSpan(start, i);
       continue;
     }
     if (ctx === CTX_NORMAL && c === '$') { // r12 P2-3：美元引用体局部重扫
@@ -1091,13 +1103,18 @@ function buildParenDepthMap(text, ctxMap) {
             // r13 P2-9：换行搜索限定在美元体内（原 indexOf 无上限，单次即扫全文）
             const nl = newlineWithin(text, i, bodyEnd);
             fillFragment(i, nl);
-            fillSpan(i, nl); // r15 P2-1/P2-2：体内行注释整段入表（内部块注释符无嵌套语义）
+            // r15 P2-1/P2-2；r16 P2-3：与普通行注释分支一致——先标记注释文本内
+            // 局部块注释（CAST 与括号间夹注释同表跳过），再整段回填行注释区间
+            markInnerCommentSpans(i + 2, nl);
+            fillSpan(i, nl);
             i = nl; continue;
           }
           if (bc === '/' && text[i + 1] === '*') { // 体内块注释：同上
             const end = skipBlockComment(text, i, 0, bodyEnd);
             fillFragment(i, end);
-            markInnerCommentSpans(i, end); // r15 P2-1/P2-2：体内块注释自身进栈、匹配闭合回填
+            // r15 P2-1/P2-2；r16 P2-1：外层区间按真实嵌套边界回填、片段文本内局部块注释独立配对
+            markInnerCommentSpans(i + 2, end - 2);
+            fillSpan(i, end);
             i = end; continue;
           }
           if (bc === "'") { // 体内字符串整体跳过（'' 转义）：串内括号不参与
