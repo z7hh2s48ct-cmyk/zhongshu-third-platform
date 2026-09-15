@@ -44,25 +44,22 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
     private static final String SENSITIVE_KEYS =
             "password|passwd|pwd|secret|token|access[-_]?key|api[-_]?key|private[-_]?key|authorization";
     /**
-     * 敏感"键=值"结构，命中后把值替换为 {@link #MASK}
+     * 敏感键 + 分隔符 + 可选开引号。
      *
-     * 值分两种形态，用交替分支分别处理：
-     * 1. 引号值（JSON 形式 {@code {"password":"alpha,beta"}}）：匹配到闭合引号，
-     *    中间允许任意字符（含标点、空格、转义），避免 codex r1 指出的
-     *    {@code ***,beta} / {@code *** gamma} 残留；
-     * 2. 非引号值（{@code password=alpha,beta}）：匹配非空白字符（含标点），
-     *    多段用空格分隔，带负向断言避免吃穿到下一个敏感键。
-     *    codex r1 指出原 pattern 排除标点会让 {@code alpha,beta} 只 mask {@code alpha}，
-     *    这是相对旧版 {@code \S+} 的回归，此处恢复对标点的支持。
+     * codex r2 指出：r1 的交替分支用 [^"'\\]* 同时排除两种引号，导致混合引号
+     * （如 {"password":"alpha'beta"}）整体不匹配，凭证完全泄露；且嵌套量词
+     * (?:\\.[^"'\\]*)* 在长值（5000+ 转义）时触发 StackOverflowError。
+     *
+     * 改为只匹配"键 + 分隔符 + 开引号"，值的边界由 {@link #summarize} 迭代扫描确定，
+     * 彻底消除正则递归，同时按开引号类型分别处理闭合（允许值内出现另一种引号）。
      */
-    private static final Pattern SENSITIVE_PATTERN = Pattern.compile(
-            "(?i)([\"']?(?:" + SENSITIVE_KEYS + ")[\"']?)"
-                    + "(\\s*[=:]\\s*)"
-                    + "(?:"
-                    +   "([\"'])([^\"'\\\\]*(?:\\\\.[^\"'\\\\]*)*)\\3"
-                    +   "|"
-                    +   "([^\\s\"']+(?:[ \\t]+(?!(?:" + SENSITIVE_KEYS + ")[\"']?\\s*[=:])[^\\s\"']+)*)"
-                    + ")");
+    private static final Pattern SENSITIVE_KEY_PATTERN = Pattern.compile(
+            "(?i)([\"']?(?:" + SENSITIVE_KEYS + ")[\"']?)(\\s*[=:]\\s*)([\"']?)");
+    /**
+     * 用于非引号值扫描时判断"下一个词是否是新的敏感键"，避免吃穿到后续键值对
+     */
+    private static final Pattern NEXT_KEY_PATTERN = Pattern.compile(
+            "(?i)(?:" + SENSITIVE_KEYS + ")[\"']?\\s*[=:]");
     /**
      * 单独出现的凭证前缀（没有敏感键名时也要脱敏），例如异常栈里直接打印的 {@code Bearer eyJhbGciOi...}
      */
@@ -120,6 +117,10 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
      * 脱敏分两步，且顺序不可颠倒：先处理单独的凭证前缀，再处理敏感键值对。
      * 颠倒的话，键值对规则会先把 {@code Bearer} 当成值替换掉，留下后面的真实凭证。
      *
+     * 敏感键值对的值边界由迭代扫描确定（不使用嵌套量词正则），确保：
+     * 1. 混合引号（值内含另一种引号）正确匹配到闭合引号（codex r2 [P1]）；
+     * 2. 超长值（5000+ 转义/词）不会触发 StackOverflowError（codex r2 [P2]）。
+     *
      * @param text 原始文本
      * @return 摘要，入参为空时返回空串
      */
@@ -128,23 +129,103 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
             return StrUtil.EMPTY;
         }
         String masked = CREDENTIAL_PATTERN.matcher(text).replaceAll("$1 " + MASK);
-        // 引号值与非引号值的替换结构不同，无法用单一 replaceAll，改用 Matcher 循环
-        Matcher m = SENSITIVE_PATTERN.matcher(masked);
         StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String replacement;
-            if (m.group(3) != null) {
-                // 引号值：保留开/闭引号，只替换内容
-                replacement = m.group(1) + m.group(2) + m.group(3) + MASK + m.group(3);
+        Matcher m = SENSITIVE_KEY_PATTERN.matcher(masked);
+        int lastEnd = 0;
+        while (m.find(lastEnd)) {
+            sb.append(masked, lastEnd, m.start());
+            String key = m.group(1);
+            String sep = m.group(2);
+            String openQuote = m.group(3);
+            int valueStart = m.end();
+            int valueEnd;
+            if (!openQuote.isEmpty()) {
+                // 引号值：迭代扫描到闭合引号（处理 \ 转义），允许值内出现另一种引号
+                valueEnd = scanQuotedValueEnd(masked, valueStart, openQuote.charAt(0));
+                sb.append(key).append(sep).append(openQuote).append(MASK).append(openQuote);
             } else {
-                // 非引号值：直接替换
-                replacement = m.group(1) + m.group(2) + MASK;
+                // 非引号值：迭代扫描到空白/引号/下一个敏感键
+                valueEnd = scanUnquotedValueEnd(masked, valueStart);
+                if (valueEnd == valueStart) {
+                    // 无值字符（如 "password=" 后面为空），不脱敏，原样保留
+                    sb.append(key).append(sep);
+                    lastEnd = valueStart;
+                    continue;
+                }
+                sb.append(key).append(sep).append(MASK);
             }
-            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            lastEnd = valueEnd;
         }
-        m.appendTail(sb);
+        sb.append(masked, lastEnd, masked.length());
         masked = sb.toString();
         return masked.length() <= SUMMARY_MAX_LENGTH ? masked : masked.substring(0, SUMMARY_MAX_LENGTH);
+    }
+
+    /**
+     * 从 start 开始迭代扫描引号值，返回闭合引号之后的位置。
+     * 处理 \ 转义（跳过转义字符），只匹配与 openQuote 相同的闭合引号，
+     * 因此值内可以安全包含另一种引号（codex r2 [P1] 混合引号场景）。
+     * 未闭合时返回文本末尾（保守策略：宁可多 mask 不可泄露）。
+     */
+    private static int scanQuotedValueEnd(String text, int start, char openQuote) {
+        int i = start;
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (c == '\\') {
+                i += 2;
+                continue;
+            }
+            if (c == openQuote) {
+                return i + 1;
+            }
+            i++;
+        }
+        return text.length();
+    }
+
+    /**
+     * 从 start 开始迭代扫描非引号值，返回值末尾位置。
+     * 值由非空白、非引号字符组成，允许词间空格/制表符，
+     * 但遇到下一个敏感键时停止（避免吃穿到后续键值对）。
+     */
+    private static int scanUnquotedValueEnd(String text, int start) {
+        int i = start;
+        int lastNonWs = start;
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (c == '"' || c == '\'') {
+                break;
+            }
+            if (c == ' ' || c == '\t') {
+                int j = i;
+                while (j < text.length() && (text.charAt(j) == ' ' || text.charAt(j) == '\t')) {
+                    j++;
+                }
+                if (isSensitiveKeyAt(text, j)) {
+                    break;
+                }
+                i = j;
+                continue;
+            }
+            if (Character.isWhitespace(c)) {
+                break;
+            }
+            i++;
+            lastNonWs = i;
+        }
+        return lastNonWs;
+    }
+
+    /**
+     * 判断 text[pos..] 是否以敏感键 + 分隔符开头
+     */
+    private static boolean isSensitiveKeyAt(String text, int pos) {
+        if (pos >= text.length()) {
+            return false;
+        }
+        Matcher m = NEXT_KEY_PATTERN.matcher(text);
+        m.region(pos, text.length());
+        return m.lookingAt();
     }
 
 }

@@ -924,6 +924,93 @@ public class JobConsistencyTest extends BaseDbUnitTest {
         assertNull(jobLogMapper.selectById(parentLogId));
         assertEquals(0, jobTenantResultService.getJobTenantResultList(parentLogId).size());
     }
+    @Test
+    public void testScenario18_redactionHandlesMixedQuotesInsideValue() {
+        // codex r2 [P1] regression:
+        // r1 pattern 用 [^"'\\]* 同时排除两种引号，导致值内含另一种引号时整体不匹配，凭证完全泄露
+        String doubleQuoteWithApostrophe = "{\"password\":\"alpha'beta\"}";
+        String singleQuoteWithDouble = "password='alpha\"beta'";
+
+        jobTenantResultService.saveTenantResultsAsync(9013L, TenantJobExecutionResult.builder()
+                .totalTenants(2).successCount(0).failureCount(2)
+                .perTenantResults(Map.of(
+                        811L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(doubleQuoteWithApostrophe).build(),
+                        812L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(singleQuoteWithDouble).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9013L);
+        assertEquals(2, details.size());
+
+        // 双引号值内含单引号：必须整体 mask，不能留下 alpha 或 beta
+        String mixedSummary = findByTenantId(details, 811L).getErrorSummary();
+        assertFalse(mixedSummary.contains("alpha"));
+        assertFalse(mixedSummary.contains("beta"));
+        assertTrue(mixedSummary.contains("\"password\":\"***\""));
+
+        // 单引号值内含双引号：必须整体 mask
+        String singleMixed = findByTenantId(details, 812L).getErrorSummary();
+        assertFalse(singleMixed.contains("alpha"));
+        assertFalse(singleMixed.contains("beta"));
+        assertTrue(singleMixed.contains("password='***'"));
+    }
+
+    @Test
+    public void testScenario19_redactionIsStackSafeForLongValues() {
+        // codex r2 [P2] regression:
+        // r1 嵌套量词 (?:\\.[^"'\\]*)* 在 5000+ 转义时触发 StackOverflowError，
+        // 迭代扫描方案必须对任意长度值安全
+        String manyEscapes = "{\"password\":\"" + "\\n".repeat(5000) + "\"}";
+        String manyWords = "password=" + "alpha ".repeat(5000);
+
+        // 不抛 StackOverflowError 即为通过；同时验证脱敏效果
+        jobTenantResultService.saveTenantResultsAsync(9014L, TenantJobExecutionResult.builder()
+                .totalTenants(2).successCount(0).failureCount(2)
+                .perTenantResults(Map.of(
+                        821L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(manyEscapes).build(),
+                        822L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(manyWords).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9014L);
+        assertEquals(2, details.size());
+
+        String escapeSummary = findByTenantId(details, 821L).getErrorSummary();
+        assertTrue(escapeSummary.length() <= 512);
+        assertTrue(escapeSummary.contains("\"password\":\"***\""));
+        assertFalse(escapeSummary.contains("\\n"));
+
+        String wordSummary = findByTenantId(details, 822L).getErrorSummary();
+        assertTrue(wordSummary.length() <= 512);
+        assertTrue(wordSummary.contains("password=***"));
+        assertFalse(wordSummary.contains("alpha"));
+    }
+
+    @Test
+    public void testScenario20_orphanDetailsAreCollectedAfterParentLogDeletion() {
+        // codex r2 [P2] regression:
+        // JOIN 级联清理与父日志删除是两步操作，长执行任务可能在两步之间写入明细，
+        // 父日志随后被删，该明细因 JOIN 找不到父日志而永久留存。
+        // 兜底孤儿回收按明细自身 create_time 清理，确保最终一致性。
+        LocalDateTime expired = LocalDateTime.now().minusDays(30);
+
+        // 模拟：父日志已被删除（不存在），明细的 create_time 也已过期
+        Long orphanLogId = 99999L; // 不存在的父日志 ID
+        JobTenantResultDO orphanDetail = newTenantDetail(orphanLogId, 950L);
+        jobTenantResultMapper.insert(orphanDetail);
+        // 回拨明细 create_time 到过期时间（模拟“已过保留期”）
+        JobTenantResultDO orphanUpdate = new JobTenantResultDO();
+        orphanUpdate.setId(orphanDetail.getId());
+        orphanUpdate.setCreateTime(expired);
+        jobTenantResultMapper.updateById(orphanUpdate);
+
+        // 清理：主轮 JOIN 找不到父日志（已不存在），兜底轮 NOT EXISTS 回收孤儿
+        jobLogService.cleanJobLog(14, 100);
+        assertEquals(0, jobTenantResultService.getJobTenantResultList(orphanLogId).size());
+    }
+
     // ==================== 测试辅助 ====================
 
     /**

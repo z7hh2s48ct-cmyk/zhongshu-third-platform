@@ -92,6 +92,14 @@ public class JobLogServiceImpl implements JobLogService {
                 break;
             }
         }
+    
+        // 兜底：回收父日志已被删除的孤儿明细（codex r2 [P2] 长执行任务在两步操作间写入的场景）
+        for (int i = 0; i < Short.MAX_VALUE; i++) {
+            int deleteCount = jobTenantResultMapper.deleteOrphanByCreateTimeLt(expireDate, deleteLimit);
+            if (deleteCount < deleteLimit) {
+                break;
+            }
+        }
     }
 
     @Override

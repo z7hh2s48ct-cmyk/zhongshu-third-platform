@@ -61,4 +61,21 @@ public interface JobTenantResultMapper extends BaseMapperX<JobTenantResultDO> {
             + "WHERE l.create_time < #{createTime} LIMIT #{limit})")
     Integer deleteByCreateTimeLt(@Param("createTime") LocalDateTime createTime, @Param("limit") Integer limit);
 
+    /**
+     * 物理删除父执行日志已不存在的孤儿明细
+     *
+     * codex r2 指出：JOIN 级联清理与父日志删除是两步操作，长执行任务可能在两步之间
+     * 写入明细（父日志随后被删），该明细因 JOIN 找不到父日志而永久留存。
+     * 本方法按明细自身 create_time 兜底回收孤儿，与旧版按自身时间清理的语义对齐。
+     *
+     * @param createTime 明细的最大时间（与父日志共用同一保留期）
+     * @param limit      删除条数，防止一次删除太多
+     * @return 删除条数
+     */
+    @Delete("DELETE FROM infra_job_tenant_result WHERE id IN "
+            + "(SELECT t.id FROM infra_job_tenant_result t "
+            + "WHERE NOT EXISTS (SELECT 1 FROM infra_job_log l WHERE l.id = t.job_log_id) "
+            + "AND t.create_time < #{createTime} LIMIT #{limit})")
+    Integer deleteOrphanByCreateTimeLt(@Param("createTime") LocalDateTime createTime, @Param("limit") Integer limit);
+
 }
