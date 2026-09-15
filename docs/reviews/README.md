@@ -96,6 +96,14 @@
 
 各任务评审文档内部的发现编号（如 ZS-BRAND-006.A 的 P1-3/P2-4…）与本 README 汇总表的序号（P1 表 #2、P2 表 #7…）**是两套独立编号**。引用时须明示口径：代码注释与各 hotfix 评审文档一律引用**来源评审文档**的编号；本 README 内则一律写作「本表 P2 #n」。对照表见 [codex-hotfix-B.md](codex-hotfix-B.md) 的「编号对照说明」节。
 
+## B01 部署模板专项评审状态
+
+> 新一轮评审：B01「部署模板专项」（ZS-OPS-002.A 脱敏部署模板与可审查性校验——纯静态 Node 校验器交付，未跑 Docker；真实业务启动联验随 B02/B03）。评审工具、严重度定义、后续处理约定均沿用上文。r0/r5 两弧原始 stdout 已入库（[codex-ZS-OPS-002.raw.md](codex-ZS-OPS-002.raw.md)、[codex-ZS-OPS-002-r5.raw.md](codex-ZS-OPS-002-r5.raw.md)）；r6→r11 各弧裁决 JSON 落盘 outputs/；r1~r4 裁决未随暂存保留，发现与处置按提交说明摘录（如实登记）。
+
+| 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
+|---|---|---|---|---|---|
+| ZS-OPS-002.A 脱敏部署模板、探针/TLS/反代与配置合同（B01 分批子项） | `8159cf2c`（feat/ops-002-a；r0~r11 处置 `685644d0`/`ef403957`/`ca7ef24d`/`257c3185`/`8ea43a81`/`76e61678`/`25e65e23`/`b1aea707`/`0f65d227`/`58f12b16`/`1f454b37`/`b6f06019`，合并 `63a20334`） | 8 files, +3047 | ✅ 评审通过（r0→r11 十二弧，末轮 10×P2 已处置待下一弧复评） | [codex-ZS-OPS-002.A.md](codex-ZS-OPS-002.A.md) | codex（`gpt-6-astra`/`xhigh`）r0 FAIL 3×P1+7×P2（dynamic-datasource 属性绑定错/Spring Boot 3 Redis 属性路径/owner-app 凭据分离/探针与端口边界）→ r1 FAIL 2×P1+2×P2（config 挂载路径与应用角色 provision）→ r2~r5 逐弧 0×P0/P1+2~3×P2（SQL 词法上下文图/注释语义/全文件生效）→ r6→r11 校验器词法/语义逐轮加固（候选独立解析/YAML·SQL 上下文隔离/format 占位符与参数游标/块标量词法与折叠/WHERE 与子查询隔离/括号深度 O(n²)→O(n) 缓存），各弧 6~10×P2 全部弧内处置（r10 另含 1×P3）。验证：`--self-test` 81/81、`node --test` 21→116/116、r11 复现脚本 12/12（含性能回归 195/707/3068ms→13/10/17ms）、fast 门禁 10/10、verify-docs 0 issue。登记边界：纯静态校验未跑 Docker（真实启动随 B02/B03）、upstream 端口对齐归 .B/.C、末轮修复未经 r12 复评（已处置待复评、不以处置提交自证收敛）。 |
+
 ## B03 接口与安全链路专项评审状态
 
 > 新一轮评审：B03「接口与安全链路」批次（区别于上方 15.2 品牌专项首轮）。评审工具、严重度定义、后续处理约定均沿用上文。
@@ -158,6 +166,7 @@
 | 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
 |---|---|---|---|---|---|
 | ZS-CLIENT-002.A 移动端服务端授权导航注册表与直达页守卫 | `8b5ac0c0`（feat/client-002-a，合并 `57363732`） | 6 files, +571/-1 | ✅ 评审通过（r0→r3 四弧） | [codex-ZS-CLIENT-002.A.md](codex-ZS-CLIENT-002.A.md) | codex（`gpt-6-astra`/`xhigh`/`read-only`）r0 FAIL 1×P1（未注册业务路由默认放行）+1×P2（BPM 各页权限压平为 task:query）→ 修复四级默认拒绝 + BPM_SHARED_APPROVAL_PERMISSIONS 多入口权限；r1 FAIL 1×P1（默认拒绝误伤 BPM detail/audit/create、IM contact 兄弟/跨包页）→ 修复 EXTRA_ROUTE_ACCESS 显式补登 + ancestorPrefixes 继承；r2 0×P0/P1+2×P2（P2-1 子目录拒绝被模块并集兜底覆盖→移除步骤4模块并集、步骤3命中即返回；P2-2 停用模块页空权限集放行撞 501→延后）；r3 0×P0/P1（r1-P1+r2-P2-1 双归零）+2×P2（后代言权限并入父作用域、共享表单动作权限被 query 覆盖→延后）达收口阀值。弧内已修 4（r0-P1/r0-P2/r1-P1/r2-P2-1）、阻塞项 0；余 3×P2 同属「前缀继承模型精度」主题（服务端 `@PreAuthorize` 为真实安全边界、客户端守卫为纵深防御 UX 层），依「后续处理约定」第 2 条延后登记 ZS-CLIENT-002.B（B08）整体处置，循 ZS-FILE-003、ZS-SEC-010 P2 延后先例。验证：vitest 75/75（router-access 39+interceptor 26+http 10）、lint/type-check/build:h5/build:mp 全绿 EXIT=0 |
+| ZS-CLIENT-001.A Web 技术账号授权导航、撤权清理会话合同与登录入口消毒（B06 分批子项） | `72c90376`（feat/client-001-a；r1~r5 处置 `67da593a`/`7ca52fbd`/`1334a10b`/`a6bab2b9`/`41055f0e`，合并 `ed722b31`） | 20 files, +3951/-124 | ✅ 评审通过（r0→r5 六弧，末轮 4×P3 已处置待下一弧复评） | [codex-ZS-CLIENT-001.A.md](codex-ZS-CLIENT-001.A.md) | codex（`gpt-6-astra`/`xhigh`）r0 FAIL（41 处锚点缺口 + MobileForm/ForgetPasswordForm 入口消毒遗漏）→ `fed79051`；r1 FAIL 3×P2+2×P3（父目录锚点过宽/CRM·商城共享宿主链/fullPageUrl 未消费/契约仅验函数名）→ r2 FAIL 3×P2+1×P3（/crm/clue 过度授权、/pay 整目录、装修父锚 id=517 兄弟互通、契约文件级）→ r3 FAIL 1×P2+1×P3（容器节点 517 仍命中、单分支替换绕过）→ r4 FAIL 3×P3（绑定覆盖/字符串伪调用/裸 replace）→ r5 FAIL 4×P3（解构遮蔽/默认值误判/字符串失信/$ 绑定）；六弧累计 0×P0/P1、P2 归零，末轮修复未经 r6 复评（已处置待复评、不以处置提交自证收敛）。验证：vitest 110→155/155、G10 类型基线 11==11 零新增。登记边界：前端只做权限集合成员判断（服务端 @PreAuthorize 为唯一真实边界）、enabledModules 为 CFG-003.A 预留入参降级服务端菜单存在性判定 |
 
 ## B09 技术准备先行评审状态
 
