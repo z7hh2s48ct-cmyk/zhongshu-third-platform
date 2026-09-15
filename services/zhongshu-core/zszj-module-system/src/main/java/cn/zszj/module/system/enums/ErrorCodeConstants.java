@@ -202,4 +202,11 @@ public interface ErrorCodeConstants {
     // ========== 站内信发送 1-002-028-000 ==========
     ErrorCode NOTIFY_SEND_TEMPLATE_PARAM_MISS = new ErrorCode(1_002_028_000, "模板参数({})缺失");
 
+
+    // ========== 通知派发 1-002-028-001（ZS-MSG-001） ==========
+    ErrorCode NOTIFY_DISPATCH_EVENT_ID_REQUIRED = new ErrorCode(1_002_028_001, "通知派发缺少 eventId（幂等键），拒绝写入");
+    ErrorCode NOTIFY_DISPATCH_RECIPIENTS_REQUIRED = new ErrorCode(1_002_028_002, "通知派发缺少收件人，拒绝写入");
+    ErrorCode NOTIFY_DISPATCH_WRITE_FAILED = new ErrorCode(1_002_028_003, "通知发送日志写入失败");
+    ErrorCode NOTIFY_DISPATCH_TENANT_REQUIRED = new ErrorCode(1_002_028_004, "通知派发缺少租户上下文，拒绝写入");
+    ErrorCode NOTIFY_DISPATCH_ACTOR_TYPE_REQUIRED = new ErrorCode(1_002_028_005, "通知派发缺少 actorType（事件主体类型），拒绝写入");
 }

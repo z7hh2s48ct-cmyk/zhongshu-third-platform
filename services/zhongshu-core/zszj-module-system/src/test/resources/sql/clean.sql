@@ -32,3 +32,6 @@ DELETE FROM "system_mail_template";
 DELETE FROM "system_mail_log";
 DELETE FROM "system_notify_template";
 DELETE FROM "system_notify_message";
+
+DELETE FROM system_notify_send_log;
+DELETE FROM outbox_event;
