@@ -75,8 +75,9 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             + "WHERE tenant_id = ? AND consumer = ? AND event_key = ?";
 
     /** 对象版本水位行（codex r1：稳定串行化点）——唯一键 INSERT-or-LOCK，行锁持至业务事务提交。 */
+    /** 水位行以首次尝试的版本初始化（codex r5：固定 0 会把首个负整数版本误判为旧版本）。 */
     private static final String WATERMARK_INSERT_SQL = "INSERT INTO inbox_object_watermark "
-            + "(tenant_id, consumer, biz_type, biz_id, version_watermark) VALUES (?, ?, ?, ?, 0)";
+            + "(tenant_id, consumer, biz_type, biz_id, version_watermark) VALUES (?, ?, ?, ?, ?)";
 
     private static final String WATERMARK_SELECT_FOR_UPDATE_SQL = "SELECT version_watermark "
             + "FROM inbox_object_watermark WHERE tenant_id = ? AND consumer = ? AND biz_type = ? AND biz_id = ? "
@@ -267,7 +268,8 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
      * 对象级互斥点：INSERT-or-撞键（撞键经保存点回滚）后 SELECT ... FOR UPDATE 持有该行直至业务事务提交，
      * 同一行等待者持锁后读到最新已提交水位（同行等待无快照旧值问题），首次处理亦有稳定互斥点；
      * incoming &lt; 水位 → STALE；通过则同事务抬水位（水位与副作用同生共死，业务回滚即回落，不虚高）。
-     * 版本为可解析整数才比较；非数值语义由事件类型解释（D-07 登记）。
+     * 水位行以首次尝试的版本初始化（支持任意整数版本，含负数）。版本为可解析整数才比较；
+     * 非数值语义由事件类型解释（D-07 登记）。
      */
     private boolean staleVersion(InboxCommand command, Long tenantId) {
         if (!command.isCheckVersionStale() || !StringUtils.hasText(command.getBizType())
@@ -282,7 +284,7 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         Savepoint savepoint = createClaimSavepoint();
         try {
             jdbcTemplate.update(WATERMARK_INSERT_SQL, tenantId, command.getConsumer(),
-                    command.getBizType(), command.getBizId());
+                    command.getBizType(), command.getBizId(), incoming);
         } catch (DuplicateKeyException e) {
             // 水位行已存在：回滚保存点恢复事务可用性（PG 撞 23505 后事务中止），转入持锁读取
             rollbackClaimSavepoint(savepoint);
@@ -290,9 +292,9 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         Long watermark = jdbcTemplate.queryForObject(WATERMARK_SELECT_FOR_UPDATE_SQL, Long.class,
                 tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
         if (watermark == null) {
-            // 撞键的竞争者已整体回滚（水位行随之消失）：重建水位行并锁定（有界一次）
+            // 撞键的竞争者已整体回滚（水位行随之消失）：以本版本重建水位行并锁定（有界一次）
             jdbcTemplate.update(WATERMARK_INSERT_SQL, tenantId, command.getConsumer(),
-                    command.getBizType(), command.getBizId());
+                    command.getBizType(), command.getBizId(), incoming);
             watermark = jdbcTemplate.queryForObject(WATERMARK_SELECT_FOR_UPDATE_SQL, Long.class,
                     tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
         }

@@ -317,6 +317,28 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
         assertEquals(0, countInbox(), "fail-closed 拒绝不应落库");
     }
 
+    /**
+     * 用例 17（codex r5 P2 负数版本）：水位以首次尝试的版本初始化——全新对象首个负整数版本不因
+     * 固定初始水位 0 被误判旧版本；其后更高版本可处理、更低版本拒绝。
+     */
+    @Test
+    public void testTryBegin_negativeFirstVersionInitializesWatermark() {
+        transactionTemplate.executeWithoutResult(status -> {
+            InboxTryBegin first = inboxPort.tryBegin(command().eventKey("evt-neg").bizVersion("-1")
+                    .checkVersionStale(true).build());
+            assertEquals(InboxTryBegin.Outcome.CLAIMED, first.getOutcome(), "首个负数版本应正常占坑");
+            inboxPort.complete(first.getRecord().getInboxId(), null);
+        });
+        transactionTemplate.executeWithoutResult(status -> {
+            assertEquals(InboxTryBegin.Outcome.STALE_VERSION, inboxPort.tryBegin(
+                    command().eventKey("evt-neg-2").bizVersion("-2").checkVersionStale(true).build())
+                    .getOutcome());
+            assertEquals(InboxTryBegin.Outcome.CLAIMED, inboxPort.tryBegin(
+                    command().eventKey("evt-neg-0").bizVersion("0").checkVersionStale(true).build())
+                    .getOutcome());
+        });
+    }
+
     /** 用例 13（同源配对）：TM 与数据源非同源配对在构造期即拒绝（codex JOB-002 r2 同款缺陷预防）。 */
     @Test
     public void testConstructor_rejectsMismatchedTransactionManager() {

@@ -10,14 +10,15 @@ import lombok.Value;
  *       {@link ConsumerInboxPort#complete}/{@code fail}/{@code markResultUnknown} 推进；</li>
  *   <li>{@code DUPLICATE_COMPLETED}——同键已完成（可重放业务结果在 {@code record.result} 中，
  *       调用方直接返回首次结果，不重复副作用）；</li>
- *   <li>{@code DUPLICATE_IN_FLIGHT}——同键处理中（并发抢占或先前事务未提交）；</li>
+ *   <li>{@code DUPLICATE_IN_FLIGHT}——同键已有处理中记录（并发抢占；或同键插入等待他事务提交后的
+ *       重复分类）；</li>
  *   <li>{@code DUPLICATE_RESULT_UNKNOWN}——先前结果未知（外部结果不确定），必须先回查
  *       （{@code record} 携带现场），不得盲目重处理；</li>
  *   <li>{@code RETRIED_CLAIMED}——先前 FAILED，本次重领（retry_count 为已记录失败次数：由失败登记递增，
  *       重领本身不递增，可重新处理）；</li>
  *   <li>{@code PARAM_CONFLICT}——同键不同载荷指纹（参数冲突不得当作相同成功）；</li>
- *   <li>{@code STALE_VERSION}——旧版本事件（同对象版本水位已不低于其版本——水位由处理尝试占坑抬升，
- *       含已提交的失败占位；旧版本不得覆盖新状态，处置归人工/补偿，D-07 登记）。</li>
+ *   <li>{@code STALE_VERSION}——旧版本事件（同对象版本水位已<b>严格高于</b>其版本——水位由处理尝试
+ *       占坑抬升，含已提交的失败占位；等值属重试/重放，不拒绝；处置归人工/补偿，D-07 登记）。</li>
  * </ul>
  */
 @Value
