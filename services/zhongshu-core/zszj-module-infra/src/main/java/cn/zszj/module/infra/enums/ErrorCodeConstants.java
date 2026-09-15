@@ -1,6 +1,7 @@
 package cn.zszj.module.infra.enums;
 
 import cn.zszj.framework.common.exception.ErrorCode;
+import cn.zszj.framework.quartz.core.enums.JobFrameworkErrorCodes;
 
 /**
  * Infra 错误码枚举类
@@ -103,6 +104,16 @@ public interface ErrorCodeConstants {
     ErrorCode OUTBOX_EVENT_TENANT_CONTEXT_REQUIRED = new ErrorCode(1_001_009_002, "Outbox 事件追加缺少技术租户上下文，拒绝默认归属");
     ErrorCode OUTBOX_EVENT_PAYLOAD_SERIALIZE_FAILED = new ErrorCode(1_001_009_003, "Outbox 事件载荷序列化失败");
     ErrorCode OUTBOX_EVENT_WRITE_FAILED = new ErrorCode(1_001_009_004, "Outbox 事件写入失败");
+
+    // ========== 任务启停一致性与租户级结果 1-001-009-005（ZS-JOB-001） ==========
+    // 号段说明：1-001-009 段的 000~004 已被 ZS-JOB-002（事务 Outbox）占用，本任务在同一号段内自 005 起顺延，不跨段、不占用其它号段。
+    // 其中 005 与 008 由框架层（starter-job）抛出，数字与文案以 JobFrameworkErrorCodes 为单一真源，此处只做目录登记。
+    ErrorCode JOB_HANDLER_NOT_WHITELISTED = new ErrorCode(JobFrameworkErrorCodes.HANDLER_NOT_WHITELISTED_CODE,
+            JobFrameworkErrorCodes.HANDLER_NOT_WHITELISTED_MSG);
+    ErrorCode JOB_TRIGGER_ON_PAUSED = new ErrorCode(1_001_009_006, "定时任务处于非开启状态（{}），不允许手动触发");
+    ErrorCode JOB_SCHEDULER_STATE_DRIFT = new ErrorCode(1_001_009_007, "定时任务({})的任务表状态({})与调度器状态({})不一致，且修正失败");
+    ErrorCode JOB_TENANT_PARTIAL_FAILURE = new ErrorCode(JobFrameworkErrorCodes.TENANT_PARTIAL_FAILURE_CODE,
+            JobFrameworkErrorCodes.TENANT_PARTIAL_FAILURE_MSG);
 
     // ========== 任务事件 Inbox 1-001-010-000（ZS-JOB-003） ==========
     ErrorCode INBOX_COMMAND_FIELD_MISSING = new ErrorCode(1_001_010_000, "Inbox 消费命令必填字段({})缺失");

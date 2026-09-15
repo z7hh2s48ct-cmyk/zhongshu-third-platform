@@ -3,6 +3,7 @@ package cn.zszj.module.infra.service.job;
 import cn.hutool.extra.spring.SpringUtil;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.quartz.core.scheduler.SchedulerManager;
+import cn.zszj.framework.quartz.core.whitelist.JobHandlerWhitelistValidator;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.infra.controller.admin.job.vo.job.JobPageReqVO;
 import cn.zszj.module.infra.controller.admin.job.vo.job.JobSaveReqVO;
@@ -37,6 +38,17 @@ public class JobServiceImplTest extends BaseDbUnitTest {
     private JobMapper jobMapper;
     @MockitoBean
     private SchedulerManager schedulerManager;
+
+    /**
+     * ZS-JOB-001：BaseDbUnitTest 不加载定时任务的自动装配，这里显式补齐 JobServiceImpl 新增的两个依赖。
+     * 白名单校验器被 Mock 后 validate() 为空实现，等价于“未配置白名单 = 未启用管控 = 放行”，
+     * 与既有测试的前提一致；白名单的具体语义由 JobConsistencyTest 覆盖。
+     */
+    @MockitoBean
+    private JobHandlerWhitelistValidator jobHandlerWhitelistValidator;
+
+    @MockitoBean
+    private JobSchedulerReconciler jobSchedulerReconciler;
 
     @MockitoBean
     private JobLogCleanJob jobLogCleanJob;
@@ -188,8 +200,8 @@ public class JobServiceImplTest extends BaseDbUnitTest {
 
     @Test
     public void testTriggerJob_success() throws SchedulerException {
-        // mock 数据
-        JobDO job = randomPojo(JobDO.class);
+        // mock 数据。ZS-JOB-001 后只有开启状态的任务才允许手动触发，因此这里显式置为 NORMAL
+        JobDO job = randomPojo(JobDO.class, o -> o.setStatus(JobStatusEnum.NORMAL.getStatus()));
         jobMapper.insert(job);
 
         // 调用
