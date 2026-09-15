@@ -44,8 +44,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.OAUTH2_TOKEN_SESSION_NOT_OWNED;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.OAUTH2_TOKEN_SESSION_SELF_REQUIRES_USER;
 
 /**
  * OAuth2.0 Token Service 实现类
@@ -281,6 +284,21 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         if (accessTokenDO == null) {
             return null;
         }
+        // ZS-LOGIN-006 codex r0 P2：撤销主体逻辑抽取为 revokeSession，与 removeAccessTokenById 共享；
+        // 二者都以「已定位的 DO」直接进入行锁 + 重读，杜绝二次按串重查造成的撤销竞态窗口
+        return revokeSession(accessTokenDO);
+    }
+
+    /**
+     * ZS-LOGIN-002/006：撤销一条会话（访问令牌 + 刷新令牌 + 代际 + 缓存），以入参 DO 的 refreshToken 为锁锚。
+     *
+     * <p><b>锁序与重读</b>：先对刷新令牌行加行锁（{@code selectByRefreshTokenForUpdate}），获锁后按 refreshToken
+     * <b>重读</b>当前存活的访问令牌代际（{@link #listAliveAccessTokens}），把「并发刷新在本事务获锁前已提交的
+     * 新代际令牌」一并撤销。<b>不</b>依赖入参 DO 自身是否仍存活——即便它已被并发刷新取代（逻辑删除），
+     * 重读仍会命中新代际并撤销，消除「校验时 DO 存活、委托时按串重查得 null 提前返回、新代际幸存」的竞态窗口
+     * （ZS-LOGIN-006 codex r0 P2）。
+     */
+    private OAuth2AccessTokenDO revokeSession(OAuth2AccessTokenDO accessTokenDO) {
         // ZS-LOGIN-002：行锁 + 获锁后重读，撤销并发刷新可能已提交的新代际访问令牌
         String refreshToken = accessTokenDO.getRefreshToken();
         oauth2RefreshTokenMapper.selectByRefreshTokenForUpdate(refreshToken);
@@ -301,6 +319,58 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         // ZS-LOGIN-005.A：缓存失效注册到事务提交后执行（回滚亦执行失效补偿），失败告警不阻断
         invalidateCacheAfterCommit("退出撤销(removeAccessToken)", cacheInvalidations);
         return accessTokenDO;
+    }
+
+    /**
+     * ZS-LOGIN-006：按「不可用于认证的会话 ID」撤销会话，替代以原始 accessToken 串标识踢出。
+     *
+     * <p><b>为何用 ID 而非令牌串</b>：以 accessToken 串踢出，要求管理端分页回显令牌、前端持有令牌，
+     * 等同把「持有即可认证」的凭据暴露给查看权限主体（前端表格 / 浏览器缓存 / 访问日志）。改用 DB 主键 ID
+     * 作为「不可用于认证的会话标识」，管理端无需再持有任何秘密即可完成踢出。
+     *
+     * <p><b>租户隔离（纵深防御）</b>：{@code selectById} 天然租户作用域（{@link OAuth2AccessTokenDO} 继承
+     * {@code TenantBaseDO}，生产环境租户拦截器追加 {@code tenant_id} 过滤），跨租户 ID 查不到 → 幂等 {@code null}；
+     * 服务层再显式复核当前租户上下文，杜绝拦截器被绕过 / 误配时的越权撤销（无上下文或显式忽略租户时跳过）。
+     *
+     * <p><b>归属校验</b>：{@code expectedUserId} 非空（自助撤销）时只能操作本人会话，非本人抛
+     * {@code OAUTH2_TOKEN_SESSION_NOT_OWNED}；且必须为真实用户（> 0），client_credentials 机器令牌 userId=0
+     * 抛 {@code OAUTH2_TOKEN_SESSION_SELF_REQUIRES_USER}（ZS-LOGIN-006 codex r0 P1）；{@code expectedUserType} 非空时
+     * 一并校验用户类型，防同编号跨 ADMIN/MEMBER 误撤（codex r0 P2）；均为空（管理员撤销）不受归属限制。
+     *
+     * <p><b>撤销主体</b>委托与 {@link #removeAccessToken(String)} 共享的 {@link #revokeSession}（行锁 + 获锁后重读 +
+     * 代际清理 + 刷新令牌撤销 + 提交后缓存失效）；以已校验 DO 的 refreshToken 为锁锚，<b>不</b>再二次
+     * {@code selectByAccessToken} 重查，消除「校验→委托」两次查询间的撤销竞态窗口（codex r0 P2）。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public OAuth2AccessTokenDO removeAccessTokenById(Long id, Long expectedUserId, Integer expectedUserType) {
+        // 1. 以会话 ID 定位（selectById 租户作用域）；不存在 / 已清理 / 跨租户（拦截器已过滤）→ 查不到
+        OAuth2AccessTokenDO accessTokenDO = oauth2AccessTokenMapper.selectById(id);
+        if (accessTokenDO == null) {
+            return null; // 幂等：不回显存在性，杜绝跨租户 / 越权探测
+        }
+        // 2. 纵深防御：显式复核租户上下文（H2 单测无拦截器，生产即便拦截器被绕过 / 误配也不越权）
+        Long currentTenantId = TenantContextHolder.getTenantId();
+        if (currentTenantId != null && !TenantContextHolder.isIgnore()
+                && !currentTenantId.equals(accessTokenDO.getTenantId())) {
+            return null; // 跨租户参数：幂等拒绝
+        }
+        // 3. 自助撤销前置：expectedUserId 非空即自助语义，必须为真实用户（> 0）。client_credentials 机器令牌
+        //    userId=0，多个客户端共享 userId=0，若放行将跨客户端列出 / 撤销他人会话（ZS-LOGIN-006 codex r0 P1）。
+        //    与 Controller 双重设防：即使 Controller 守卫被绕过，服务层仍拒绝机器主体自助撤销。
+        if (expectedUserId != null && expectedUserId <= 0L) {
+            throw exception(OAUTH2_TOKEN_SESSION_SELF_REQUIRES_USER);
+        }
+        // 4. 归属校验：自助撤销只能操作本人会话（userId 维）；管理员撤销（expectedUserId 为空）不受限
+        if (expectedUserId != null && !expectedUserId.equals(accessTokenDO.getUserId())) {
+            throw exception(OAUTH2_TOKEN_SESSION_NOT_OWNED);
+        }
+        // 4.1 userType 双维校验：防同编号跨 ADMIN/MEMBER 类型误撤（ZS-LOGIN-006 codex r0 P2）
+        if (expectedUserType != null && !expectedUserType.equals(accessTokenDO.getUserType())) {
+            throw exception(OAUTH2_TOKEN_SESSION_NOT_OWNED);
+        }
+        // 5. 委托共享撤销逻辑：以已校验 DO 的 refreshToken 加锁 + 重读撤销当前代际，不再二次按串重查
+        return revokeSession(accessTokenDO);
     }
 
     /**

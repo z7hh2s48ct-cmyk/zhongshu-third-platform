@@ -7,20 +7,22 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
-@Schema(description = "管理后台 - 访问令牌 Response VO")
+/**
+ * 管理后台 - 访问令牌（会话）Response VO
+ *
+ * <p>ZS-LOGIN-006：本响应体用于「会话管理」，<b>不得</b>回显可用于认证的秘密（accessToken / refreshToken）。
+ * 一旦经管理端点回显，即等同把「持有即可认证」的凭据暴露给任何具备查看权限的主体（前端表格、
+ * 浏览器缓存、访问日志）。会话以不可用于认证的 {@code id}（DB 主键）标识，踢出也凭此 ID，无需持有令牌串。
+ * 结构合同由 {@code OAuth2AccessTokenRespVoSecretTest} 反射固化，任何回归（重新加回令牌字段）都会失败并要求评审。
+ */
+@Schema(description = "管理后台 - 访问令牌（会话）Response VO")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class OAuth2AccessTokenRespVO {
 
-    @Schema(description = "编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1024")
+    @Schema(description = "会话编号（不可用于认证的管理标识）", requiredMode = Schema.RequiredMode.REQUIRED, example = "1024")
     private Long id;
-
-    @Schema(description = "访问令牌", requiredMode = Schema.RequiredMode.REQUIRED, example = "tudou")
-    private String accessToken;
-
-    @Schema(description = "刷新令牌", requiredMode = Schema.RequiredMode.REQUIRED, example = "nice")
-    private String refreshToken;
 
     @Schema(description = "用户编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "666")
     private Long userId;

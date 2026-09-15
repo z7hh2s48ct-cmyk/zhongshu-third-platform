@@ -40,6 +40,16 @@ public interface AdminAuthService {
     void logout(String token, Integer logType);
 
     /**
+     * 基于「不可用于认证的会话 ID」退出登录（ZS-LOGIN-006，不暴露凭据）
+     *
+     * @param id               会话 ID（访问令牌主键）
+     * @param expectedUserId   期望归属用户编号：非空校验归属（自助撤销只能操作本人会话），为空表示管理员撤销
+     * @param expectedUserType 期望归属用户类型：非空与 {@code expectedUserId} 一并校验（防同编号跨类型误撤），为空不限制
+     * @param logType          登出类型
+     */
+    void logoutById(Long id, Long expectedUserId, Integer expectedUserType, Integer logType);
+
+    /**
      * 短信验证码发送
      *
      * @param reqVO 发送请求
