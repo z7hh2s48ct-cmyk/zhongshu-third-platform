@@ -76,6 +76,26 @@ test('C1：healthcheck exec-list redis-cli -a 硬编码凭据触发 issue（code
   assert.ok(issues.some((i) => i.rule === 'C1-secret' && /命令行/.test(i.message)));
 });
 
+test('C1：SQL PASSWORD 字面量触发 issue（codex r2 P2 修复）', () => {
+  const text = "CREATE ROLE zhongshu_app LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
+test('C1：psql \\set 口令字面量触发 issue（codex r2 P2 修复）', () => {
+  const text = "\\set app_pass 'RealSecret123'";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL|psql/.test(i.message)));
+});
+
+test('C1：SQL format(%L) 占位符与 psql 变量引用不误报（codex r2 P2 修复）', () => {
+  const text = [
+    "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_pass')",
+    '\\set app_pass `echo "$ZSZJ_DATASOURCE_PASSWORD"`',
+  ].join('\n');
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
@@ -136,6 +156,56 @@ test('C2：zszj-server 块内空行不误判缺 healthcheck（codex r1 P2 修复
     '  zszj-server:',
     '    image: zszj-server:latest',
     '',
+    '    healthcheck:',
+    '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
+  ].join('\n');
+  assert.deepEqual(checkProbeConsistency(compose, 'health'), []);
+});
+
+test('C2：带行内注释服务头 zszj-server: # backend 缺 healthcheck 仍检出（codex r2 P2 修复）', () => {
+  const compose = [
+    'services:',
+    '  postgres:',
+    '    healthcheck:',
+    '      test: pg_isready',
+    '  zszj-server: # backend',
+    '    image: zszj-server:latest',
+  ].join('\n');
+  const issues = checkProbeConsistency(compose, 'health');
+  assert.ok(issues.some((i) => i.rule === 'C2-probe' && /zszj-server/.test(i.message)));
+});
+
+test('C2：YAML anchor 服务头 zszj-server: &backend 缺 healthcheck 仍检出（codex r2 P2 修复）', () => {
+  const compose = [
+    'services:',
+    '  postgres:',
+    '    healthcheck:',
+    '      test: pg_isready',
+    '  zszj-server: &backend',
+    '    image: zszj-server:latest',
+  ].join('\n');
+  const issues = checkProbeConsistency(compose, 'health');
+  assert.ok(issues.some((i) => i.rule === 'C2-probe' && /zszj-server/.test(i.message)));
+});
+
+test('C2：四空格缩进服务头缺 healthcheck 仍检出（codex r2 P2 修复）', () => {
+  const compose = [
+    'services:',
+    '    postgres:',
+    '        healthcheck:',
+    '            test: pg_isready',
+    '    zszj-server:',
+    '        image: zszj-server:latest',
+  ].join('\n');
+  const issues = checkProbeConsistency(compose, 'health');
+  assert.ok(issues.some((i) => i.rule === 'C2-probe' && /zszj-server/.test(i.message)));
+});
+
+test('C2：带注释服务头且有 /actuator healthcheck 不误报（codex r2 P2 修复）', () => {
+  const compose = [
+    'services:',
+    '  zszj-server: # backend',
+    '    image: zszj-server:latest',
     '    healthcheck:',
     '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
   ].join('\n');

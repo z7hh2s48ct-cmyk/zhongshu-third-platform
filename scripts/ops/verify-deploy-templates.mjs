@@ -51,6 +51,12 @@ const SAFE_LITERALS_RE = /^(redacted.*|xx|''|""|)$/i;
 // 支持：空格分隔（--requirepass RealPass）与 YAML exec-list（"--requirepass", "RealPass"）
 // flag 后可紧跟闭合引号，再跟分隔符（逗号/空格），再跟值的开引号
 const CMD_CREDENTIAL_RE = /(--requirepass|--password|-a)["']?[\s,]+["']?([^\s"',\]]+)/i;
+// SQL/psql 原生凭据语法（codex r2 P2 修复）：
+//   PASSWORD '<字面量>'（CREATE/ALTER ROLE ... PASSWORD '...'）
+//   \set <口令类变量> '<字面量>'（psql 客户端变量赋值）
+// 排除安全形式：PASSWORD %L（format 占位符，非引号字面量）、`shell`（命令替换）、${VAR}
+const SQL_PASSWORD_RE = /\bPASSWORD\s+'([^']+)'/i;
+const SQL_SETPASS_RE = /\\set\s+\w*(?:pass|pwd|secret)\w*\s+'([^']+)'/i;
 
 export function checkSecrets(relPath, text) {
   const issues = [];
@@ -82,6 +88,21 @@ export function checkSecrets(relPath, text) {
         issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: '命令行参数含硬编码凭据: ' + cmdMatch[1] + ' ' + credValue.slice(0, 20) });
       }
     }
+    // SQL/psql 原生硬编码凭据（.sql 初始化脚本，codex r2 P2 修复）
+    const sqlPwMatch = line.match(SQL_PASSWORD_RE);
+    if (sqlPwMatch) {
+      const v = sqlPwMatch[1];
+      if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
+        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'SQL 中出现硬编码 PASSWORD 字面量: ' + v.slice(0, 20) });
+      }
+    }
+    const sqlSetMatch = line.match(SQL_SETPASS_RE);
+    if (sqlSetMatch) {
+      const v = sqlSetMatch[1];
+      if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
+        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'psql \\set 出现硬编码口令字面量: ' + v.slice(0, 20) });
+      }
+    }
   });
   return issues;
 }
@@ -98,20 +119,23 @@ export function checkSecrets(relPath, text) {
  */
 function extractServiceBlock(composeText, serviceName) {
   const lines = composeText.split(/\r?\n/);
-  const startRe = new RegExp(`^  ${serviceName}:\\s*$`);
+  // 服务头：任意缩进 + 服务名 + 冒号 + 可选 YAML anchor(&x)/行内注释(#)
+  const startRe = new RegExp(`^(\\s*)${serviceName}:[ \\t]*(?:&\\w+[ \\t]*)?(?:#.*)?$`);
   let startIdx = -1;
+  let headerIndent = 0;
   for (let i = 0; i < lines.length; i++) {
-    if (startRe.test(lines[i])) { startIdx = i; break; }
+    const m = lines[i].match(startRe);
+    if (m) { startIdx = i; headerIndent = m[1].length; break; }
   }
   if (startIdx < 0) return null;
-  // 收集后续行，直到遇到同级缩进（2 空格 + 非空格）或更高级缩进（0-1 空格 + 非空格）
+  // 收集后续行，直到遇到缩进 <= 服务头缩进的非空行（同级/更高级键）
   const block = [lines[startIdx]];
   for (let i = startIdx + 1; i < lines.length; i++) {
     const line = lines[i];
     // 空行属于块内（YAML 允许）
     if (/^\s*$/.test(line)) { block.push(line); continue; }
-    // 同级服务（2 空格缩进 + 字母）或顶级键（0 空格 + 字母）终止块
-    if (/^  \w/.test(line) || /^\w/.test(line)) break;
+    const indent = line.match(/^\s*/)[0].length;
+    if (indent <= headerIndent) break;
     block.push(line);
   }
   return block.join('\n');
@@ -331,11 +355,23 @@ function selfTest() {
   const execListCred = checkSecrets('compose.yml', 'test: ["CMD", "redis-cli", "-a", "RealSecret123", "ping"]');
   results.push(['C1 负向（exec-list redis-cli -a 硬编码凭据）', execListCred.length > 0]);
 
+  const sqlPw = checkSecrets('init.sql', "CREATE ROLE app LOGIN PASSWORD 'RealSecret123';");
+  results.push(['C1 负向（SQL PASSWORD 字面量）', sqlPw.length > 0]);
+
+  const sqlSet = checkSecrets('init.sql', "\\set app_pass 'RealSecret123'");
+  results.push(['C1 负向（psql \\set 口令字面量）', sqlSet.length > 0]);
+
+  const sqlSafe = checkSecrets('init.sql', "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'u', :'app_pass')");
+  results.push(['C1 正向（SQL format %L 占位符不误报）', sqlSafe.length === 0]);
+
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
 
   const noServerProbe = checkProbeConsistency('services:\n  postgres:\n    healthcheck:\n      test: pg_isready\n  zszj-server:\n    image: x', 'health');
   results.push(['C2 负向（zszj-server 无专属探针）', noServerProbe.length > 0]);
+
+  const annotatedHeader = checkProbeConsistency('services:\n  postgres:\n    healthcheck:\n      test: pg_isready\n  zszj-server: # backend\n    image: x', 'health');
+  results.push(['C2 负向（带注释服务头缺探针仍检出）', annotatedHeader.length > 0]);
 
   const blankLineProbe = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
   results.push(['C2 正向（块内空行不误判缺 healthcheck）', blankLineProbe.length === 0]);
