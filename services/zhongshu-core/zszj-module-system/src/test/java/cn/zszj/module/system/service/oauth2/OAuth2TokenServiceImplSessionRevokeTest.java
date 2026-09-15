@@ -13,9 +13,13 @@ import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.AdditionalAnswers;
+import org.mockito.Mockito;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.AopTestUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 
@@ -255,12 +259,21 @@ public class OAuth2TokenServiceImplSessionRevokeTest extends BaseDbAndRedisUnitT
     }
 
     /**
-     * P2（codex r0 竞态）：撤销以已校验 DO 的 refreshToken 为锁锚重读当前存活代际，而非二次按串重查。
+     * P2（codex r0 竞态 / codex r1 区分力强化）：撤销以已校验 DO 的 refreshToken 为锁锚重读当前存活代际，
+     * 而非二次按串重查——即便目标代际 A 在「校验后、委托撤销前」被并发刷新取代（逻辑删除），
+     * 仍按 refreshToken 重读命中并撤销当前存活代际 B + 刷新令牌，杜绝新代际幸存。
      *
-     * <p>同一 refreshToken 下存在两条存活访问令牌代际（模拟并发刷新已插入新代际）。按其中一条的会话 ID 撤销时，
-     * 修复委托 {@code revokeSession} 走「刷新令牌行锁 + 按 refreshToken 重读存活代际」，两条代际与刷新令牌一并撤销——
-     * 这正是消除「校验时 DO 存活、委托按串重查得 null 提前返回、新代际幸存」竞态窗口所依赖的机制。
-     * 双连接真实交错由 pg-regression（真实 PG READ COMMITTED）覆盖，本用例固化单进程可判定的重读撤销语义。
+     * <p><b>区分力（codex r1）</b>：本用例以 spy 注入<b>确定性交错</b>——{@code selectById(A)} 读到 A 后
+     * 立即逻辑删除 A（模拟并发刷新 T2 在本撤销事务获锁前已用新代际 B 取代旧代际 A 的竞态窗口）。
+     * <ul>
+     *     <li>修复前（r0）：委托 {@code removeAccessToken(A.accessToken)} 二次按串重查 → A 已删 → 得 null 提前返回 →
+     *         <b>B 与刷新令牌幸存</b>，本用例断言 result 非空 / B / RT 已撤销将<b>失败</b>；</li>
+     *     <li>修复后（r1）：直接以已校验 DO 进入 {@code revokeSession}，按 refreshToken 重读命中 B → B/RT 一并撤销，
+     *         本用例<b>通过</b>。</li>
+     * </ul>
+     * 故将委托行回退为 r0 的按串重查（{@code removeAccessToken(accessTokenDO.getAccessToken())}）本用例必红——
+     * 这正是「测试能捕获原缺陷」的区分力证据。真实双连接 PG READ COMMITTED 交错另由 pg-regression 覆盖，
+     * 本用例在单进程内以 spy 确定性复现同一竞态窗口。
      */
     @Test
     public void testRemoveAccessTokenById_revokesCurrentGenerationByRefreshToken() {
@@ -278,16 +291,38 @@ public class OAuth2TokenServiceImplSessionRevokeTest extends BaseDbAndRedisUnitT
                 .setExpiresTime(LocalDateTime.now().plusDays(1));
         oauth2AccessTokenMapper.insert(genB);
 
-        // 按旧代际 A 的会话 ID 撤销
-        OAuth2AccessTokenDO result = oauth2TokenService.removeAccessTokenById(
-                genA.getId(), 100L, UserTypeEnum.ADMIN.getValue());
+        // 确定性交错注入：spy 代理真实 mapper——selectById(A) 读到 A 后立即逻辑删除 A，
+        // 模拟「并发刷新 T2 在本撤销事务获锁前，已用新代际 B 取代旧代际 A」的竞态窗口。
+        // 修复前按串二次重查会因 A 已删而得 null 提前返回（B/RT 幸存）；修复后按 refreshToken 重读仍命中 B。
+        OAuth2AccessTokenMapper realMapper = oauth2AccessTokenMapper;
+        OAuth2AccessTokenMapper spyMapper = Mockito.mock(OAuth2AccessTokenMapper.class,
+                Mockito.withSettings().defaultAnswer(AdditionalAnswers.delegatesTo(realMapper)));
+        Mockito.doAnswer(invocation -> {
+            OAuth2AccessTokenDO read = realMapper.selectById(genA.getId());
+            if (read != null) {
+                realMapper.deleteById(read.getId()); // T2 并发刷新取代旧代际 A
+            }
+            return read;
+        }).when(spyMapper).selectById(genA.getId());
+        // OAuth2TokenServiceImpl 含 @Transactional → 注入的是 CGLIB 代理，必须解包到目标对象再替换 mapper，
+        // 否则 setField 写到代理而非目标（沿用本仓既有约定，杜绝“改了没生效”的假绿）
+        Object target = AopTestUtils.getUltimateTargetObject(oauth2TokenService);
+        ReflectionTestUtils.setField(target, "oauth2AccessTokenMapper", spyMapper);
+        try {
+            // 按旧代际 A 的会话 ID 撤销
+            OAuth2AccessTokenDO result = oauth2TokenService.removeAccessTokenById(
+                    genA.getId(), 100L, UserTypeEnum.ADMIN.getValue());
 
-        // 断言：按 refreshToken 重读，A、B 两代际与刷新令牌全部撤销（新代际不幸存）
-        assertNotNull(result);
-        assertNull(oauth2AccessTokenMapper.selectByAccessToken(genA.getAccessToken()));
-        assertNull(oauth2AccessTokenMapper.selectByAccessToken(genB.getAccessToken()),
-                "并发刷新提交的新代际必须一并撤销，不得幸存");
-        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken));
+            // 断言：即便 A 已被并发取代删除，仍按 refreshToken 重读，B 代际与刷新令牌全部撤销（新代际不幸存）
+            assertNotNull(result);
+            assertNull(oauth2AccessTokenMapper.selectByAccessToken(genA.getAccessToken()));
+            assertNull(oauth2AccessTokenMapper.selectByAccessToken(genB.getAccessToken()),
+                    "并发刷新提交的新代际必须一并撤销，不得幸存");
+            assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken));
+        } finally {
+            // 恢复真实 mapper，避免污染同上下文的其它用例
+            ReflectionTestUtils.setField(target, "oauth2AccessTokenMapper", realMapper);
+        }
     }
 
 }
