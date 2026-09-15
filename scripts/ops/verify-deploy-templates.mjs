@@ -117,6 +117,16 @@ function sqlContextMap(text) {
       if (c === '/' && nx === '*') { state = CTX_BLOCK_COMMENT; blockDepth = 1; fragSq = false; i += 2; continue; }
       if (c === "'") { state = CTX_SINGLE_QUOTE; i += 1; continue; }
       if (c === '"') { state = CTX_DOUBLE_QUOTE; i += 1; continue; }
+      // psql 反引号引用（r11 P2-9）：内容交 shell——区间内不做注释 / 引号词法，
+      // 避免 shell 参数 `--` 被当作 SQL 行注释、shell 引号被外层配对；
+      // 行内未闭合时止于换行（元命令同行边界）
+      if (c === '`') {
+        let k = i + 1;
+        while (k < n && text[k] !== '`' && text[k] !== '\n') k += 1;
+        for (let j = i + 1; j < k; j++) map[j] = CTX_NORMAL;
+        i = k < n && text[k] === '`' ? k + 1 : k;
+        continue;
+      }
       // E'...' 反斜杠转义串（E 前须为空白/运算符等非标识符字符，否则 E 属标识符）
       if ((c === 'E' || c === 'e') && nx === "'" && (i === 0 || !IDENT_CHAR_RE.test(text[i - 1]))) {
         map[i + 1] = CTX_NORMAL; // 开启引号视为 NORMAL 语义（字面量起始）
@@ -172,17 +182,25 @@ function sqlContextMap(text) {
       for (let k = i; k < i + dollarTag.length && k < n; k++) map[k] = CTX_DOLLAR_QUOTE;
       state = CTX_NORMAL; fragSq = false; i += dollarTag.length; continue;
     }
-    // 体内注释（r10 P2-7）：-- 行注释与 /* */ 块注释（嵌套深度）按注释整体消费，
-    // 注释内孤立引号不参与 fragSq 配对——否则配对状态被翻转，后续真值闭引号标记失真
+    // 体内注释（r10 P2-7；r11 P2-6/7 加固）：
+    //   - 注释消费以美元闭合定界符为上限（r11 P2-7）——-- / /* */ 不得跨过 $$，
+    //     否则闭合定界符被吞、后续独立 SQL 被误标为美元体文本；
+    //   - 注释内引号做局部配对标记（r11 P2-6）：闭引号标 CTX_SINGLE_QUOTE、'' 转义对
+    //     保留片段 ctx，供片段内候选的串内判定与语句边界解析；注释结束后局部状态丢弃，
+    //     不影响注释外的 fragSq（r10 P2-7 原意）
     if (!fragSq && c === '-' && nx === '-') {
       let nl = text.indexOf('\n', i);
       if (nl < 0) nl = n;
-      for (let k = i; k < nl; k++) map[k] = CTX_DOLLAR_QUOTE;
+      const closeAt = text.indexOf(dollarTag, i);
+      if (closeAt >= 0 && closeAt < nl) nl = closeAt;
+      markFragmentQuotePairs(map, text, i, nl, CTX_DOLLAR_QUOTE);
       i = nl; continue;
     }
     if (!fragSq && c === '/' && nx === '*') {
-      const end = skipBlockComment(text, i, 0);
-      for (let k = i; k < end; k++) map[k] = CTX_DOLLAR_QUOTE;
+      let end = skipBlockComment(text, i, 0);
+      const closeAt = text.indexOf(dollarTag, i);
+      if (closeAt >= 0 && closeAt < end) end = closeAt;
+      markFragmentQuotePairs(map, text, i, end, CTX_DOLLAR_QUOTE);
       i = end; continue;
     }
     if (c === "'") {
@@ -216,6 +234,32 @@ function skipBlockComment(text, from, initialDepth) {
     i += 1;
   }
   return n;
+}
+
+/**
+ * 片段内引号局部配对标记（r11 P2-6）：把 [from, to) 区间逐位置填为片段 ctx，
+ * 并对区间内成对单引号做局部配对——闭引号标 CTX_SINGLE_QUOTE、'' 转义对第二引号
+ * 保留片段 ctx。供片段内候选的 candInStr 判定（左侧最近引号是否闭标记）与分号
+ * 边界解析（scanFragmentLex 的片段态配对）复用；状态局部不跨区间边界，
+ * 注释外 fragSq 不受影响（r10 P2-7 原意）。
+ * @param {Uint8Array} map sqlContextMap 状态数组
+ * @param {string} text
+ * @param {number} from 区间起点（含）
+ * @param {number} to 区间终点（不含）
+ * @param {number} fragCtx 片段填充上下文（CTX_DOLLAR_QUOTE / CTX_LINE_COMMENT / CTX_BLOCK_COMMENT）
+ */
+function markFragmentQuotePairs(map, text, from, to, fragCtx) {
+  let locSq = false;
+  for (let k = from; k < to; k++) {
+    const ch = text[k];
+    if (ch === "'") {
+      if (isApostropheWord(text, k)) { map[k] = fragCtx; continue; } // 自然语言撇号不参与配对
+      if (locSq && text[k + 1] === "'") { map[k] = fragCtx; map[k + 1] = fragCtx; k += 1; continue; } // '' 转义对
+      if (locSq) { map[k] = CTX_SINGLE_QUOTE; locSq = false; continue; } // 闭引号
+      locSq = true; map[k] = fragCtx; continue; // 开引号：保持片段 ctx
+    }
+    map[k] = fragCtx;
+  }
 }
 
 /**
@@ -315,6 +359,7 @@ function matchYamlBlockHeader(line) {
   let inSq = false;
   let inDq = false;
   let hashAt = -1;
+  let scalarStart = true; // r11 P2-2：引号仅在「标量起始位置」开启——plain 键内部引号保持普通字符
   for (let k = 0; k < line.length; k++) {
     const c = line[k];
     if (inSq) {
@@ -326,9 +371,30 @@ function matchYamlBlockHeader(line) {
       if (c === '"') inDq = false;
       continue;
     }
-    if (c === "'") { inSq = true; continue; }
-    if (c === '"') { inDq = true; continue; }
+    if ((c === "'" || c === '"') && scalarStart) {
+      if (c === "'") inSq = true; else inDq = true;
+      scalarStart = false;
+      continue;
+    }
     if (c === '#' && (k === 0 || line[k - 1] === ' ' || line[k - 1] === '\t')) { hashAt = k; break; }
+    if (scalarStart && (c === '&' || c === '!')) { // 节点属性后仍是标量起始（r11 P2-2）
+      let j = k + 1;
+      if (c === '&') {
+        while (j < line.length && /[A-Za-z0-9_-]/.test(line[j])) j += 1;
+      } else if (line[j] === '<') {
+        const gt = line.indexOf('>', j + 1);
+        j = gt < 0 ? line.length : gt + 1;
+      } else {
+        while (j < line.length && /[A-Za-z0-9_!-]/.test(line[j])) j += 1;
+      }
+      k = j - 1;
+      continue;
+    }
+    if (c === ':' && (line[k + 1] === undefined || line[k + 1] === ' ' || line[k + 1] === '\t')) { scalarStart = true; continue; }
+    if (c === '[' || c === '{' || c === ',') { scalarStart = true; continue; }
+    if (c === '-' && /[ \t]/.test(line[k + 1] ?? '') && (k === 0 || /[ \t]/.test(line[k - 1]))) { scalarStart = true; continue; }
+    if (c === ' ' || c === '\t') { continue; }
+    scalarStart = false;
   }
   const content = (hashAt < 0 ? line : line.slice(0, hashAt)).replace(/[ \t]+$/, '');
   if (!content) return null;
@@ -365,7 +431,9 @@ function matchYamlBlockHeader(line) {
   let q = p;
   while (q < markerIdx) {
     const ch = content[q];
-    if (ch === "'" || ch === '"') {
+    // 引号键：仅「键起始位置」的引号才是 YAML 引号标量（r11 P2-2）——
+    // plain 键内部的引号（如 x-app's-command）保留为普通字符，不得当作引号串起点
+    if ((ch === "'" || ch === '"') && q === firstTok) {
       let k = q + 1;
       while (k < markerIdx) {
         if (content[k] === ch) {
@@ -378,7 +446,8 @@ function matchYamlBlockHeader(line) {
       q = k < markerIdx ? k + 1 : markerIdx;
       continue;
     }
-    if (ch === ':' && reachesMarker(q + 1)) {
+    // 映射分隔符（r11 P2-1）：冒号后须为空白，否则是 plain 标量中段的 `:`（如 `-- :|`）
+    if (ch === ':' && q + 1 < markerIdx && isWs(q + 1) && reachesMarker(q + 1)) {
       return { mark: m[1], chomp: m[2] || m[4] || '', indentIndicator, nodeIndent: firstTok };
     }
     q += 1;
@@ -467,10 +536,13 @@ function extractSqlValue(line, qIdx, limit) {
   return out;
 }
 
+const PSQL_VAR_NAME_RE = /[A-Za-z0-9_$\u0080-\uFFFF]+/y;
+
 /**
- * psql 变量插值引用长度（codex r9 P2-9；r10 P2-9 扩展）：从冒号起识别
- * :'name' / :"name"（引用形式）与 :name（未引用形式），返回含冒号的总长度；
- * :: 类型转换、未闭合或跨行引用返回 0。
+ * psql 变量插值引用长度（codex r9 P2-9；r10 P2-9 扩展；r11 P2-8 词法修正）：从冒号起
+ * 识别 :'name' / :"name"（引用形式）与 :name（未引用形式），返回含冒号的总长度；
+ * :: 类型转换、未闭合或跨行引用返回 0；未引用形式完整消费变量 token——
+ * 允许数字起始与非 ASCII 字符，移除任意 64 字符截断（r11 P2-8）。
  * @param {string} text
  * @param {number} i 冒号位置
  * @returns {number}
@@ -485,8 +557,9 @@ function psqlVarRefLength(text, i) {
     if (k >= text.length || text[k] !== q) return 0;
     return k + 1 - i;
   }
-  // 未引用形式 :name（r10 P2-9）：psql 变量名以字母 / 下划线起始
-  const m = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(text.slice(i + 1, i + 65));
+  // 未引用形式 :name（r10 P2-9；r11 P2-8）：完整 token 消费，跨行边界自然不匹配
+  PSQL_VAR_NAME_RE.lastIndex = i + 1;
+  const m = PSQL_VAR_NAME_RE.exec(text);
   return m ? 1 + m[0].length : 0;
 }
 
@@ -514,6 +587,7 @@ function scanSqlText(text) {
   const n = text.length;
   if (!n) return found;
   const ctxMap = sqlContextMap(text);
+  const parenDepth = buildParenDepthMap(text, ctxMap); // r11 P2-10：深度缓存（原逐候选重扫 O(n²)）
   const lineStarts = [0];
   for (let k = 0; k < n; k++) if (text[k] === '\n') lineStarts.push(k + 1);
   const lineNo = (idx) => {
@@ -527,7 +601,7 @@ function scanSqlText(text) {
   for (const m of text.matchAll(SQL_SETPASS_KEYWORD_RE)) cands.push({ pos: m.index, end: m.index + m[0].length, kind: 'setpass' });
   cands.sort((a, b) => a.pos - b.pos);
   for (const cand of cands) {
-    const hit = scanCandidate(text, ctxMap, cand);
+    const hit = scanCandidate(text, ctxMap, cand, parenDepth);
     if (hit) {
       const stmtLabel = cand.kind === 'setpass' ? 'psql \\set ' : 'SQL ';
       found.push({ line: lineNo(hit.at), at: hit.at, message: stmtLabel + hit.message + hit.value.slice(0, 20) });
@@ -713,26 +787,137 @@ function splitCallArgs(text, ctxMap, from, maxArgCount) {
 }
 
 /**
- * 候选左侧未闭合的外层括号数（codex r9 P2-6；r10 P2-6 正向重写）：expr 状态机
- * 自候选闭引号处以相对深度 0 起步，无法识别 SELECT ( / CAST( 等已开启的包装括号。
- * 自文本头正向扫描至候选：`;`（NORMAL 上下文）重置计数、`(` / `)` 增减（不为负），
- * 字符串字面量整体跳过（'' / "" 转义对、\x 宽松转义）防串内括号误计；
- * 片段（注释 / 美元引用体）内括号同样计入——被注释/引用代码的括号结构有效。
+ * 括号深度缓存（r11 P2-4/P2-10）：一次线性扫描生成「每个位置左侧未闭合括号数」，
+ * 供候选的表达式窗口深度 O(1) 读取（替代原逐候选全文重扫的 O(n²) 开放括号计数）。
+ * 语义：字符串字面量 / 引用标识符整体跳过（串内括号不参与）；注释区间（行 / 块）整体
+ * 跳过（r11 P2-4：注释内括号属注释词法层，不抵消外层深度）；`;`（NORMAL 上下文）重置
+ * 计数、深度不为负；美元引用体内括号照常计入（被引用代码的括号结构有效）。
  * @param {string} text
  * @param {Uint8Array} ctxMap
- * @param {number} from 候选起始索引
- * @returns {number}
+ * @returns {Int32Array} 长度 text.length+1；depthAt[pos] = pos 左侧未闭合括号数
  */
-function openParenDepthBefore(text, ctxMap, from) {
+function buildParenDepthMap(text, ctxMap) {
+  const n = text.length;
+  const depthAt = new Int32Array(n + 1);
   let count = 0;
   let i = 0;
-  while (i < from) {
+  while (i < n) {
     const c = text[i];
     const ctx = ctxMap[i];
+    const start = i;
+    if (ctx === CTX_LINE_COMMENT) {
+      let nl = text.indexOf('\n', i);
+      if (nl < 0) nl = n;
+      if (nl === i) nl += 1; // 行尾换行符本身带注释尾标记：推进防零步进
+      i = nl;
+      depthAt.fill(count, start, i);
+      continue;
+    }
+    if (ctx === CTX_BLOCK_COMMENT) {
+      i = skipBlockComment(text, i, 1);
+      depthAt.fill(count, start, i);
+      continue;
+    }
     // 开引号（NORMAL / 片段内配对开形态）整段跳过：串内括号与转义引号不参与
     if (c === "'" && (ctx === CTX_NORMAL || ctx === CTX_DOLLAR_QUOTE || ctx === CTX_LINE_COMMENT || ctx === CTX_BLOCK_COMMENT)) {
       i += 1;
-      while (i < from) {
+      while (i < n) {
+        if (text[i] === "'") {
+          if (text[i + 1] === "'") { i += 2; continue; }
+          i += 1; break;
+        }
+        if (text[i] === '\\' && text[i + 1] === "'") { i += 2; continue; }
+        i += 1;
+      }
+      depthAt.fill(count, start, i);
+      continue;
+    }
+    if (c === '"' && ctx === CTX_NORMAL) {
+      i += 1;
+      while (i < n) {
+        if (text[i] === '"') {
+          if (text[i + 1] === '"') { i += 2; continue; }
+          i += 1; break;
+        }
+        i += 1;
+      }
+      depthAt.fill(count, start, i);
+      continue;
+    }
+    if (ctx === CTX_NORMAL && c === ';') { count = 0; depthAt[start] = count; i += 1; continue; }
+    if (c === '(') { count += 1; depthAt[start] = count; i += 1; continue; }
+    if (c === ')') { if (count > 0) count -= 1; depthAt[start] = count; i += 1; continue; }
+    depthAt[start] = count;
+    i += 1;
+  }
+  depthAt[n] = count;
+  return depthAt;
+}
+
+/**
+ * CAST 类型短语消费（r11 P2-3）：从 AS 之后消费完整类型说明——
+ * 多词类型（character varying / double precision）、引用标识符（"text"）、
+ * 类型参数（numeric(10,2)）、数组修饰（int[]）、限定名（pg_catalog.text）。
+ * 仅消费类型成分，遇其它字符（`)` `,` `||` 等）即交还主状态机。
+ * @param {string} text
+ * @param {Uint8Array} ctxMap
+ * @param {number} from AS 词末尾
+ * @param {number} n
+ * @returns {number} 类型短语末尾（其后首个非类型字符位置）
+ */
+function consumeCastType(text, ctxMap, from, n) {
+  let k = from;
+  for (;;) {
+    while (k < n && /\s/.test(text[k])) k += 1;
+    const ch = text[k];
+    if (ch === '"' && ctxMap[k] === CTX_NORMAL) {
+      k += 1;
+      while (k < n) {
+        if (text[k] === '"' && ctxMap[k] === CTX_DOUBLE_QUOTE) {
+          if (text[k + 1] === '"' && ctxMap[k + 1] === CTX_DOUBLE_QUOTE) { k += 2; continue; } // "" 转义对
+          k += 1; break;
+        }
+        k += 1;
+      }
+      continue;
+    }
+    if (ch === '(') { // 类型参数（varchar(255) / numeric(10,2)）按括号深度整体消费
+      let d = 1; k += 1;
+      while (k < n && d > 0) {
+        if (text[k] === '(') d += 1;
+        else if (text[k] === ')') d -= 1;
+        k += 1;
+      }
+      continue;
+    }
+    if (ch && (IDENT_CHAR_RE.test(ch) || ch === '.' || ch === '[' || ch === ']')) { k += 1; continue; }
+    break;
+  }
+  return k;
+}
+
+/**
+ * 跳到当前括号层的右括号（r11 P2-5）：子查询 WHERE 的筛选条件整体跳过——
+ * 跟踪相对深度（`(` +1 / `)` 归零即本层闭括号）、字符串 / 注释 / 美元引用
+ * 区间不参与；NORMAL 上下文分号即语句边界（返回 -1）。
+ * @param {string} text
+ * @param {Uint8Array} ctxMap
+ * @param {number} from 起点（WHERE 词末尾）
+ * @param {number} n
+ * @returns {number} 本层右括号位置；未找到 / 语句边界返回 -1
+ */
+function skipToClosingParen(text, ctxMap, from, n) {
+  let d = 0;
+  let i = from;
+  while (i < n) {
+    const c = text[i];
+    const ctx = ctxMap[i];
+    if (ctx === CTX_LINE_COMMENT) { let nl = text.indexOf('\n', i); if (nl < 0) nl = n; if (nl === i) nl += 1; i = nl; continue; }
+    if (ctx === CTX_BLOCK_COMMENT) { i = skipBlockComment(text, i, 1); continue; }
+    if (ctx === CTX_DOLLAR_QUOTE) { i += 1; continue; }
+    if (c === "'" && (ctx === CTX_NORMAL || ctx === CTX_ESCAPE_STRING)) {
+      i += 1;
+      while (i < n) {
         if (text[i] === "'") {
           if (text[i + 1] === "'") { i += 2; continue; }
           i += 1; break;
@@ -744,7 +929,7 @@ function openParenDepthBefore(text, ctxMap, from) {
     }
     if (c === '"' && ctx === CTX_NORMAL) {
       i += 1;
-      while (i < from) {
+      while (i < n) {
         if (text[i] === '"') {
           if (text[i + 1] === '"') { i += 2; continue; }
           i += 1; break;
@@ -753,12 +938,12 @@ function openParenDepthBefore(text, ctxMap, from) {
       }
       continue;
     }
-    if (ctx === CTX_NORMAL && c === ';') { count = 0; i += 1; continue; }
-    if (c === '(') { count += 1; i += 1; continue; }
-    if (c === ')') { if (count > 0) count -= 1; i += 1; continue; }
+    if (ctx === CTX_NORMAL && c === ';') return -1;
+    if (c === '(') { d += 1; i += 1; continue; }
+    if (c === ')') { if (d === 0) return i; d -= 1; i += 1; continue; }
     i += 1;
   }
-  return count;
+  return -1;
 }
 
 /**
@@ -771,7 +956,7 @@ function openParenDepthBefore(text, ctxMap, from) {
  * @param {{pos:number,end:number,kind:string}} cand 关键字候选（pos=起始，end=末尾后一位）
  * @returns {null|{at:number,value:string,message:string}} 命中位置 / 值 / 消息主体
  */
-function scanCandidate(text, ctxMap, cand) {
+function scanCandidate(text, ctxMap, cand, parenDepth) {
   const n = text.length;
   const candCtx = ctxMap[cand.pos];
   if (candCtx === CTX_DOUBLE_QUOTE) return null; // 双引号标识符内的 PASSWORD 字样非口令语句
@@ -816,8 +1001,9 @@ function scanCandidate(text, ctxMap, cand) {
         }
       }
     }
-    if (!candInFragment) {
-      // 注释按嵌套深度跳转（不依赖片段配对标记，避免被注释内配对闭合引号干扰）
+    if (!candInFragment && !inBacktick) {
+      // 注释按嵌套深度跳转（不依赖片段配对标记，避免被注释内配对闭合引号干扰）；
+      // r11 P2-9：反引号内的 -- 是 shell 参数（如 printf -- 'x'），不得按 SQL 注释消费
       if (ctx === CTX_LINE_COMMENT) { const nl = text.indexOf('\n', i); i = nl < 0 ? n : nl; continue; }
       if (ctx === CTX_BLOCK_COMMENT) { i = skipBlockComment(text, i, 1); continue; } // r8 P2-1：嵌套深度
       if (ctx === CTX_NORMAL && c === '-' && text[i + 1] === '-') { const nl = text.indexOf('\n', i); i = nl < 0 ? n : nl; continue; }
@@ -894,8 +1080,22 @@ function scanCandidate(text, ctxMap, cand) {
           while (w < n && IDENT_CHAR_RE.test(text[w])) w += 1;
           if (/^AS$/i.test(text.slice(i, w))) {
             i = w;
+            if (exprDepth > 0) {
+              // r11 P2-3：CAST 括号带内 AS 为类型转换语法——消费完整类型短语
+              // （多词类型 / 引用标识符 / 类型参数 / 数组修饰），不让类型后继词终结表达式
+              i = consumeCastType(text, ctxMap, i, n);
+              continue;
+            }
             while (i < n && /\s/.test(text[i])) i += 1;
             while (i < n && (IDENT_CHAR_RE.test(text[i]) || text[i] === '.' || text[i] === '[' || text[i] === ']')) i += 1;
+            continue;
+          }
+          if (/^WHERE$/i.test(text.slice(i, w))) {
+            // r11 P2-5：子查询 WHERE——跳过该查询的筛选条件至本层右括号，恢复外层表达式扫描；
+            // 无本层右括号（普通 SELECT 的 WHERE）则在语句边界终止，保留 r10 不误报语义
+            const close = skipToClosingParen(text, ctxMap, w, n);
+            if (close < 0) return null;
+            i = close;
             continue;
           }
           return null; // 操作数后直接跟标识符 → 子表达式结束
@@ -912,7 +1112,7 @@ function scanCandidate(text, ctxMap, cand) {
         // 闭引号 → 拼接口令表达式窗口（r8 P2-8：重置表达式状态；
         // r9 P2-6：继承候选左侧已开启的外层包装括号深度）
         mode = 'expr';
-        exprDepth = openParenDepthBefore(text, ctxMap, cand.pos);
+        exprDepth = parenDepth[cand.pos]; // r11 P2-10：深度缓存 O(1) 读取
         exprExpectOperand = false;
         i += 1; continue;
       }
