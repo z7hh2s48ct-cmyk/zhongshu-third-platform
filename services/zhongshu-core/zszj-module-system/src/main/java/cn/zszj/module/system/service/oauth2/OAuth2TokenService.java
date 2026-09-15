@@ -81,6 +81,20 @@ public interface OAuth2TokenService {
     void removeAccessToken(Long userId, Integer userType);
 
     /**
+     * 移除访问令牌（按会话 ID，ZS-LOGIN-006）
+     *
+     * <p>以「不可用于认证的会话 ID（访问令牌 DB 主键）」定位并撤销会话，替代以原始 accessToken 串标识踢出，
+     * 避免管理端 / 前端持有可用凭据。天然租户作用域（{@code selectById} 受租户拦截器约束），并显式复核
+     * 当前租户上下文作为纵深防御；跨租户 / 不存在的 ID 幂等返回 {@code null}（不回显存在性，杜绝跨租户探测）。
+     *
+     * @param id             会话 ID（访问令牌主键，不可用于认证）
+     * @param expectedUserId 期望归属用户编号：非空时校验会话归属（自助撤销只能操作本人会话，
+     *                       非本人抛 {@code OAUTH2_TOKEN_SESSION_NOT_OWNED}）；为空表示管理员撤销（不受归属限制）
+     * @return 被撤销的访问令牌信息；不存在 / 跨租户时返回 {@code null}
+     */
+    OAuth2AccessTokenDO removeAccessTokenById(Long id, Long expectedUserId);
+
+    /**
      * 获得访问令牌分页
      *
      * @param reqVO 请求

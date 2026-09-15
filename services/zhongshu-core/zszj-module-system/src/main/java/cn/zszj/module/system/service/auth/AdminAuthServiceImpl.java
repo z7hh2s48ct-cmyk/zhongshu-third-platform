@@ -267,6 +267,17 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         createLogoutLog(accessTokenDO.getUserId(), accessTokenDO.getUserType(), logType);
     }
 
+    @Override
+    public void logoutById(Long id, Long expectedUserId, Integer logType) {
+        // ZS-LOGIN-006：按会话 ID 撤销（不暴露凭据），归属 / 租户 / 幂等由 service 保证
+        OAuth2AccessTokenDO accessTokenDO = oauth2TokenService.removeAccessTokenById(id, expectedUserId);
+        if (accessTokenDO == null) {
+            return;
+        }
+        // 撤销成功，则记录登出日志（日志不含令牌秘密，仅归属 / 类型 / IP / UA）
+        createLogoutLog(accessTokenDO.getUserId(), accessTokenDO.getUserType(), logType);
+    }
+
     private void createLogoutLog(Long userId, Integer userType, Integer logType) {
         LoginLogCreateReqDTO reqDTO = new LoginLogCreateReqDTO();
         reqDTO.setLogType(logType);

@@ -44,8 +44,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.OAUTH2_TOKEN_SESSION_NOT_OWNED;
 
 /**
  * OAuth2.0 Token Service 实现类
@@ -301,6 +303,45 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         // ZS-LOGIN-005.A：缓存失效注册到事务提交后执行（回滚亦执行失效补偿），失败告警不阻断
         invalidateCacheAfterCommit("退出撤销(removeAccessToken)", cacheInvalidations);
         return accessTokenDO;
+    }
+
+    /**
+     * ZS-LOGIN-006：按「不可用于认证的会话 ID」撤销会话，替代以原始 accessToken 串标识踢出。
+     *
+     * <p><b>为何用 ID 而非令牌串</b>：以 accessToken 串踢出，要求管理端分页回显令牌、前端持有令牌，
+     * 等同把「持有即可认证」的凭据暴露给查看权限主体（前端表格 / 浏览器缓存 / 访问日志）。改用 DB 主键 ID
+     * 作为「不可用于认证的会话标识」，管理端无需再持有任何秘密即可完成踢出。
+     *
+     * <p><b>租户隔离（纵深防御）</b>：{@code selectById} 天然租户作用域（{@link OAuth2AccessTokenDO} 继承
+     * {@code TenantBaseDO}，生产环境租户拦截器追加 {@code tenant_id} 过滤），跨租户 ID 查不到 → 幂等 {@code null}；
+     * 服务层再显式复核当前租户上下文，杜绝拦截器被绕过 / 误配时的越权撤销（无上下文或显式忽略租户时跳过）。
+     *
+     * <p><b>归属校验</b>：{@code expectedUserId} 非空（自助撤销）时只能操作本人会话，非本人抛
+     * {@code OAUTH2_TOKEN_SESSION_NOT_OWNED}；为空（管理员撤销）不受归属限制。
+     *
+     * <p><b>撤销主体</b>委托既经受测的 {@link #removeAccessToken(String)}（行锁 + 获锁后重读 + 代际清理 +
+     * 刷新令牌撤销 + 提交后缓存失效），不重复实现撤销语义。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public OAuth2AccessTokenDO removeAccessTokenById(Long id, Long expectedUserId) {
+        // 1. 以会话 ID 定位（selectById 租户作用域）；不存在 / 已清理 / 跨租户（拦截器已过滤）→ 查不到
+        OAuth2AccessTokenDO accessTokenDO = oauth2AccessTokenMapper.selectById(id);
+        if (accessTokenDO == null) {
+            return null; // 幂等：不回显存在性，杜绝跨租户 / 越权探测
+        }
+        // 2. 纵深防御：显式复核租户上下文（H2 单测无拦截器，生产即便拦截器被绕过 / 误配也不越权）
+        Long currentTenantId = TenantContextHolder.getTenantId();
+        if (currentTenantId != null && !TenantContextHolder.isIgnore()
+                && !currentTenantId.equals(accessTokenDO.getTenantId())) {
+            return null; // 跨租户参数：幂等拒绝
+        }
+        // 3. 归属校验：自助撤销只能操作本人会话；管理员撤销（expectedUserId 为空）不受限
+        if (expectedUserId != null && !expectedUserId.equals(accessTokenDO.getUserId())) {
+            throw exception(OAUTH2_TOKEN_SESSION_NOT_OWNED);
+        }
+        // 4. 委托既经受测的撤销路径
+        return removeAccessToken(accessTokenDO.getAccessToken());
     }
 
     /**
