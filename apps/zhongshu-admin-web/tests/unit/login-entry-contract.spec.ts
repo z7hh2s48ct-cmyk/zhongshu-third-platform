@@ -672,9 +672,13 @@ function countDeclaredBindings(body: string, name: string, mask: boolean[], esc:
  * 与解构 `const { target } = ...`（含别名 `{ target: t }`、默认值 `{ target = X }`）两种形态。
  * r7-P3：解构体改用配平扫描提取（`[^}]*` 曾被字符串键内的伪 `}` 截断，合规代码的引用名
  * 收集失败 → 实参级误判）；条目名解析复用 collectBindingNames 的词法语义逐条对齐。
+ * r8-P3：直绑与解构两条路径统一限定代码位置（maskCodePositions）——字符串 / 模板文本 /
+ * 注释内的伪声明不产生可信引用（否则 `const note = 'const { … }: redirect } = …'`
+ * 使裸 redirect 导航逃过契约检查）；字典键为字符串的解构仍按真实代码位置正常收集。
  */
 function collectResolutionNames(body: string): string[] {
   const names: string[] = []
+  const mask = maskCodePositions(body)
   const push = (n: string) => {
     if (n && names.indexOf(n) === -1) {
       names.push(n)
@@ -684,11 +688,17 @@ function collectResolutionNames(body: string): string[] {
     /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?resolvePostAuthRedirect\s*\(/g
   let m: RegExpExecArray | null
   while ((m = bindRe.exec(body)) !== null) {
+    if (!mask[m.index]) {
+      continue
+    }
     push(m[1] ?? '')
   }
   const destructStartRe = /(?<![\w$])(?:const|let|var)\s*\{/g
   destructStartRe.lastIndex = 0
   while ((m = destructStartRe.exec(body)) !== null) {
+    if (!mask[m.index]) {
+      continue
+    }
     const open = m.index + m[0].length - 1
     const close = matchDelimiter(body, open, '{', '}')
     if (close === -1) {
@@ -1305,5 +1315,21 @@ describe('登录落地解析契约（函数级 + 变异，codex r2-P3）', () =>
     expect(findNavigationOffenders([{ rel: 'components/CommentBrace.vue', code }])).toEqual([
       'components/CommentBrace.vue#handleLogin'
     ])
+  })
+
+  it('变异 23（r8-P3）：字符串内伪解构不产生可信引用（真实文件变异）→ 必须点名 tryLogin', () => {
+    const social = LOGIN_FILES.find((f) => f.rel === 'Login/SocialLogin.vue')
+    expect(social, 'SocialLogin.vue 未被扫描到').toBeTruthy()
+    const mutated: LoginSource = {
+      rel: 'Login/SocialLogin.vue',
+      code: (social?.code ?? '').replace(
+        'router.push({ path: tryPostAuth.target })',
+        [
+          `const note = 'const { "{ a }": redirect } = resolvePostAuthRedirect(raw, base)'`,
+          'window.location.assign(redirect)'
+        ].join('\n')
+      )
+    }
+    expect(findNavigationOffenders([mutated])).toEqual(['Login/SocialLogin.vue#tryLogin'])
   })
 })
