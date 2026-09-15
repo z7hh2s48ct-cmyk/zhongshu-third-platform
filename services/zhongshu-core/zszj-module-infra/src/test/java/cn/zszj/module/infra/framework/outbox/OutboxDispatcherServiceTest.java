@@ -250,13 +250,16 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         jdbcTemplate.update("UPDATE outbox_event SET payload = ?, headers = ? WHERE id = ?",
                 "{\"fileId\":2048}", "{\"hint\":\"ut\"}", eventId);
 
-        // 第一轮：Sink 失败 → 退避，事件不丢
+        // 第一轮：Sink 失败 → 退避，事件不丢；last_error 只存受控描述（不落异常原文，codex r1）
         sink.reset(Set.of("USER_MESSAGE_SEND"));
         sink.failOnDeliver = true;
         assertEquals(1, dispatcher.dispatchOnce(DISPATCHER, INSTANCE_A, 30, 10, 60));
         assertEquals("PENDING", loadRow(eventId).get("status"));
         assertEquals(1, ((Number) loadRow(eventId).get("retry_count")).intValue());
-        assertTrue(String.valueOf(loadRow(eventId).get("last_error")).contains("sink 模拟投递失败"));
+        String lastError = String.valueOf(loadRow(eventId).get("last_error"));
+        assertTrue(lastError.contains("IllegalStateException"), "应记录异常类别");
+        assertTrue(lastError.contains("messageLength"), "应记录消息长度");
+        assertFalse(lastError.contains("模拟投递失败"), "不得落异常原文（可能携带敏感内容）");
 
         // 第二轮：租约过期后 Sink 成功 → 确认 DISPATCHED（投递成功但确认丢失的场景由 PG 套件 + Sink 幂等合同承接）
         expireLease(eventId);
@@ -350,8 +353,32 @@ public class OutboxDispatcherServiceTest extends BaseDbUnitTest {
         assertEquals(2, dispatcher.dispatchOnce(DISPATCHER, INSTANCE_A, 30, 10, 60), "本批应完整领取");
         assertEquals(1, ((Number) loadRow(first).get("retry_count")).intValue(), "supports 异常应按失败推进第一事件");
         assertEquals(1, ((Number) loadRow(second).get("retry_count")).intValue(), "supports 异常应按失败推进第二事件");
-        assertTrue(String.valueOf(loadRow(first).get("last_error")).contains("supports 模拟异常"));
+        assertTrue(String.valueOf(loadRow(first).get("last_error")).contains("IllegalStateException"));
         assertEquals(0, sink.delivered.size(), "supports 异常不得触发投递");
+    }
+
+    /** 用例 12（at-least-once 恢复路径）：投递成功但确认丢失（凭证过期被重领）后，事件被新执行者再次投递——旧凭证不能抑制重投。 */
+    @Test
+    public void testDispatchOnce_confirmationLossCausesRedelivery() throws Exception {
+        long eventId = insertPendingEvent("USER_MESSAGE_SEND");
+        makeDue(eventId);
+        sink.reset(Set.of("USER_MESSAGE_SEND"));
+
+        // 执行者 1：领取并投递成功，但 complete 前崩溃（确认丢失）
+        OutboxEventRecord record1 = dispatcher.claim(DISPATCHER, INSTANCE_A, 30, 10).get(0);
+        sink.deliver(record1);
+        assertEquals(1, sink.delivered.size(), "执行者 1 已完成一次投递");
+        expireLease(eventId);
+        makeDue(eventId);
+
+        // 执行者 2（dispatchOnce）：重领并再次投递——at-least-once，去重靠 Sink 幂等合同
+        assertEquals(1, dispatcher.dispatchOnce(DISPATCHER, INSTANCE_B, 30, 10, 60));
+        assertEquals(2, sink.delivered.size(), "确认丢失后事件应被新执行者再次投递");
+        assertEquals(eventId, sink.delivered.get(1).getEventId());
+        assertEquals("DISPATCHED", loadRow(eventId).get("status"));
+
+        // 执行者 1 苏醒后的滞后确认必败：旧凭证不能覆盖新领取/终态
+        assertFalse(dispatcher.complete(eventId, record1.getClaimToken()), "旧凭证不得确认新领取");
     }
 
 }

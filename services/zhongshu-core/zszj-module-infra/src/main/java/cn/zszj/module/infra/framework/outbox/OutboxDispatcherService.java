@@ -1,7 +1,6 @@
 package cn.zszj.module.infra.framework.outbox;
 
 import cn.zszj.framework.common.util.json.JsonUtils;
-import cn.zszj.framework.common.util.log.LogSanitizeUtils;
 import cn.zszj.framework.tenant.core.util.TenantUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -45,8 +44,8 @@ import java.util.UUID;
  *       短事务；若被误包进业务事务，租约与确认会延迟提交并放大重复投递，故 fail-fast 拒绝；
  *       {@code claim/complete/fail} 为包内可见（public 入口仅 {@code dispatchOnce/heartbeat}），
  *       防止外部调用绕过无事务守卫；</li>
- *   <li>失败原因（{@code last_error} 与 WARN 日志）经 {@link LogSanitizeUtils} 净化并限长——异常消息可能
- *       携带凭据/签名 URL，与 ZS-AUDIT-002 脱敏惯例一致。</li>
+ *   <li>失败留痕（{@code last_error} 与 WARN 日志）只存受控描述（异常类别/长度/我方常量码），不落
+ *       异常原文——自由文本无可靠值级脱敏，见 {@link #describeThrowable}；</li>
  * </ul>
  */
 @Slf4j
@@ -55,9 +54,6 @@ public class OutboxDispatcherService {
 
     /** 连续失败上限，达到即转 DEAD 人工处置（台账/恢复控制台归 ZS-JOB-004）。 */
     private static final int MAX_RETRY_BEFORE_DEAD = 5;
-
-    /** last_error 限长（脱敏后仍超长则截断，防异常正文撑爆存储/日志）。 */
-    private static final int MAX_ERROR_LENGTH = 512;
 
     /** 领取候选查询：PENDING + 已到期 + 租约空闲（无租约或已过期），SKIP LOCKED 跳过他实例持锁行，稳定 id 排序。 */
     private static final String CLAIM_SELECT_SQL = "SELECT id, event_type, biz_type, biz_id, biz_version, "
@@ -153,7 +149,7 @@ public class OutboxDispatcherService {
     /** 投递失败登记：推进退避（达上限转 DEAD）并释放租约；返回 false 表示凭证已过期（不得推进新领取）。 */
     boolean fail(long eventId, String claimToken, String error, long backoffSeconds) {
         Timestamp now = currentTimestamp();
-        return jdbcTemplate.update(FAIL_SQL, sanitizeError(error), plusSeconds(now, backoffSeconds),
+        return jdbcTemplate.update(FAIL_SQL, error, plusSeconds(now, backoffSeconds),
                 MAX_RETRY_BEFORE_DEAD, eventId, claimToken) == 1;
     }
 
@@ -193,8 +189,8 @@ public class OutboxDispatcherService {
                             event.getEventId());
                 }
             } catch (Exception e) {
-                log.warn("[dispatchOnce][事件 {} 投递失败: {}]", event.getEventId(), sanitizeError(e.getMessage()));
-                fail(event.getEventId(), event.getClaimToken(), e.getMessage(), backoffSeconds);
+                log.warn("[dispatchOnce][事件 {} 投递失败: {}]", event.getEventId(), describeThrowable(e));
+                fail(event.getEventId(), event.getClaimToken(), describeThrowable(e), backoffSeconds);
             }
         }
         return events.size();
@@ -226,17 +222,19 @@ public class OutboxDispatcherService {
     }
 
     /**
-     * 失败原因净化（循 ZS-AUDIT-002 脱敏惯例）：异常消息可能携带凭据/签名 URL/响应正文，
-     * 以单键 JSON 经 {@link LogSanitizeUtils#sanitizeJson} 净化后限长落 {@code last_error} 与日志；
-     * 净化失败只留占位符，不落原文。
+     * 失败留痕（fail-safe，codex r1）：异常消息是自由文本，可能携带凭据/签名 URL/响应正文，
+     * 键级脱敏（{@code LogSanitizeUtils} 按敏感键掩码）对其无效——故 {@code last_error} 与 WARN 日志
+     * <b>不落异常原文</b>，只存受控描述（异常类别 + 消息长度；我方常量码如 NO_SINK_SUPPORTS_EVENT_TYPE
+     * 直接保留）。诊断原文由 Sink 自行日志（归 ZS-SEC-007 管辖），恢复台账的可控摘要升级归 ZS-JOB-004。
      */
-    private String sanitizeError(String rawMessage) {
-        String message = rawMessage == null ? "unknown" : rawMessage;
+    private String describeThrowable(Throwable e) {
+        String message = e.getMessage();
         try {
-            String json = LogSanitizeUtils.sanitizeJson(JsonUtils.toJsonString(Map.of("error", message)));
-            return json.length() > MAX_ERROR_LENGTH ? json.substring(0, MAX_ERROR_LENGTH) : json;
-        } catch (Exception e) {
-            return "{\"error\":\"(异常消息脱敏失败已省略)\"}";
+            return JsonUtils.toJsonString(Map.of(
+                    "errorClass", e.getClass().getSimpleName(),
+                    "messageLength", message == null ? 0 : message.length()));
+        } catch (Exception ex) {
+            return "{\"errorClass\":\"(未知)\",\"messageLength\":0}";
         }
     }
 
