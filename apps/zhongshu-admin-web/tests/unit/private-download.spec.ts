@@ -38,6 +38,11 @@ beforeEach(async () => {
   downloadPrivateFile = mod.downloadPrivateFile
 })
 
+/** 轮询微任务直至条件满足（精确停在某个挂起的 await 边界，避免脆弱的固定 tick 数） */
+async function waitFor(cond: () => boolean, max = 50) {
+  for (let i = 0; i < max && !cond(); i++) await Promise.resolve()
+}
+
 // base64([1,2]) = 'AQI='，base64([3,4]) = 'AwQ='
 function twoChunkStream() {
   h.issueDeliveryTicket.mockResolvedValue({ ticketToken: 'TT-SECRET-xyz' })
@@ -135,5 +140,50 @@ describe('admin-web downloadPrivateFile：主体绑定下载会话鉴权取流',
       w.mockRestore()
     }
     expect(logs.join('\n')).not.toContain('TT-SECRET-xyz')
+  })
+
+  it('非末块零字节（取流停滞/截断）→ 判下载不完整（DOWNLOAD_INCOMPLETE），不伪报 complete（codex r0 P2）', async () => {
+    h.issueDeliveryTicket.mockResolvedValue({ ticketToken: 'TT' })
+    h.redeemDeliveryTicket.mockResolvedValue({ deliverySessionId: 'DS-1', totalSize: 4 })
+    // 首块正常 2 字节（非 last），次块零字节且非 last → 取流停滞 / 截断
+    h.readDeliveryChunk
+      .mockResolvedValueOnce({ content: 'AQI=', totalSize: 4, last: false })
+      .mockResolvedValueOnce({ content: '', totalSize: 4, last: false })
+    const handle = downloadPrivateFile({ fileId: 1001, purpose: 'preview', chunkSize: 2 })
+    const err: any = await handle.start().catch((e: any) => e)
+    expect(err.code).toBe('DOWNLOAD_INCOMPLETE')
+    expect(err.message).toContain('不完整')
+    expect(handle.phase).toBe('failed')
+  })
+
+  it('末块提前（累计长度 < 声明总长）→ 判下载不完整，绝不把截断内容伪报为完整成功（codex r0 P2）', async () => {
+    h.issueDeliveryTicket.mockResolvedValue({ ticketToken: 'TT' })
+    h.redeemDeliveryTicket.mockResolvedValue({ deliverySessionId: 'DS-1', totalSize: 4 })
+    // 声明 4 字节，但服务端仅返回 2 字节即置 last=true（提前结束）
+    h.readDeliveryChunk.mockResolvedValueOnce({ content: 'AQI=', totalSize: 4, last: true })
+    const handle = downloadPrivateFile({ fileId: 1001, purpose: 'preview', chunkSize: 2 })
+    const err: any = await handle.start().catch((e: any) => e)
+    expect(err.code).toBe('DOWNLOAD_INCOMPLETE')
+    expect(err.loaded).toBe(2)
+    expect(err.expected).toBe(4)
+    expect(handle.phase).toBe('failed')
+  })
+
+  it('redeem 挂起期间 cancel → 兑换返回后补撤权刚建立的会话，杜绝活跃会话泄漏（codex r0 P2）', async () => {
+    h.issueDeliveryTicket.mockResolvedValue({ ticketToken: 'TT' })
+    let resolveRedeem!: (v: any) => void
+    h.redeemDeliveryTicket.mockImplementation(() => new Promise((r) => { resolveRedeem = r }))
+    const handle = downloadPrivateFile({ fileId: 1001, purpose: 'preview', chunkSize: 2 })
+    const p = handle.start()
+    await waitFor(() => h.redeemDeliveryTicket.mock.calls.length > 0) // 停在 redeeming 挂起
+    handle.cancel() // 此刻 deliverySessionId 尚为 null，cancel() 跳过撤权
+    expect(h.revokeDelivery).not.toHaveBeenCalled()
+    resolveRedeem({ deliverySessionId: 'DS-1', totalSize: 4 }) // 兑换迟到返回，会话已建立
+    await expect(p).rejects.toBeTruthy()
+    expect(handle.phase).toBe('cancelled')
+    // 关键：兑换返回后发现已取消 → 立即补撤权刚建立的会话
+    expect(h.revokeDelivery).toHaveBeenCalledWith('DS-1')
+    // 未继续取流
+    expect(h.readDeliveryChunk).not.toHaveBeenCalled()
   })
 })

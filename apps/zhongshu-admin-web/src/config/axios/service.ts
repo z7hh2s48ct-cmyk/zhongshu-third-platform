@@ -424,7 +424,15 @@ service.interceptors.response.use(
       } else {
         ElNotification.error({ title: msg })
       }
-      return Promise.reject('error')
+      // ZS-CLIENT-004：业务错误 reject 结构化对象（code/msg/data/traceId），与本文件 500/901 分支一致，
+      // 供上层编排（如私有下载 FILE-004.A 交付错误码 028/029/030/031）映射明确提示并可追踪；
+      // 不再 reject 裸字符串 'error'（会丢失 code/msg/traceId，使上层映射全部退化为通用「下载失败」）。
+      const bizError = new Error(msg) as any
+      bizError.code = code
+      bizError.msg = msg
+      bizError.data = data?.data
+      bizError.traceId = readTraceIdFromAxios(response)
+      return Promise.reject(bizError)
     } else {
       return data
     }

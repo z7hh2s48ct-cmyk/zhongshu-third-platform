@@ -39,6 +39,11 @@ beforeEach(async () => {
   uploadFileWithCompletion = mod.uploadFileWithCompletion
 })
 
+/** 轮询微任务直至条件满足（精确停在某个挂起的 await 边界，避免脆弱的固定 tick 数） */
+async function waitFor(cond: () => boolean, max = 50) {
+  for (let i = 0; i < max && !cond(); i++) await Promise.resolve()
+}
+
 /** 让 uni.request PUT 立即成功，并返回可 abort 的 task */
 function putSuccess() {
   const abort = vi.fn()
@@ -151,5 +156,37 @@ describe('uploadFileWithCompletion：等待完成确认后返回资产 ID', () =
     expect(all).not.toContain('CT-SECRET-abc123')
     expect(all).not.toContain('https://s3.private.test/put')
     expect(all).not.toContain('sig=SECRET')
+  })
+
+  it('签发凭证挂起期间 cancel → 不再 PUT / 完成确认，phase=cancelled，reject UPLOAD_CANCELLED（codex r0 P1）', async () => {
+    let resolveCred!: (v: any) => void
+    h.createUploadCredential.mockImplementation(() => new Promise((r) => { resolveCred = r }))
+    const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+    const p = handle.start()
+    await waitFor(() => h.createUploadCredential.mock.calls.length > 0) // 停在签发凭证挂起（readFile 已解析）
+    handle.cancel()
+    resolveCred(CRED) // 凭证迟到返回
+    const err: any = await p.catch((e: any) => e)
+    expect(err.code).toBe('UPLOAD_CANCELLED')
+    expect(handle.phase).toBe('cancelled')
+    // 取消后不得继续直传（uni.request PUT）/ 完成确认
+    expect(uni.request).not.toHaveBeenCalled()
+    expect(h.completeUpload).not.toHaveBeenCalled()
+  })
+
+  it('completeUpload 挂起期间 cancel → 迟到的成功响应不覆盖 cancelled / 不伪报 complete（codex r0 P1）', async () => {
+    h.createUploadCredential.mockResolvedValue(CRED)
+    putSuccess()
+    let resolveComplete!: (v: any) => void
+    h.completeUpload.mockImplementation(() => new Promise((r) => { resolveComplete = r }))
+    const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+    const p = handle.start()
+    await waitFor(() => h.completeUpload.mock.calls.length > 0) // 停在完成确认挂起（phase=processing）
+    handle.cancel()
+    resolveComplete(4242) // 完成确认迟到成功
+    const err: any = await p.catch((e: any) => e)
+    expect(err.code).toBe('UPLOAD_CANCELLED')
+    // 关键：迟到的成功不得把 phase 翻成 complete
+    expect(handle.phase).toBe('cancelled')
   })
 })

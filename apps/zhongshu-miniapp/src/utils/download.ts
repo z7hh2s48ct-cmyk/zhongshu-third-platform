@@ -439,6 +439,18 @@ function base64ToBytes(base64: string): Uint8Array {
 }
 
 /**
+ * 下载不完整错误（ZS-CLIENT-004 codex r0 P2）：累计字节与声明总长不一致（缺失 / 提前结束 / 超长），
+ * 或非末块返回零字节（取流停滞 / 截断）。绝不把截断内容伪报为完整成功。
+ */
+function incompleteDownloadError(loaded: number, declaredTotal: number): Error {
+  const err = new Error('下载内容不完整，请重试') as any
+  err.code = 'DOWNLOAD_INCOMPLETE'
+  err.loaded = loaded
+  err.expected = declaredTotal
+  return err
+}
+
+/**
  * ZS-CLIENT-004：私有下载——按 ZS-FILE-004.A 主体绑定下载会话走后端鉴权取流。
  *
  * <p>不接收短时/长期存储 URL：以 fileId + purpose 签发一次性票据 → 兑换下载会话 → 逐块 Range 取流组装。
@@ -461,11 +473,21 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
       // 1. 签发一次性交付票据（主体绑定）——ticketToken 不打印
       setPhase('issuing')
       const { ticketToken } = await FileApi.issueDeliveryTicket({ fileId: options.fileId, purpose: options.purpose })
+      // 签票挂起期间被取消：尚无会话，无需撤权，直接以 cancelled 拒绝
+      if (cancelled) {
+        throw new Error('下载已取消')
+      }
       // 2. 原子兑换建立下载会话
       setPhase('redeeming')
       const session = await FileApi.redeemDeliveryTicket(ticketToken, options.purpose)
       deliverySessionId = session.deliverySessionId
       const declaredTotal = session.totalSize ?? 0
+      // codex r0 P2：兑换挂起期间被取消时 cancel() 因 deliverySessionId 尚为空而跳过撤权；
+      // 兑换返回后若已取消，立即对刚建立的会话 best-effort 撤权，杜绝活跃会话泄漏，再以 cancelled 拒绝
+      if (cancelled) {
+        FileApi.revokeDelivery(deliverySessionId).catch(() => { /* 撤权失败不掩盖取消语义 */ })
+        throw new Error('下载已取消')
+      }
       // 3. 逐块鉴权取流（Range [start, endInclusive]），业务错误由 http 层 reject → 映射明确提示
       setPhase('downloading')
       const chunkSize = options.chunkSize && options.chunkSize > 0 ? options.chunkSize : 1024 * 1024
@@ -482,12 +504,19 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
         options.onProgress?.(loaded, chunk.totalSize ?? declaredTotal)
         // 服务端 last 为权威终止信号；以返回字节数推进游标（服务端可能收敛分块上限）
         if (chunk.last) break
-        if (bytes.length === 0) break // 防御：零字节且非末块，避免死循环
+        // codex r0 P2：非末块却零字节 = 取流停滞 / 截断，判为下载不完整（而非静默 break 后伪报成功）
+        if (bytes.length === 0) {
+          throw incompleteDownloadError(loaded, declaredTotal)
+        }
         cursor += bytes.length
         if (declaredTotal > 0 && loaded >= declaredTotal) break
       }
       if (cancelled) {
         throw new Error('下载已取消')
+      }
+      // codex r0 P2：进入 complete 前校验累计长度与声明总长一致（缺失 / 提前结束 / 超长均判不完整）
+      if (declaredTotal > 0 && loaded !== declaredTotal) {
+        throw incompleteDownloadError(loaded, declaredTotal)
       }
       // 4. 组装完整字节
       const content = new Uint8Array(loaded)
@@ -504,6 +533,11 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
         throw err instanceof Error ? err : new Error('下载已取消')
       }
       setPhase('failed')
+      // 下载不完整错误已是端侧构造的明确 Error（携带 loaded/expected 诊断字段），直接透传，
+      // 不再经 toDownloadError（面向后端业务错误码映射）以免丢失诊断字段
+      if ((err as any)?.code === 'DOWNLOAD_INCOMPLETE') {
+        throw err
+      }
       throw toDownloadError(err)
     }
   }

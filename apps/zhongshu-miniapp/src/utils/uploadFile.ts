@@ -465,6 +465,16 @@ export interface UploadCompletionHandle {
 }
 
 /**
+ * 取消错误（ZS-CLIENT-004 codex r0 P1）：异步边界发现已取消 / 本操作已被更新操作取代时抛出，
+ * 保持 cancelled 语义、不 resolve 资产 ID、不覆盖 phase=cancelled。
+ */
+function cancelledError(): Error {
+  const err = new Error('上传已取消') as any
+  err.code = 'UPLOAD_CANCELLED'
+  return err
+}
+
+/**
  * ZS-CLIENT-004：统一「上传完成态」编排——Web/移动一致等待服务端完成确认后返回资产 ID。
  *
  * 相较旧直传（getFilePresignedUrl → PUT → 异步 createFileRecord 仅 catch 日志 → 立即 resolve URL），
@@ -480,6 +490,9 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
   let putDone = false
   let cancelled = false
   let putTask: { abort?: () => void, onProgressUpdate?: (cb: (res: any) => void) => void } | null = null
+  // codex r0 P1：操作版本标识——每次 start/retry/cancel 递增，隔离「取消后迟到响应」与「重试 vs 旧请求」：
+  // 任一异步边界发现 cancelled 或本操作已被更新操作取代（myOp !== opId）即中止，绝不覆盖 cancelled / 伪报 complete
+  let opId = 0
 
   const name = options.name
     || (options.filePath.includes('/') ? options.filePath.substring(options.filePath.lastIndexOf('/') + 1) : options.filePath)
@@ -514,18 +527,27 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
   }
 
   /** 等待服务端完成确认，返回资产 ID（processing → complete） */
-  async function confirm(): Promise<UploadCompletionResult> {
+  async function confirm(myOp: number): Promise<UploadCompletionResult> {
     setPhase('processing')
     const assetId = await FileApi.completeUpload(cred!.credentialToken)
+    // codex r0 P1：completeUpload 挂起期间 cancel 后，其成功响应不得覆盖 cancelled / 伪报 complete
+    if (cancelled || myOp !== opId) {
+      throw cancelledError()
+    }
     setPhase('complete')
     return { assetId }
   }
 
   async function start(): Promise<UploadCompletionResult> {
     cancelled = false
+    const myOp = ++opId
     try {
       setPhase('uploading')
       const { buffer, mime } = await readFile(options.filePath)
+      // codex r0 P1：读文件挂起期间被取消 → 不再签发凭证 / 直传
+      if (cancelled || myOp !== opId) {
+        throw cancelledError()
+      }
       const contentType = options.contentType || mime || getMimeType(name)
       const size = options.size ?? buffer.byteLength
       cred = await FileApi.createUploadCredential({
@@ -535,11 +557,19 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
         contentType,
         scope: options.scope,
       })
+      // codex r0 P1：签发凭证挂起期间被取消 → 不得继续直传 / 完成确认
+      if (cancelled || myOp !== opId) {
+        throw cancelledError()
+      }
       await putToUploadUrl(cred.uploadUrl, buffer, contentType)
-      return await confirm()
+      // 直传挂起期间被取消（abort 会 reject，此处再兜底）→ 不得继续完成确认
+      if (cancelled || myOp !== opId) {
+        throw cancelledError()
+      }
+      return await confirm(myOp)
     } catch (err) {
-      // 取消优先于失败：cancel 已置 phase=cancelled，不被覆盖为 failed
-      if (!cancelled) setPhase('failed')
+      // 取消优先于失败：cancel 已置 phase=cancelled，不被覆盖为 failed；被更新操作取代的旧操作也不得改 phase
+      if (!cancelled && myOp === opId) setPhase('failed')
       throw err
     }
   }
@@ -548,24 +578,35 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
     // 尚无凭证（首次失败于凭证签发前）→ 全量重启
     if (!cred) return start()
     cancelled = false
+    const myOp = ++opId
     try {
       setPhase('uploading')
       // 直传未完成才重传（复用同一凭证的 uploadUrl）；已完成则直接重确认
       if (!putDone) {
         const { buffer, mime } = await readFile(options.filePath)
+        if (cancelled || myOp !== opId) {
+          throw cancelledError()
+        }
         const contentType = options.contentType || mime || getMimeType(name)
         await putToUploadUrl(cred.uploadUrl, buffer, contentType)
+        if (cancelled || myOp !== opId) {
+          throw cancelledError()
+        }
       }
-      // 复用同一 credentialToken → 服务端一次性确认幂等 → 只生成一个资产
-      return await confirm()
+      // 复用同一 credentialToken → 服务端一次性确认 → 只生成一个资产。
+      // codex r0 P2 落地依赖（登记）：首次确认「已提交但响应丢失」后，重试需后端 FILE-003 对「已完成凭证 token」
+      // 返回既有资产 ID（幂等成功）方能取回；当前后端对已完成凭证返回 FILE_UPLOAD_CREDENTIAL_ALREADY_USED(1001003022)，
+      // 此「同 token → 既有资产 ID」恢复语义待后端批次落地或对接确认结果查询接口（客户端重试逻辑本身已复用同一 token）。
+      return await confirm(myOp)
     } catch (err) {
-      if (!cancelled) setPhase('failed')
+      if (!cancelled && myOp === opId) setPhase('failed')
       throw err
     }
   }
 
   function cancel(): void {
     cancelled = true
+    opId++ // 作废在途操作：其迟到响应经 myOp !== opId 判定后不得覆盖 cancelled / 伪报 complete
     putTask?.abort?.()
     setPhase('cancelled')
   }
