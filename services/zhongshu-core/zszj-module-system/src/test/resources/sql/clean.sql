@@ -35,3 +35,7 @@ DELETE FROM "system_notify_message";
 
 DELETE FROM system_notify_send_log;
 DELETE FROM outbox_event;
+
+DELETE FROM system_notify_todo;
+DELETE FROM inbox_event;
+DELETE FROM inbox_object_watermark;
