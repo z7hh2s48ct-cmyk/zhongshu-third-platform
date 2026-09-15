@@ -2,10 +2,10 @@
  * ZS-OPS-002.A 部署模板可审查性校验（纯静态，本地与 CI 同一入口）。
  *
  * 校验项：
- *   C1 模板无真实秘密（复用 ZS-CFG-001.A 判定口径）
- *   C2 探针路径与后端 actuator 暴露一致
- *   C3 敏感管理路径在反代中确实关闭
- *   C4 反代/compose 不泄露内部管理端口
+ *   C1 模板无真实秘密（复用 ZS-CFG-001.A 判定口径 + command/healthcheck 参数）
+ *   C2 探针路径与后端 actuator 暴露一致（须含 zszj-server 专属 healthcheck）
+ *   C3 敏感管理路径在反代中确实关闭（排除注释行）
+ *   C4 反代/compose 不泄露内部管理端口（按容器端口分类）
  *   C5 模板引用的环境变量与合同表双向一致
  *
  * 用法：node scripts/ops/verify-deploy-templates.mjs [--self-test]
@@ -26,6 +26,9 @@ export const CONTRACT_VARS = [
   'ZSZJ_REDIS_PORT',
   'ZSZJ_REDIS_PASSWORD',
   'ZSZJ_PROFILE',
+  // PostgreSQL 初始化超级用户（与应用账号分离，ZS-DB-002）
+  'ZSZJ_PG_BOOTSTRAP_USERNAME',
+  'ZSZJ_PG_BOOTSTRAP_PASSWORD',
   // TLS 证书挂载路径（运维必填；证书内容禁止入库，仅配置路径）
   'ZSZJ_TLS_CERT_PATH',
   'ZSZJ_TLS_KEY_PATH',
@@ -42,6 +45,8 @@ export const DEPLOY_TARGETS = [
 const SECRET_KEY_RE = /(password|passwd|secret|token|access.?key|secret.?key|api.?key|private.?key)\s*[:=]/i;
 const PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
 const SAFE_LITERALS_RE = /^(redacted.*|xx|''|""|)$/i;
+// 命令行参数中的凭据标志（--requirepass、-a 等）
+const CMD_CREDENTIAL_RE = /(--requirepass|--password|-a)\s+["']?([^\s"'$\}]+)/i;
 
 export function checkSecrets(relPath, text) {
   const issues = [];
@@ -64,6 +69,14 @@ export function checkSecrets(relPath, text) {
         issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: '秘密类键使用了字面量取值: ' + line.trim().slice(0, 60) });
       }
     }
+    // 命令行参数中的硬编码凭据（如 redis-server --requirepass RealPassword）
+    const cmdMatch = line.match(CMD_CREDENTIAL_RE);
+    if (cmdMatch) {
+      const credValue = cmdMatch[2];
+      if (credValue && !PLACEHOLDER_RE.test(credValue) && !credValue.startsWith('${')) {
+        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: '命令行参数含硬编码凭据: ' + cmdMatch[1] + ' ' + credValue.slice(0, 20) });
+      }
+    }
   });
   return issues;
 }
@@ -73,6 +86,7 @@ export function checkSecrets(relPath, text) {
 
 /**
  * 校验 compose healthcheck 探针路径与 actuator 暴露一致。
+ * 要求：1) compose 含 healthcheck 定义；2) zszj-server 服务须有专属 /actuator 探针
  * @param {string} composeText docker-compose 模板内容
  * @param {string} actuatorInclude actuator exposure.include 值（如 'health' 或 'health,info'）
  */
@@ -84,6 +98,18 @@ export function checkProbeConsistency(composeText, actuatorInclude) {
   if (!/healthcheck/i.test(composeText)) {
     issues.push({ rule: 'C2-probe', path: 'deploy/docker-compose.deploy.yml', line: 0, message: '部署模板缺少 healthcheck 定义（探针边界未声明）' });
     return issues;
+  }
+
+  // zszj-server 服务须有专属 healthcheck 且引用 /actuator 路径
+  // 匹配 zszj-server 服务块中的 healthcheck（简化：检查是否存在 zszj-server 后的 /actuator 探针）
+  const serverBlockMatch = composeText.match(/zszj-server:[\s\S]*?(?=\n  \w|\n\n|$)/);
+  if (serverBlockMatch) {
+    const serverBlock = serverBlockMatch[0];
+    if (!/healthcheck/i.test(serverBlock)) {
+      issues.push({ rule: 'C2-probe', path: 'deploy/docker-compose.deploy.yml', line: 0, message: 'zszj-server 服务缺少专属 healthcheck（nginx depends_on 需要它）' });
+    } else if (!/\/actuator\//.test(serverBlock)) {
+      issues.push({ rule: 'C2-probe', path: 'deploy/docker-compose.deploy.yml', line: 0, message: 'zszj-server healthcheck 未引用 /actuator 路径（探针边界不明确）' });
+    }
   }
 
   // 提取 compose 中引用的 /actuator/ 路径
@@ -109,26 +135,33 @@ const SENSITIVE_PATHS = ['/actuator/', '/admin/'];
 
 /**
  * 校验 nginx 反代配置是否关闭了敏感管理路径。
+ * 仅检查非注释行（排除 # 开头的行）。
  * @param {string} nginxText nginx 配置内容
  */
 export function checkManagementClosure(nginxText) {
   const issues = [];
+  // 过滤掉注释行（# 开头，允许前导空格）
+  const activeText = nginxText.split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+
   for (const path of SENSITIVE_PATHS) {
     // 必须存在 location 块且含 deny all 或 return 403
     const locRe = new RegExp(`location\\s+${path.replace(/\//g, '\\/')}[^{]*\\{[^}]*(deny\\s+all|return\\s+403)`, 's');
-    if (!locRe.test(nginxText)) {
-      issues.push({ rule: 'C3-mgmt-closure', path: 'deploy/nginx/zszj-server.conf', line: 0, message: `反向代理未关闭敏感管理路径 ${path}（需 deny all 或 return 403）` });
+    if (!locRe.test(activeText)) {
+      issues.push({ rule: 'C3-mgmt-closure', path: 'deploy/nginx/zszj-server.conf', line: 0, message: `反向代理未关闭敏感管理路径 ${path}（需 deny all 或 return 403，注释行无效）` });
     }
   }
   return issues;
 }
 // ---- C4 端口暴露 ----
 
-/** 内部服务端口（不得公开暴露） */
+/** 内部服务端口（不得公开暴露，按容器端口分类） */
 const INTERNAL_PORTS = [5432, 6379, 3306, 27017, 5672, 15672];
 
 /**
  * 校验 compose 不公开暴露内部服务端口。
+ * 按容器端口（冒号右侧）分类，而非宿主机端口——防止 15432:5432 绕过。
  * 绑定 127.0.0.1 的映射视为本地调试合法，不报。
  * @param {string} composeText docker-compose 模板内容
  */
@@ -141,9 +174,10 @@ export function checkPortExposure(composeText) {
     const parts = mapping.split(':');
     // 判断是否绑定了 loopback
     const boundIp = parts.length >= 3 ? parts[0] : '0.0.0.0';
-    const hostPort = Number(parts.length >= 3 ? parts[1] : parts[0]);
-    if (INTERNAL_PORTS.includes(hostPort) && !/^127\./.test(boundIp)) {
-      issues.push({ rule: 'C4-port', path: 'deploy/docker-compose.deploy.yml', line: 0, message: `内部服务端口 ${hostPort} 公开暴露（绑定 ${boundIp}），应移除或限制为 127.0.0.1` });
+    // 容器端口是最后一个数字（冒号右侧）
+    const containerPort = Number(parts[parts.length - 1]);
+    if (INTERNAL_PORTS.includes(containerPort) && !/^127\./.test(boundIp)) {
+      issues.push({ rule: 'C4-port', path: 'deploy/docker-compose.deploy.yml', line: 0, message: `内部服务容器端口 ${containerPort} 公开暴露（映射 ${mapping}，绑定 ${boundIp}），应移除或限制为 127.0.0.1` });
     }
   }
   return issues;
@@ -257,14 +291,26 @@ function selfTest() {
   const bad = checkSecrets('test.env', 'DB_PASSWORD=hunter2');
   results.push(['C1 负向（硬编码口令）', bad.length > 0]);
 
+  const cmdCred = checkSecrets('compose.yml', 'command: redis-server --requirepass RealSecret123');
+  results.push(['C1 负向（命令行硬编码凭据）', cmdCred.length > 0]);
+
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
+
+  const noServerProbe = checkProbeConsistency('healthcheck:\n  test: curl\nservices:\n  zszj-server:\n    image: x\n  postgres:\n    healthcheck:\n      test: pg_isready', 'health');
+  results.push(['C2 负向（zszj-server 无专属探针）', noServerProbe.length > 0]);
 
   const openNginx = checkManagementClosure('location / { proxy_pass http://x; }');
   results.push(['C3 负向（管理路径未关闭）', openNginx.length > 0]);
 
+  const commentedNginx = checkManagementClosure('# location /actuator/ { deny all; }\n# location /admin/ { deny all; }\nlocation / { proxy_pass http://x; }');
+  results.push(['C3 负向（注释行不算关闭）', commentedNginx.length > 0]);
+
   const openPort = checkPortExposure('ports:\n      - "5432:5432"');
   results.push(['C4 负向（DB 端口公开）', openPort.length > 0]);
+
+  const remappedPort = checkPortExposure('ports:\n      - "15432:5432"');
+  results.push(['C4 负向（端口重映射仍检出容器端口）', remappedPort.length > 0]);
 
   const ghost = checkEnvContract('A=\n', '${GHOST}', CONTRACT_VARS);
   results.push(['C5 负向（幽灵变量）', ghost.length > 0]);

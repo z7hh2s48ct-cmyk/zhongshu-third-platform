@@ -10,8 +10,6 @@
 # 所有敏感配置通过 ${ZSZJ_*} 环境变量注入（见 .env.example 合同表）。
 # 禁止在此文件中出现硬编码口令、真实数据库地址或 TLS 私钥。
 
-version: "3.9"
-
 networks:
   zszj-internal:
     driver: bridge
@@ -19,14 +17,16 @@ networks:
 
 services:
   # ---- PostgreSQL（D-08：仅 PG，禁 MySQL）----
+  # 注意：POSTGRES_USER/PASSWORD 是首次初始化时的超级用户（owner），
+  # 与应用低权限账号分离（ZS-DB-002）。应用连接使用 ZSZJ_DATASOURCE_* 凭据。
   postgres:
     image: postgres:16-alpine
     container_name: zszj-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: zhongshu
-      POSTGRES_USER: ${ZSZJ_DATASOURCE_USERNAME}
-      POSTGRES_PASSWORD: ${ZSZJ_DATASOURCE_PASSWORD}
+      POSTGRES_USER: ${ZSZJ_PG_BOOTSTRAP_USERNAME}
+      POSTGRES_PASSWORD: ${ZSZJ_PG_BOOTSTRAP_PASSWORD}
     volumes:
       - zszj-pgdata:/var/lib/postgresql/data
     networks:
@@ -35,7 +35,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${ZSZJ_DATASOURCE_USERNAME} -d zhongshu"]
+      test: ["CMD-SHELL", "pg_isready -U ${ZSZJ_PG_BOOTSTRAP_USERNAME} -d zhongshu"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,7 +45,8 @@ services:
     image: redis:7-alpine
     container_name: zszj-redis
     restart: unless-stopped
-    command: redis-server --requirepass ${ZSZJ_REDIS_PASSWORD}
+    # exec-list 形式：密码作为独立参数，避免空格/引号被 shell 分词
+    command: ["redis-server", "--requirepass", "${ZSZJ_REDIS_PASSWORD}"]
     volumes:
       - zszj-redisdata:/data
     networks:
@@ -59,7 +60,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ---- zszj-server（Spring Boot，JDK17）----
+  # ---- zszj-server（Spring Boot 3.x，JDK17）----
   zszj-server:
     image: zszj-server:latest   # 由 CI 构建，禁止在模板中硬编码真实 registry 地址
     container_name: zszj-server
@@ -72,16 +73,23 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: ${ZSZJ_PROFILE}
       SERVER_PORT: ${ZSZJ_SERVER_PORT}
-      SPRING_DATASOURCE_URL: ${ZSZJ_DATASOURCE_URL}
-      SPRING_DATASOURCE_USERNAME: ${ZSZJ_DATASOURCE_USERNAME}
-      SPRING_DATASOURCE_PASSWORD: ${ZSZJ_DATASOURCE_PASSWORD}
-      SPRING_REDIS_HOST: ${ZSZJ_REDIS_HOST}
-      SPRING_REDIS_PORT: ${ZSZJ_REDIS_PORT}
-      SPRING_REDIS_PASSWORD: ${ZSZJ_REDIS_PASSWORD}
+      # 数据源：dynamic-datasource starter 使用 spring.datasource.dynamic.datasource.master.*
+      # application-prod.yaml 已通过 volume mount 注入，其中 ZSZJ_* 占位符由此处环境变量解析
+      ZSZJ_DATASOURCE_URL: ${ZSZJ_DATASOURCE_URL}
+      ZSZJ_DATASOURCE_USERNAME: ${ZSZJ_DATASOURCE_USERNAME}
+      ZSZJ_DATASOURCE_PASSWORD: ${ZSZJ_DATASOURCE_PASSWORD}
+      # Redis：Spring Boot 3.x 使用 spring.data.redis.*（非 spring.redis.*）
+      ZSZJ_REDIS_HOST: ${ZSZJ_REDIS_HOST}
+      ZSZJ_REDIS_PORT: ${ZSZJ_REDIS_PORT}
+      ZSZJ_REDIS_PASSWORD: ${ZSZJ_REDIS_PASSWORD}
       # actuator 探针：ZS-ENG-005 已将 exposure.include 收紧为 health
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
       # Spring Boot Admin 客户端禁用（ZS-ENG-005）
       SPRING_BOOT_ADMIN_CLIENT_ENABLED: "false"
+    volumes:
+      # 挂载 application-prod.yaml（ZS-ENG-003 部署模板），使 ZSZJ_* 占位符生效
+      # 路径：jar 同级 config/ 目录（Spring Boot 外部化配置约定）
+      - ../script/config/application-prod.yaml:/app/config/application-prod.yaml:ro
     networks:
       - zszj-internal
     # 仅暴露给 nginx（内部网络），不绑定宿主机公开端口
@@ -117,7 +125,9 @@ services:
     networks:
       - zszj-internal
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]
+      # 探测 nginx 自身 HTTP 健康端点（在 zszj-server.conf 中定义的 /nginx-health）
+      # 使用 HTTPS 并跳过证书验证（自签名证书场景）
+      test: ["CMD", "curl", "-fk", "https://localhost/nginx-health"]
       interval: 30s
       timeout: 5s
       retries: 3

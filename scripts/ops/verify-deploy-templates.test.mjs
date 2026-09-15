@@ -52,6 +52,18 @@ test('C1：注释行中的秘密仍被检出（防「注释掉即安全」伪绿
   const issues = checkSecrets('deploy/.env.example', text);
   assert.ok(issues.length > 0, '注释行中的真实秘密也应报出');
 });
+
+test('C1：命令行参数硬编码凭据触发 issue（codex r0 P2 修复）', () => {
+  const text = 'command: redis-server --requirepass RealSecret123';
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /命令行/.test(i.message)));
+});
+
+test('C1：命令行参数使用占位符不报 issue', () => {
+  const text = 'command: ["redis-server", "--requirepass", "${ZSZJ_REDIS_PASSWORD}"]';
+  assert.deepEqual(checkSecrets('deploy/docker-compose.deploy.yml', text), []);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
@@ -77,6 +89,34 @@ test('C2：actuator include 为空时 compose 任何 /actuator 探针都报 issu
   assert.ok(issues.some((i) => i.rule === 'C2-probe'));
 });
 
+test('C2：zszj-server 无专属 healthcheck→报 issue（codex r0 P2 修复）', () => {
+  // 其他服务有 healthcheck 但 zszj-server 没有
+  const compose = [
+    'services:',
+    '  postgres:',
+    '    healthcheck:',
+    '      test: pg_isready',
+    '  zszj-server:',
+    '    image: zszj-server:latest',
+    '    ports:',
+    '      - "48080:48080"',
+  ].join('\n');
+  const issues = checkProbeConsistency(compose, 'health');
+  assert.ok(issues.some((i) => i.rule === 'C2-probe' && /zszj-server/.test(i.message)));
+});
+
+test('C2：zszj-server healthcheck 未引用 /actuator→报 issue', () => {
+  const compose = [
+    'services:',
+    '  zszj-server:',
+    '    image: zszj-server:latest',
+    '    healthcheck:',
+    '      test: curl http://localhost:48080/ping',
+  ].join('\n');
+  const issues = checkProbeConsistency(compose, 'health');
+  assert.ok(issues.some((i) => i.rule === 'C2-probe' && /actuator/.test(i.message)));
+});
+
 // ---- C3 管理路径关闭 ----
 
 test('C3：nginx deny /actuator/ + /admin/ →通过', () => {
@@ -99,6 +139,18 @@ test('C3：nginx 未关闭 /admin/ →报 issue', () => {
   const issues = checkManagementClosure(nginx);
   assert.ok(issues.some((i) => i.rule === 'C3-mgmt-closure' && /admin/.test(i.message)));
 });
+
+test('C3：注释掉的 deny 不算关闭→报 issue（codex r0 P2 修复）', () => {
+  const nginx = [
+    '# location /actuator/ { deny all; return 403; }',
+    '# location /admin/ { deny all; return 403; }',
+    'location / { proxy_pass http://zszj-server:48080; }',
+  ].join('\n');
+  const issues = checkManagementClosure(nginx);
+  assert.ok(issues.length >= 2, '注释行不应被视为有效关闭');
+  assert.ok(issues.some((i) => /注释行无效/.test(i.message)));
+});
+
 // ---- C4 端口暴露 ----
 
 test('C4：compose 不暴露 DB/Redis 端口→通过', () => {
@@ -132,6 +184,12 @@ test('C4：绑定 127.0.0.1 的 DB 端口不报（本地调试合法）', () => 
   assert.deepEqual(checkPortExposure(compose), []);
 });
 
+test('C4：端口重映射 15432:5432 仍检出容器端口→报 issue（codex r0 P2 修复）', () => {
+  const compose = 'services:\n  postgres:\n    ports:\n      - "15432:5432"';
+  const issues = checkPortExposure(compose);
+  assert.ok(issues.some((i) => i.rule === 'C4-port' && /5432/.test(i.message)));
+});
+
 // ---- C5 环境变量合同双向一致 ----
 
 test('C5：.env.example 与 compose 引用的变量完全覆盖合同→通过', () => {
@@ -157,6 +215,11 @@ test('C5：compose 引用了合同外变量→报 issue（防幽灵变量）', (
 test('C5：CONTRACT_VARS 包含 ZS-ENG-003 已定义的全部必填项', () => {
   const required = ['ZSZJ_DATASOURCE_URL', 'ZSZJ_DATASOURCE_USERNAME', 'ZSZJ_DATASOURCE_PASSWORD', 'ZSZJ_REDIS_HOST', 'ZSZJ_REDIS_PASSWORD'];
   for (const v of required) assert.ok(CONTRACT_VARS.includes(v), `合同缺 ${v}`);
+});
+
+test('C5：CONTRACT_VARS 包含 PG bootstrap 凭据（codex r0 P1 修复）', () => {
+  assert.ok(CONTRACT_VARS.includes('ZSZJ_PG_BOOTSTRAP_USERNAME'));
+  assert.ok(CONTRACT_VARS.includes('ZSZJ_PG_BOOTSTRAP_PASSWORD'));
 });
 
 // ---- 结构完整性 ----
