@@ -30,7 +30,7 @@ public class InboxTryBegin {
 
     Outcome outcome;
 
-    /** 关联记录：CLAIMED/RETRIED_CLAIMED 为本次登记结果；DUPLICATE_*/PARAM_CONFLICT 为既有记录现场；
+    /** 关联记录：CLAIMED/RETRIED_CLAIMED 为本次登记结果；DUPLICATE 各态与 PARAM_CONFLICT 为既有记录现场；
      * STALE_VERSION 在首抢路径为 {@code null}（占位行已随护栏拒绝回滚，无现场可携）。
      */
     InboxRecord record;
