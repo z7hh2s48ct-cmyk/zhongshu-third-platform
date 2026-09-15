@@ -644,6 +644,30 @@ test('C1：美元体块注释分支同等初始外层状态，孤立双引号不
   assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
 });
 
+// ---- C1 r18 回归 ----
+
+test('C1：哨兵弹出语义与 fillFragment 同步，体内嵌套闭合后引号回落（codex r18 P2-1）', () => {
+  // 首个无配对 */ 弹哨兵后引号消费回宽：后续 /* note */ 不再被截断吞掉
+  const dq = "/* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 单引号同结构变体
+  const sq = "/* '/*' */ '/* */ ' CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', sq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "/* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：美元体块注释分支同弹出语义（codex r18 P2-1）', () => {
+  const dq = "DO $$ /* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */ END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  const sq = "DO $$ /* '/*' */ '/* */ ' CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */ END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', sq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "DO $$ /* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */ END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {

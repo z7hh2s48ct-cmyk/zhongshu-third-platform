@@ -1013,13 +1013,14 @@ function buildParenDepthMap(text, ctxMap) {
   //   真实嵌套边界独立 fillSpan——注释内引号无词法语义，片段配对不得改写外层终点；
   //   片段配对范围仅取定界符之间的文本。美元体行注释与普通行注释一致：先标记
   //   文本内局部块注释、再回填整行。
-  //   外层哨兵（r17 P2-1）：范围收窄让片段配对从空栈起步，引号消费的层界约束
-  //   （starts.length > 0）失效——孤立未闭合引号会吞掉体内后续嵌套定界符段，
-  //   局部注释漏标、CAST 判定漏检。coversOuterComment=true 时以哨兵压底，从
-  //   「已在注释层内」状态起步（与 fillFragment 处理含外层定界符时的层栈一致）：
-  //   引号消费自起点即受层界约束（r15 保护恢复）；哨兵永驻（`*/` 遇哨兵栈顶
-  //   忽略不弹——该定界符关闭的层在范围外开启或被引号消费跳过，无对应可填
-  //   区间），真实区间终点仍由调用方独立 fillSpan，不受哨兵影响。
+  //   外层哨兵（r17 P2-1；r18 P2-1 修正弹出语义）：范围收窄让片段配对从空栈
+  //   起步，引号消费的层界约束（starts.length > 0）失效——孤立未闭合引号会
+  //   吞掉体内后续嵌套定界符段，局部注释漏标、CAST 判定漏检。coversOuterComment
+  //   =true 时以哨兵压底，从「已在注释层内」状态起步（与 fillFragment 处理含
+  //   外层定界符时的层栈一致）：引号消费自起点即受层界约束（r15 保护恢复）；
+  //   `*/` 遇哨兵栈顶时弹出哨兵但不填区间——与 fillFragment 中体内嵌套闭合
+  //   弹出外层层、回落基层引号语义一致（r18：永驻会使后续引号仍被 */ 截断，
+  //   吞掉后续局部注释）；真实区间终点仍由调用方独立 fillSpan，不受哨兵影响。
   const fillSpan = (s, e) => {
     let t = s;
     while (t < e) {
@@ -1037,7 +1038,7 @@ function buildParenDepthMap(text, ctxMap) {
       const c = text[i];
       if (c === '/' && text[i + 1] === '*') { starts.push(i); i += 2; continue; }
       if (c === '*' && text[i + 1] === '/' && starts.length > 0) {
-        if (starts[starts.length - 1] === OUTER_SENTINEL) { i += 2; continue; } // r17 P2-1：哨兵永驻，忽略不弹
+        if (starts[starts.length - 1] === OUTER_SENTINEL) { starts.pop(); i += 2; continue; } // r18 P2-1：弹出哨兵不填区间，后续引号约束与 fillFragment 同步
         const s = starts.pop(); // 最内层优先：先闭合先填，外层回填时跳跃补全
         fillSpan(s, i + 2);
         i += 2; continue;
@@ -1095,8 +1096,8 @@ function buildParenDepthMap(text, ctxMap) {
       // r15 P2-1/P2-2；r16 P2-1：片段文本内局部块注释独立配对（引号语义）、
       // 外层区间按 skipBlockComment 的真实嵌套边界整段回填——注释内引号无
       // 词法语义（如 /* "/*" */ */），片段引号消费不得改写外层区间终点；
-      // r17 P2-1：哨兵起步（真实外层为已开启层）——孤立引号不得吞掉体内
-      // 后续嵌套定界符段
+      // r17 P2-1；r18 P2-1：哨兵起步（真实外层为已开启层、体内嵌套闭合弹出回落）
+      // ——孤立引号不得吞掉体内后续嵌套定界符段
       markInnerCommentSpans(start + 2, i - 2, true);
       fillSpan(start, i);
       continue;
@@ -1126,7 +1127,7 @@ function buildParenDepthMap(text, ctxMap) {
             const end = skipBlockComment(text, i, 0, bodyEnd);
             fillFragment(i, end);
             // r15 P2-1/P2-2；r16 P2-1：外层区间按真实嵌套边界回填、片段文本内局部块注释独立配对；
-            // r17 P2-1：同普通块注释分支——哨兵起步（孤立引号不吞嵌套定界符段）
+            // r17 P2-1；r18 P2-1：同普通块注释分支——哨兵起步（弹出语义与 fillFragment 同步）
             markInnerCommentSpans(i + 2, end - 2, true);
             fillSpan(i, end);
             i = end; continue;
