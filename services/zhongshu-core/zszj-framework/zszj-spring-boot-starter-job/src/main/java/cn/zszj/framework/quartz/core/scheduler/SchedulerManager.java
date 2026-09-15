@@ -4,6 +4,8 @@ import cn.zszj.framework.quartz.core.enums.JobDataKeyEnum;
 import cn.zszj.framework.quartz.core.handler.JobHandlerInvoker;
 import org.quartz.*;
 
+import java.util.Objects;
+
 import static cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants.NOT_IMPLEMENTED;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception0;
 
@@ -85,6 +87,28 @@ public class SchedulerManager {
         // 取消并删除 Job 调度
         scheduler.unscheduleJob(new TriggerKey(jobHandlerName));
         scheduler.deleteJob(new JobKey(jobHandlerName));
+    }
+
+    /**
+     * 删除调度器中的孤儿触发器（ZS-JOB-001）
+     *
+     * 与 {@link #deleteJob(String)} 的区别：后者假定“触发器名 == JobDetail 名”，用于清掉一个完整任务；
+     * 这里只清触发器本身，JobDetail 仅在两者同名（即它已不被其它触发器引用）时才一并删除。
+     * “立即触发”会为已注册任务生成一次性触发器（DEFAULT.MT_*），它的名字不是任何 handler 名，
+     * 走 {@link #deleteJob(String)} 会把已接受的手动执行连带取消。
+     *
+     * @param triggerKey 触发器标识
+     * @param jobKey     触发器归属的 JobDetail 标识
+     * @throws SchedulerException 删除异常
+     */
+    public void deleteOrphanTrigger(TriggerKey triggerKey, JobKey jobKey) throws SchedulerException {
+        validateScheduler();
+        scheduler.pauseTrigger(triggerKey);
+        scheduler.unscheduleJob(triggerKey);
+        if (jobKey != null && Objects.equals(triggerKey.getName(), jobKey.getName())
+                && Objects.equals(triggerKey.getGroup(), jobKey.getGroup())) {
+            scheduler.deleteJob(jobKey);
+        }
     }
 
     /**

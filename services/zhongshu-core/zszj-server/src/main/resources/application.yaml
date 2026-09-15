@@ -339,6 +339,12 @@ zszj:
     delete-batch-enable: true # 是否生成批量删除接口
     unit-test-enable: false # 是否生成单元测试
     import-enable: false # 是否生成 Excel 导入接口
+  job: # ZS-JOB-001：定时任务相关配置项
+    # JobHandler 白名单，元素为 Spring Bean 名字（即 infra_job.handler_name）。
+    # 空列表 = 未启用白名单管控（放行全部 Handler），用于尚未固化清单的环境批次，避免升级即中断既有任务；
+    # 非空 = 已启用，只有清单内的 Handler 才允许被登记（创建/修改）与执行，其余一律拒绝。
+    # 生产环境应显式固化清单；具体启用清单归环境批次（application-{env}.yaml），本地/单元测试经 @TestPropertySource 显式注入。
+    handler-whitelist: []
   tenant: # 多租户相关配置项
     enable: true
     ignore-urls:

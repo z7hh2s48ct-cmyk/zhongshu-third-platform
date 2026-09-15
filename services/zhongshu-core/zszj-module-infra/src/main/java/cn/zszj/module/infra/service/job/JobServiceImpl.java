@@ -6,6 +6,7 @@ import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.framework.quartz.core.handler.JobHandler;
 import cn.zszj.framework.quartz.core.scheduler.SchedulerManager;
 import cn.zszj.framework.quartz.core.util.CronUtils;
+import cn.zszj.framework.quartz.core.whitelist.JobHandlerWhitelistValidator;
 import cn.zszj.module.infra.controller.admin.job.vo.job.JobPageReqVO;
 import cn.zszj.module.infra.controller.admin.job.vo.job.JobSaveReqVO;
 import cn.zszj.module.infra.dal.dataobject.job.JobDO;
@@ -20,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
-import java.util.Objects;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.containsAny;
@@ -41,6 +41,18 @@ public class JobServiceImpl implements JobService {
 
     @Resource
     private SchedulerManager schedulerManager;
+
+    /**
+     * JobHandler 白名单校验器（ZS-JOB-001）：任务登记侧的固化入口，与执行侧共用同一份判定
+     */
+    @Resource
+    private JobHandlerWhitelistValidator jobHandlerWhitelistValidator;
+
+    /**
+     * 调度器对账器（ZS-JOB-001）：以任务表为权威修正调度器残留漂移
+     */
+    @Resource
+    private JobSchedulerReconciler jobSchedulerReconciler;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -101,6 +113,9 @@ public class JobServiceImpl implements JobService {
         } catch (NoSuchBeanDefinitionException e) {
             throw exception(JOB_HANDLER_BEAN_NOT_EXISTS);
         }
+        // 白名单校验（ZS-JOB-001）：Bean 存在不等于允许登记。“容器里恰好有这个 Bean”不能作为任务可登记的依据，
+        // 否则模块关闭/依赖变化会静默改变可执行任务集。校验放在 Bean 存在性与类型校验之后，保留原有错误码语义。
+        jobHandlerWhitelistValidator.validate(handlerName);
     }
 
     @Override
@@ -132,6 +147,15 @@ public class JobServiceImpl implements JobService {
     public void triggerJob(Long id) throws SchedulerException {
         // 校验存在
         JobDO job = validateJobExists(id);
+        // 校验状态（ZS-JOB-001）：只有开启状态的任务才允许手动触发。
+        // 暂停中的任务被手动触发，会绕过“暂停”这个运维意图产生副作用，且执行日志与任务表状态相互矛盾，因此直接拒绝。
+        if (!JobStatusEnum.shouldRun(job.getStatus())) {
+            throw exception(JOB_TRIGGER_ON_PAUSED, job.getStatus());
+        }
+        // 校验白名单（ZS-JOB-001）：手动触发是第四个入口，与登记侧（createJob/updateJob）、执行侧（JobHandlerInvoker）
+        // 共用同一份判定。执行侧虽已兜底，但那里拒绝会先写一条执行日志再失败，形成「已触发但被拦」的矛盾记录；
+        // 这里提前拒绝，覆盖「任务登记时白名单未启用、之后 Handler 被移出清单」这一时间差。
+        jobHandlerWhitelistValidator.validate(job.getHandlerName());
 
         // 触发 Quartz 中的 Job
         schedulerManager.triggerJob(job.getId(), job.getHandlerName(), job.getHandlerParam());
@@ -149,12 +173,19 @@ public class JobServiceImpl implements JobService {
             schedulerManager.deleteJob(job.getHandlerName());
             schedulerManager.addJob(job.getId(), job.getHandlerName(), job.getHandlerParam(), job.getCronExpression(),
                     job.getRetryCount(), job.getRetryInterval());
-            // 2.2 如果 status 为暂停，则需要暂停
-            if (Objects.equals(job.getStatus(), JobStatusEnum.STOP.getStatus())) {
+            // 2.2 只要不是「应当可跑」的状态就暂停。INIT（尚未开启）与 STOP 同样不该跑：
+            // 此处与 JobSchedulerReconciler 共用 JobStatusEnum#shouldRun 单一真源，
+            // 若各自判断（这里只看 STOP、对账看非 NORMAL），INIT 任务会在重启同步后被留在可跑状态，
+            // 并由对账再补一刀，每次重启都制造一次无意义的「漂移→修正」噪音。
+            if (!JobStatusEnum.shouldRun(job.getStatus())) {
                 schedulerManager.pauseJob(job.getHandlerName());
             }
             log.info("[syncJob][id({}) handlerName({}) 同步完成]", job.getId(), job.getHandlerName());
         }
+
+        // 3. 对账（ZS-JOB-001）：重建之后再校一次，确认任务表与调度器已对齐，并清掉调度器侧的孤儿触发器
+        JobSchedulerReconcileReport report = jobSchedulerReconciler.reconcile();
+        log.info("[syncJob][对账完成：{}]", report.getSummary());
     }
 
     @Override
