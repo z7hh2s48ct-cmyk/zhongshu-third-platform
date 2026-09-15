@@ -1,14 +1,14 @@
-# ZS-CLIENT-001.A codex 评审处置（r0→r5 六弧）
+# ZS-CLIENT-001.A codex 评审处置（r0→r9 十弧）
 
 - 评审工具：codex（gpt-6-astra / xhigh，`--dangerously-bypass-approvals-and-sandbox` 读评工作区，多轮以
   **Node 内存复现逐条实测**各判定（各轮 stdout 附复现证据））
 - 评审对象：分支 `feat/client-001-a`（ZS-CLIENT-001.A 技术账号 Web 授权导航/缓存会话/关闭模块守卫 +
   登录入口契约 + 导航契约解析器；B06 分批子项）
-- 结论：**r5 FAIL 4×P3 已全部处置（`41055f0e`）**；六弧累计 0×P0/P1、P2 存量归零，末轮修复待下一弧复评确认
-- 说明：r1→r5 各弧裁决原文已随评审落盘（`outputs/client001a-codex-r{1..5}-out*`，r5 转码 UTF-8 归档）；
+- 结论：**r9 复评 PASS（0 findings）——r0→r9 十弧正式收敛**；累计 0×P0/P1、P2/P3 存量归零，r8 处置（`650fbe3a`）经 r9 复评确认，不以处置提交自证
+- 说明：r1→r9 各弧裁决原文已随评审落盘（`outputs/client001a-codex-r{1..9}-out*`，r5 转码 UTF-8 归档）；
   r0 裁决未随暂存保留，发现与处置按 `fed79051` 提交说明摘录，如实登记。
 
-## 交付内容（impl commit `72c90376`，20 files +3951/-124；处置至 `41055f0e`；`--no-ff` 合并 main `ed722b31`）
+## 交付内容（impl commit `72c90376`，20 files +3951/-124；处置至 `650fbe3a`；`--no-ff` 合并 main `ed722b31`（r5）+ `50f9e51c`（r6→r9））
 
 1. **纯逻辑授权核心**（`src/router/access.ts`，无 Vue 运行时依赖、vitest 直接覆盖）：以服务端
    get-permission-info 下发菜单树为单一真相源构建授权快照（menuPatterns 精确 + menuPrefixes 祖先前缀 +
@@ -40,19 +40,24 @@
 | r3（`7ca52fbd`） | FAIL 1×P2+1×P3 | P2-1 保留父节点时 {517,524} 仍越权模板装修（routerHelper.ts:158 将带 children 的 517 替换为 ParentLayout、容器无页面入口语义但 exactAnchors 仍命中）；P3-1 消费判定可被单分支替换绕过（SPA 分支替换为 window.location.assign(redirect) 后照过）→ leafPatterns 仅叶子参与 + 契约升级导航实参级验证 → `1334a10b`（144） |
 | r4（`1334a10b`） | FAIL 3×P3 | P3-1 实参出现绑定名≠消费（属性覆盖 X.target= / 整体重赋值 / 同名回调参数遮蔽）→ isNameTainted 失信判定；P3-2 字符串伪调用误报 + 模板串嵌套插值截断函数体 → maskCodePositions 代码位置掩码 + 递归配平；P3-3 裸 replace 不识别（入口过滤与实参检查覆盖范围不一致）→ collectNavCalls 统一导航调用提取 → `a6bab2b9`（150） |
 | r5（`a6bab2b9`） | FAIL 4×P3 | P3-1 多字段解构参数遮蔽漏检（split(',') 破坏解构花括号完整性）→ splitTopLevel 按顶层定界符拆分 + 解构绑定名解析（别名/默认值/嵌套）；P3-2 解构声明默认值误判整体重赋值 → countDeclaredBindings 声明初始化计数；P3-3 失信检查未排除字符串文本（"postAuth.target = redirect" 字面量误报）→ countCodeMatches 仅统计代码位置；P3-4 含 $ 合法绑定误报（绑定名拼入正则使 $ 成结束锚点、\b 不适合作边界）→ escapeRegExpName 全特殊字符转义 → `41055f0e`（155） |
+| r6（`7f676a36`） | FAIL 4×P3 | P3-1 解构声明计数抵扣真实重赋值（`countDeclaredBindings` 把 `let {a}=o` 后 `a=x` 误算已初始化）→ countPatternAssigns 条目化逐绑定判定；P3-2 字符串/模板串内括号破坏顶层拆分（`splitTopLevel` 遇 `"(…)"` 误配平）→ 词法状态机 + 配平区间跳过；P3-3 默认值对象内引用误判为声明（`{a: b}` 的 b 被当绑定）→ 顶层等号分离声明与默认值；P3-4 模板插值内写入被屏蔽漏检 → maskCodePositions 保留插值内代码位置 → `7f676a36`（159） |
+| r7（`038eba08`） | FAIL 1×P3 | P3-1 字符串键内伪默认值抵消真实重赋值（`o["{a=b}"]` 字面量被当解构默认值）→ patternBraceRange 词法感知花括号区间（跳过字符串/模板/注释）；同源加固 bindingName/collectResolutionNames 配平提取 → `038eba08`（162） |
+| r8（`650fbe3a`） | FAIL 1×P3 | P3-1 r7 回归——字符串内伪解构被收为可信引用（`collectResolutionNames` 直绑路径未经位置掩码）→ 直绑/解构两路径统一 maskCodePositions 位置过滤 + 真实文件变异回归 → `650fbe3a`（163） |
+| r9（`650fbe3a`） | **PASS（0 findings）** | 以复评结论自证收敛——r8 处置经 r9 复评零发现，十弧 0×P0/P1、P2/P3 存量归零 |
 
 ## 验证
 
-- admin-web vitest：110→120→126→134→144→150→**155/155**（5 files，逐弧回归累积；逻辑级单测不依赖
+- admin-web vitest：110→120→126→134→144→150→155→159→162→**163/163**（5 files，逐弧回归累积；逻辑级单测不依赖
   @vue/test-utils）。
 - G10 类型基线：`node scripts/client/verify-ts-baseline.mjs` → 11 == 11、newErrors=[]（各弧零新增）。
 - eslint ./src 与 prettier --check（改动文件）各弧全过；仓库既有 32 处格式告警均在未触碰的上游文件中。
-- 合并 `--no-ff` main `ed722b31`（父 `63a20334` + `41055f0e`）。
+- 合并 `--no-ff` main：r5 增量 `ed722b31`（父 `63a20334` + `41055f0e`）；r6→r9 增量 `50f9e51c`（父 `c8011893` + `650fbe3a`，login-entry-contract.spec.ts +453/-77）。
 
 ## 登记边界（如实登记）
 
-1. **末轮修复未经下一弧复评**：r5 发现的 4×P3 已全部处置（`41055f0e`），r6 复评未发生——登记为
-   「已处置待复评」，不以处置提交自证收敛。
+1. **复评闭环（原「末轮修复未经下一弧复评」已消除）**：r5 处置 `41055f0e` 续经 r6→r8 三弧处置
+   （`7f676a36`/`038eba08`/`650fbe3a`），r9 复评 PASS（0 findings）确认收敛——不以处置提交自证，
+   以复评结论闭环。
 2. **前端只做权限集合成员判断**：服务端 @PreAuthorize 为唯一真实边界，客户端守卫为纵深防御 UX 层；
    .B（Web 消费业务动作与字段授权，前置 ZS-PERM-003、需 D-09）归 B08，本批不做。
 3. **enabledModules 运行模块白名单为预留入参**（ZS-CFG-003.A）：前端当前拿不到该信号时传 null，
