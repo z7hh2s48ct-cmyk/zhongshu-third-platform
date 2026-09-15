@@ -375,6 +375,299 @@ test('C1：注释 / 美元片段内分号结束候选，不越界误报（codex 
   assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', doBody), []);
 });
 
+// ---- C1 codex r12 回归（YAML 属性词法 / 片段局部括号深度 / 美元体局部词法 / CAST 类型参数 / 注释不误报 / O(n) 美元闭合） ----
+
+test('C1：anchor 名含点号与引用键含 # 不截断块标量，口令检出（codex r12 P2-1）', () => {
+  // &a.b 的点号属 anchor 名（YAML 规范 6.9.2）；属性后的 "k # x": | 引用键内 # 不得当注释
+  const text = '&a.b "k # x": |\n  CREATE ROLE app LOGIN PASSWORD\n  \'RealSecret123\';';
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：注释片段内括号包装的候选读片段自身深度，检出后不越界（codex r12 P2-2）', () => {
+  // 注释整体跳过会丢片段内候选的包装括号：片段深度须独立于外层计数
+  const lineComment = "-- SELECT ('CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', lineComment).some((i) => /RealSecret123/.test(i.message)));
+  const blockComment = "/* SELECT ('CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', blockComment).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：美元体内注释括号不参与配对、前置注释引号不吞后续括号（codex r12 P2-3）', () => {
+  // 美元体内需局部词法：/* ) */ 的右括号与 /* ' */ 的引号都不得干扰真实括号配对
+  const commentParen = "DO $$ BEGIN EXECUTE (/* ) */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', commentParen).some((i) => /RealSecret123/.test(i.message)));
+  const leadQuote = "DO $$ BEGIN EXECUTE (/* ' */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', leadQuote).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：CAST 类型参数内注释的闭括号不终止类型参数（codex r12 P2-4）', () => {
+  const text = "SELECT CAST('CREATE ROLE app LOGIN PASSWORD ' AS varchar(255 /* ) */)) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：美元体内 CAST 引用类型（双引号）独立解析，候选不截断（codex r12 P2-5）', () => {
+  const text = 'DO $$ BEGIN EXECUTE CAST(\'CREATE ROLE app LOGIN PASSWORD \' AS "text") || quote_literal(\'RealSecret123\'); END $$;';
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：子查询 AS 别名 + WHERE 常量不误报（仅真实 CAST 消费类型）（codex r12 P2-6）', () => {
+  const text = "SELECT (SELECT 'CREATE ROLE app LOGIN PASSWORD ' AS cmd WHERE current_user = 'app') || quote_literal(current_user);";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
+test('C1：美元体内子查询的真实右括号不被跳过，候选闭合检出（codex r12 P2-7）', () => {
+  const text = "DO $$ BEGIN EXECUTE (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE true) || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：美元闭合上限预缓存，大输入线性完成（codex r12 P2-8）', () => {
+  // 修复前每个美元体内的 /* 先扫到全文 EOF 再截回，O(n²)：n=16000 实测约 2299ms
+  const text = 'SELECT $$/*$$;\n'.repeat(16000);
+  const t0 = performance.now();
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  assert.equal(issues.length, 0);
+  assert.ok(elapsed < 1000, `n=16000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
+// ---- C1 r13 回归 ----
+
+test('C1：CAST 与左括号间空白 / 块注释不再漏检（codex r13 P2-1）', () => {
+  const spaced = "SELECT CAST     ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  const commented = "SELECT CAST /*comment*/ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  const lower = "SELECT cast ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  for (const text of [spaced, commented, lower]) {
+    assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message)));
+  }
+});
+
+test('C1：CAST 嵌套括号的 AS 按 AS 所在层判定，外层别名不误报（codex r13 P2-2）', () => {
+  const nested = "SELECT CAST(('CREATE ROLE app LOGIN PASSWORD ') AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', nested).some((i) => /RealSecret123/.test(i.message)));
+  const alias = "SELECT (SELECT CAST('CREATE ROLE app LOGIN PASSWORD ' AS text) AS cmd WHERE current_user = 'app') || quote_literal(current_user);";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', alias).length, 0);
+});
+
+test('C1：注释内 CAST 判定的 openAt 同步填充（codex r13 P2-3）', () => {
+  const text = "SELECT (\n-- SELECT CAST('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');\n1);";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+});
+
+test('C1：注释内嵌套块注释右括号不抵消包装括号（codex r13 P2-4）', () => {
+  const inLine = "SELECT (\n-- SELECT (/* ) */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123');\n1);";
+  const inBlock = "SELECT (\n/* SELECT (/* ) */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123'); */\n1);";
+  for (const text of [inLine, inBlock]) {
+    const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+    assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  }
+});
+
+test('C1：注释内自然语言撇号不开启字符串（codex r13 P2-5）', () => {
+  const text = "SELECT (\n-- application's SELECT ('CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123');\n1);";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+});
+
+test('C1：YAML 属性名点号 / 非 ASCII 完整消费（codex r13 P2-6）', () => {
+  const cases = [
+    "command: &a.b \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"",
+    "command: &锚点 \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"",
+    "command: !a.b \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"",
+  ];
+  for (const line of cases) {
+    assert.ok(checkSecrets('deploy/docker-compose.deploy.yml', line).some((i) => /RealSecret123/.test(i.message)));
+  }
+});
+
+test('C1：片段模式双引号标识符中的 ) 不参与配对（codex r13 P2-7）', () => {
+  const text = "DO $$ BEGIN EXECUTE ((SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE \")\" = 'app')) || quote_literal(current_user); END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).length, 0);
+});
+
+test('C1：片段模式注释跳转受片段边界约束（codex r13 P2-8）', () => {
+  const block = "SELECT $$ (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE /*$$; SELECT $$*/ ) || quote_literal('hello')$$;";
+  const line = "SELECT $$ (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE --$$; SELECT $$\n) || quote_literal('hello')$$;";
+  for (const text of [block, line]) {
+    assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).length, 0);
+  }
+});
+
+test('C1：美元体行注释换行搜索线性完成（codex r13 P2-9）', () => {
+  // 修复前每个美元体都执行无上限 indexOf('\n')，n=64000 实测约 897ms
+  const text = 'SELECT $$--$$;'.repeat(64000);
+  const t0 = performance.now();
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  assert.equal(issues.length, 0);
+  assert.ok(elapsed < 1000, `n=64000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
+// ---- C1 r14 回归 ----
+
+test('C1：字符串内 -- 不阻断左向 CAST 判定（codex r14 P2-1）', () => {
+  // ' -- ' 位于字符串字面量内，不是行注释；CAST 与左括号跨行仍应识别
+  const pos = "SELECT ' -- ', CAST\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', pos).some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  // 字符串内的 'CAST -- ignored' 不得使 (SELECT ... AS cmd) 被误判为 CAST
+  const neg = "SELECT 'CAST -- ignored' ||\n(SELECT 'CREATE ROLE app LOGIN PASSWORD ' AS cmd WHERE current_user = 'app') || quote_literal(current_user);";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', neg).length, 0);
+  // CAST 与 -- 注释相邻，换行后接左括号
+  const commented = "SELECT CAST--comment\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', commented).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：片段内双引号标识符整体消费，/* 不误开嵌套（codex r14 P2-2）', () => {
+  const plain = "-- SELECT (\"/*\" || 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123') FROM prefixes;";
+  const esc = "-- SELECT (\"a\"\"/*\" || 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123') FROM prefixes;";
+  for (const text of [plain, esc]) {
+    assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  }
+});
+
+test('C1：嵌套块注释第二定界符字符同步标记（codex r14 P2-3）', () => {
+  const text = "/* SELECT (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE /* ok */ current_user = 'app') || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+});
+
+test('C1：WHERE 候选片段结束查找线性完成（codex r14 P2-4）', () => {
+  // 修复前每候选左括号都从 from 起逐位预扫描片段结束，n=8000 实测约 2325ms
+  const text = 'DO $$ BEGIN\n' + "PERFORM (SELECT 'CREATE ROLE app LOGIN PASSWORD ' WHERE true) || quote_literal(current_user);\n".repeat(8000) + 'END $$;';
+  const t0 = performance.now();
+  checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  assert.ok(elapsed < 1000, `n=8000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
+test('C1：CAST 跨行判定无全文 -- 搜索，非线性退化（codex r14 P2-5）', () => {
+  // 修复前每处 CAST 判定对全文做无上限 indexOf('--')，n=32000 实测即达 840ms，n=64000 约 2.7s
+  const text = "SELECT CAST\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user);\n".repeat(64000);
+  const t0 = performance.now();
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  const elapsed = performance.now() - t0;
+  // quote_literal(current_user) 为变量取值，正确行为 0 检出（不误报）
+  assert.equal(issues.length, 0);
+  assert.ok(elapsed < 1000, `n=64000 应线性完成，实测 ${elapsed.toFixed(1)}ms`);
+});
+
+// ---- C1 r15 回归 ----
+
+test('C1：普通模式注释区间整段跳过，CAST 判定不被注释内配对引号打断（codex r15 P2-1）', () => {
+  // 块注释内 'note' 的闭引号带 CTX_SINGLE_QUOTE 标记：按注释区间表整段跳过
+  const block = "SELECT CAST /* 'note' */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', block).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 行注释变体 + 注释内配对引号
+  const line = "SELECT CAST -- 'note'\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', line).some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  // 嵌套块注释：外层与内层各自含配对引号
+  const nested = "SELECT CAST /* 'a' /* 'b' */ */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', nested).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+});
+
+test('C1：片段内 CAST 夹局部注释整段跳过（codex r15 P2-2）', () => {
+  // 美元体内 CAST 与左括号间夹块注释
+  const dollar = "DO $$ BEGIN PERFORM CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dollar).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 行注释片段内局部块注释
+  const lineFrag = "-- BEGIN PERFORM CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', lineFrag).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 外层块注释内嵌套局部注释
+  const blockFrag = "/* BEGIN PERFORM CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', blockFrag).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：同结构安全取值不误报
+  const safe = "DO $$ BEGIN PERFORM CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：嵌套注释层内孤立双引号不吞层界，层栈恢复后检出（codex r15 P2-3）', () => {
+  // 内层 /* " */ 的未配对双引号曾被消费到片段尾、吞掉层界与后续表达式
+  const text = "/* SELECT (/* \" */ 'CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123'); */";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => /RealSecret123/.test(i.message) && i.line === 1), JSON.stringify(issues));
+});
+
+// ---- C1 r16 回归 ----
+
+test('C1：注释区间按真实嵌套边界登记，引号包裹嵌套定界符不漏检（codex r16 P2-1）', () => {
+  // 注释内 "/*" 的双引号包裹嵌套定界符：片段配对不得改写外层区间终点
+  const dq = "SELECT CAST /* \"/*\" */ */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 单引号包裹版本
+  const sq = "SELECT CAST /* '/*' */ */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', sq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 美元体内块注释同结构
+  const dollar = "DO $$ BEGIN PERFORM CAST /* \"/*\" */ */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dollar).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "SELECT CAST /* \"/*\" */ */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user);";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：美元体行注释区间跳过先于片段 ctx 边界，配对引号不阻断 CAST 回溯（codex r16 P2-2）', () => {
+  // 行注释内配对单引号的闭引号标记（CTX_SINGLE_QUOTE）曾先触发片段边界 break
+  const main = "DO $$ BEGIN PERFORM CAST -- 'note'\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', main).some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  // 闭引号后带空格变体
+  const spaced = "DO $$ BEGIN PERFORM CAST -- 'note' \n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', spaced).some((i) => /RealSecret123/.test(i.message) && i.line === 2));
+  // 负例：安全取值不误报
+  const safe = "DO $$ BEGIN PERFORM CAST -- 'note'\n('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：美元体行注释内局部块注释入表，CAST 夹注释不漏检（codex r16 P2-3）', () => {
+  // 体内行注释整行曾是单一外层区间：局部 */ 落在含 openPos 的整行区间内无法跳过
+  const main = "DO $$ -- CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123');\n END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', main).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "DO $$ -- CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user);\n END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+// ---- C1 r17 回归 ----
+
+test('C1：块注释体配对以初始外层状态起步，孤立双引号不吞嵌套定界符段（codex r17 P2-1）', () => {
+  // 收窄片段范围后配对曾从空栈起步：孤立 " 吞掉 /* note */，局部注释漏标致 CAST 判定失败
+  const main = "/* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', main).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "/* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：美元体块注释分支同等初始外层状态，孤立双引号不吞嵌套定界符段（codex r17 P2-1）', () => {
+  // DO $$ 包裹同结构：美元体块注释分支同样恢复层界约束（哨兵起步）
+  const dollar = "DO $$ /* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */ END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dollar).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "DO $$ /* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */ END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+// ---- C1 r18 回归 ----
+
+test('C1：哨兵弹出语义与 fillFragment 同步，体内嵌套闭合后引号回落（codex r18 P2-1）', () => {
+  // 首个无配对 */ 弹哨兵后引号消费回宽：后续 /* note */ 不再被截断吞掉
+  const dq = "/* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 单引号同结构变体
+  const sq = "/* '/*' */ '/* */ ' CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', sq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "/* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：美元体块注释分支同弹出语义（codex r18 P2-1）', () => {
+  const dq = "DO $$ /* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */ END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  const sq = "DO $$ /* '/*' */ '/* */ ' CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */ END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', sq).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "DO $$ /* \"/*\" */ \"/* */ \" CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */ END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
