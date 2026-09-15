@@ -1013,6 +1013,13 @@ function buildParenDepthMap(text, ctxMap) {
   //   真实嵌套边界独立 fillSpan——注释内引号无词法语义，片段配对不得改写外层终点；
   //   片段配对范围仅取定界符之间的文本。美元体行注释与普通行注释一致：先标记
   //   文本内局部块注释、再回填整行。
+  //   外层哨兵（r17 P2-1）：范围收窄让片段配对从空栈起步，引号消费的层界约束
+  //   （starts.length > 0）失效——孤立未闭合引号会吞掉体内后续嵌套定界符段，
+  //   局部注释漏标、CAST 判定漏检。coversOuterComment=true 时以哨兵压底，从
+  //   「已在注释层内」状态起步（与 fillFragment 处理含外层定界符时的层栈一致）：
+  //   引号消费自起点即受层界约束（r15 保护恢复）；哨兵永驻（`*/` 遇哨兵栈顶
+  //   忽略不弹——该定界符关闭的层在范围外开启或被引号消费跳过，无对应可填
+  //   区间），真实区间终点仍由调用方独立 fillSpan，不受哨兵影响。
   const fillSpan = (s, e) => {
     let t = s;
     while (t < e) {
@@ -1022,13 +1029,15 @@ function buildParenDepthMap(text, ctxMap) {
       t += 1;
     }
   };
-  const markInnerCommentSpans = (from, to) => {
-    const starts = [];
+  const OUTER_SENTINEL = -2; // 外层哨兵标记（与真实 `/*` 起始位置 >= 0 区分）
+  const markInnerCommentSpans = (from, to, coversOuterComment) => {
+    const starts = coversOuterComment ? [OUTER_SENTINEL] : [];
     let i = from;
     while (i < to) {
       const c = text[i];
       if (c === '/' && text[i + 1] === '*') { starts.push(i); i += 2; continue; }
       if (c === '*' && text[i + 1] === '/' && starts.length > 0) {
+        if (starts[starts.length - 1] === OUTER_SENTINEL) { i += 2; continue; } // r17 P2-1：哨兵永驻，忽略不弹
         const s = starts.pop(); // 最内层优先：先闭合先填，外层回填时跳跃补全
         fillSpan(s, i + 2);
         i += 2; continue;
@@ -1071,8 +1080,9 @@ function buildParenDepthMap(text, ctxMap) {
       if (nl === i) nl += 1; // 行尾换行符本身带注释尾标记：推进防零步进
       fillFragment(start, nl);
       // r15 P2-1/P2-2：注释区间表——先标记内部伪嵌套段（CAST 与括号之间夹注释
-      // 文本时左向扫描可整段跳过），再整段回填外层区间
-      markInnerCommentSpans(start + 2, nl);
+      // 文本时左向扫描可整段跳过），再整段回填外层区间；
+      // r17：行注释体无真实外层注释层，与 fillFragment 基层语义一致不设哨兵
+      markInnerCommentSpans(start + 2, nl, false);
       fillSpan(start, nl);
       i = nl;
       continue;
@@ -1084,8 +1094,10 @@ function buildParenDepthMap(text, ctxMap) {
       fillFragment(start, i);
       // r15 P2-1/P2-2；r16 P2-1：片段文本内局部块注释独立配对（引号语义）、
       // 外层区间按 skipBlockComment 的真实嵌套边界整段回填——注释内引号无
-      // 词法语义（如 /* "/*" */ */），片段引号消费不得改写外层区间终点
-      markInnerCommentSpans(start + 2, i - 2);
+      // 词法语义（如 /* "/*" */ */），片段引号消费不得改写外层区间终点；
+      // r17 P2-1：哨兵起步（真实外层为已开启层）——孤立引号不得吞掉体内
+      // 后续嵌套定界符段
+      markInnerCommentSpans(start + 2, i - 2, true);
       fillSpan(start, i);
       continue;
     }
@@ -1104,16 +1116,18 @@ function buildParenDepthMap(text, ctxMap) {
             const nl = newlineWithin(text, i, bodyEnd);
             fillFragment(i, nl);
             // r15 P2-1/P2-2；r16 P2-3：与普通行注释分支一致——先标记注释文本内
-            // 局部块注释（CAST 与括号间夹注释同表跳过），再整段回填行注释区间
-            markInnerCommentSpans(i + 2, nl);
+            // 局部块注释（CAST 与括号间夹注释同表跳过），再整段回填行注释区间；
+            // r17：行注释体无真实外层注释层，不设哨兵
+            markInnerCommentSpans(i + 2, nl, false);
             fillSpan(i, nl);
             i = nl; continue;
           }
           if (bc === '/' && text[i + 1] === '*') { // 体内块注释：同上
             const end = skipBlockComment(text, i, 0, bodyEnd);
             fillFragment(i, end);
-            // r15 P2-1/P2-2；r16 P2-1：外层区间按真实嵌套边界回填、片段文本内局部块注释独立配对
-            markInnerCommentSpans(i + 2, end - 2);
+            // r15 P2-1/P2-2；r16 P2-1：外层区间按真实嵌套边界回填、片段文本内局部块注释独立配对；
+            // r17 P2-1：同普通块注释分支——哨兵起步（孤立引号不吞嵌套定界符段）
+            markInnerCommentSpans(i + 2, end - 2, true);
             fillSpan(i, end);
             i = end; continue;
           }

@@ -624,6 +624,26 @@ test('C1：美元体行注释内局部块注释入表，CAST 夹注释不漏检�
   assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
 });
 
+// ---- C1 r17 回归 ----
+
+test('C1：块注释体配对以初始外层状态起步，孤立双引号不吞嵌套定界符段（codex r17 P2-1）', () => {
+  // 收窄片段范围后配对曾从空栈起步：孤立 " 吞掉 /* note */，局部注释漏标致 CAST 判定失败
+  const main = "/* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', main).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "/* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
+test('C1：美元体块注释分支同等初始外层状态，孤立双引号不吞嵌套定界符段（codex r17 P2-1）', () => {
+  // DO $$ 包裹同结构：美元体块注释分支同样恢复层界约束（哨兵起步）
+  const dollar = "DO $$ /* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal('RealSecret123'); */ END $$;";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dollar).some((i) => /RealSecret123/.test(i.message) && i.line === 1));
+  // 负例：安全取值不误报
+  const safe = "DO $$ /* \"/* */ CAST /* note */ ('CREATE ROLE app LOGIN PASSWORD ' AS character varying) || quote_literal(current_user); */ END $$;";
+  assert.equal(checkSecrets('deploy/postgres-init/01-create-app-role.sql', safe).length, 0);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
