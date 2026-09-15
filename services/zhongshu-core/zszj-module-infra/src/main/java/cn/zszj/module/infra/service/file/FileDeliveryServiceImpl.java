@@ -16,6 +16,7 @@ import cn.zszj.framework.common.biz.system.permission.PermissionCommonApi;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.annotation.Resource;
@@ -89,6 +90,7 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
     // ========== 兑换 ==========
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public FileDeliverySessionRespVO redeemDeliveryTicket(String ticketToken, String purpose,
                                                           LoginUser loginUser, String loginSession) {
         requireLoginUser(loginUser);
@@ -153,6 +155,12 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
                 return returnExistingSession(current, loginUser);
             }
             throw exception(FILE_DELIVERY_TICKET_FORBIDDEN);
+        }
+        // codex r2 P2：CAS 成功后同事务复核资产状态——兑换读 PUBLISHED 与票据 CAS 之间若删除已完成
+        //（DELETING/记录移除），回滚本事务撤销该会话；反之票据先提交则删除侧引用检查会命中并放弃
+        FileDO after = fileMapper.selectById(ticket.getFileId());
+        if (after == null || FileDO.STATUS_DELETING.equals(after.getStatus())) {
+            throw exception(FILE_DELIVERY_TICKET_REVOKED);
         }
         ticket.setStatus(FileDeliveryTicketDO.STATUS_REDEEMED);
         ticket.setDeliverySessionId(deliverySessionId);
