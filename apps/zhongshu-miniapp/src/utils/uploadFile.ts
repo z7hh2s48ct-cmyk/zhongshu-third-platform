@@ -423,3 +423,222 @@ function uploadFile<T>({
     onError?.(new Error('创建上传任务失败'))
   }
 }
+
+/* ==================== ZS-CLIENT-004：统一上传完成态（等待服务端确认 → 资产 ID） ==================== */
+
+/** 上传阶段状态机：上传中 / 处理中 / 失败 / 完成 / 取消 */
+export type UploadPhase = 'idle' | 'uploading' | 'processing' | 'complete' | 'failed' | 'cancelled'
+
+export interface UploadCompletionOptions {
+  /** 本地文件路径 / blob URL */
+  filePath: string
+  /** 上传用途（绑定凭证，服务端据此校验主体/用途） */
+  purpose: string
+  /** 原始文件名（可选，缺省从路径推断） */
+  name?: string
+  /** 可见范围：PRIVATE（默认，私有附件）/ PUBLIC（公开素材） */
+  scope?: 'PUBLIC' | 'PRIVATE'
+  /** 显式 MIME（可选，缺省按 H5 探测 / 后缀推断） */
+  contentType?: string
+  /** 声明大小（可选，缺省用读到的字节长度） */
+  size?: number
+  /** 阶段变化回调 */
+  onPhase?: (phase: UploadPhase) => void
+  /** 直传进度回调（0-100，尽力而为，取决于平台能力） */
+  onProgress?: (progress: number) => void
+}
+
+export interface UploadCompletionResult {
+  /** 服务端完成确认后发布的正式资产 ID（不可用于认证的资产标识；不返回可用 URL） */
+  assetId: number
+}
+
+export interface UploadCompletionHandle {
+  /** 启动上传：直传 → 等待服务端完成确认 → 返回资产 ID */
+  start(): Promise<UploadCompletionResult>
+  /** 幂等重试：复用同一凭证重跑（未直传则重传），只生成一个资产 */
+  retry(): Promise<UploadCompletionResult>
+  /** 取消：中止在途直传，phase→cancelled */
+  cancel(): void
+  /** 当前阶段 */
+  readonly phase: UploadPhase
+}
+
+/**
+ * 取消错误（ZS-CLIENT-004 codex r0 P1）：异步边界发现已取消 / 本操作已被更新操作取代时抛出，
+ * 保持 cancelled 语义、不 resolve 资产 ID、不覆盖 phase=cancelled。
+ */
+function cancelledError(): Error {
+  const err = new Error('上传已取消') as any
+  err.code = 'UPLOAD_CANCELLED'
+  return err
+}
+
+/**
+ * ZS-CLIENT-004：统一「上传完成态」编排——Web/移动一致等待服务端完成确认后返回资产 ID。
+ *
+ * 相较旧直传（getFilePresignedUrl → PUT → 异步 createFileRecord 仅 catch 日志 → 立即 resolve URL），
+ * 本编排改用 ZS-FILE-003 的 upload-credential → PUT → upload-complete：
+ * - 不伪报成功：对象已直传但 upload-complete 失败时整体 reject（phase=failed），绝不因对象已上传就报完成；
+ * - 只生成一个资产：retry 复用同一 credentialToken，服务端一次性确认幂等；
+ * - 状态可见：uploading（直传）→ processing（等待确认）→ complete / failed / cancelled；
+ * - 不泄密：credentialToken / uploadUrl 全程不打印。
+ */
+export function uploadFileWithCompletion(options: UploadCompletionOptions): UploadCompletionHandle {
+  let phase: UploadPhase = 'idle'
+  let cred: FileApi.FileUploadCredentialCreateRespVO | null = null
+  let putDone = false
+  let cancelled = false
+  let putTask: { abort?: () => void, onProgressUpdate?: (cb: (res: any) => void) => void } | null = null
+  // codex r0 P1：操作版本标识——每次 start/retry/cancel 递增，隔离「取消后迟到响应」与「重试 vs 旧请求」：
+  // 任一异步边界发现 cancelled 或本操作已被更新操作取代（myOp !== opId）即中止，绝不覆盖 cancelled / 伪报 complete
+  let opId = 0
+
+  const name = options.name
+    || (options.filePath.includes('/') ? options.filePath.substring(options.filePath.lastIndexOf('/') + 1) : options.filePath)
+
+  const setPhase = (p: UploadPhase) => {
+    phase = p
+    options.onPhase?.(p)
+  }
+
+  /**
+   * 直传字节到凭证返回的 uploadUrl（捕获 task 以支持 cancel 中止）；不打印 uploadUrl / 凭证。
+   * codex r1 P1：绑定到具体操作（myOp）——仅当前获胜操作登记 putTask / 置 putDone，
+   * 被取代的旧操作即便迟到完成也不得改写共享直传状态（否则会污染新操作的重试判定）。
+   */
+  function putToUploadUrl(myOp: number, uploadUrl: string, buffer: ArrayBuffer, contentType: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const task = uni.request({
+        url: uploadUrl,
+        method: 'PUT',
+        header: { 'Content-Type': contentType },
+        data: buffer,
+        success: (res: any) => {
+          // uni.request 对 4xx/5xx 也进 success，须显式判定状态码，否则会误判直传成功
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            if (myOp === opId) {
+              putDone = true
+              putTask = null
+            }
+            resolve()
+          } else {
+            reject(new Error(`直传失败（HTTP ${res.statusCode}）`))
+          }
+        },
+        fail: (err: any) => reject(err),
+      }) as any
+      // codex r1 P1：仅当前获胜操作登记 putTask（供 cancel abort）+ 进度回调；被取代的旧操作不得改写共享直传状态
+      if (myOp === opId) {
+        putTask = task
+        // 尽力而为的进度（部分平台 request 任务支持 onProgressUpdate）
+        putTask?.onProgressUpdate?.((res: any) => options.onProgress?.(res.progress))
+      }
+    })
+  }
+
+  /**
+   * 等待服务端完成确认，返回资产 ID（processing → complete）。
+   * codex r1 P1：显式绑定本操作的 credentialToken（而非读共享 cred），杜绝旧操作迟到污染共享 cred 后
+   * 新操作误用旧凭证确认（旧凭证对应对象未直传 → 确认失败且 putDone 已真 → 重试持续确认旧凭证不可恢复）。
+   */
+  async function confirm(myOp: number, credentialToken: string): Promise<UploadCompletionResult> {
+    setPhase('processing')
+    const assetId = await FileApi.completeUpload(credentialToken)
+    // codex r0 P1：completeUpload 挂起期间 cancel 后，其成功响应不得覆盖 cancelled / 伪报 complete
+    if (cancelled || myOp !== opId) {
+      throw cancelledError()
+    }
+    setPhase('complete')
+    return { assetId }
+  }
+
+  async function start(): Promise<UploadCompletionResult> {
+    cancelled = false
+    const myOp = ++opId
+    try {
+      setPhase('uploading')
+      const { buffer, mime } = await readFile(options.filePath)
+      // codex r0 P1：读文件挂起期间被取消 → 不再签发凭证 / 直传
+      if (cancelled || myOp !== opId) {
+        throw cancelledError()
+      }
+      const contentType = options.contentType || mime || getMimeType(name)
+      const size = options.size ?? buffer.byteLength
+      // codex r1 P1：先存局部变量，通过操作版本校验后才提交共享 cred——
+      // 杜绝「取消后旧签发迟到」覆盖新操作已提交的凭证（旧请求与新 retry 隔离）
+      const myCred = await FileApi.createUploadCredential({
+        name,
+        purpose: options.purpose,
+        size,
+        contentType,
+        scope: options.scope,
+      })
+      // codex r0 P1：签发凭证挂起期间被取消 / 被更新操作取代 → 不得继续直传 / 完成确认，也不提交共享 cred
+      if (cancelled || myOp !== opId) {
+        throw cancelledError()
+      }
+      cred = myCred
+      // codex r2 P1：提交新凭证时重置直传完成标记——putDone 必须归属当前凭证。
+      // 否则上一操作遗留的 putDone=true 会让本次「直传失败后的 retry」误判已直传而跳过重传、确认未上传的对象。
+      putDone = false
+      await putToUploadUrl(myOp, myCred.uploadUrl, buffer, contentType)
+      // 直传挂起期间被取消（abort 会 reject，此处再兜底）→ 不得继续完成确认
+      if (cancelled || myOp !== opId) {
+        throw cancelledError()
+      }
+      return await confirm(myOp, myCred.credentialToken)
+    } catch (err) {
+      // 取消优先于失败：cancel 已置 phase=cancelled，不被覆盖为 failed；被更新操作取代的旧操作也不得改 phase
+      if (!cancelled && myOp === opId) setPhase('failed')
+      throw err
+    }
+  }
+
+  async function retry(): Promise<UploadCompletionResult> {
+    // 尚无凭证（首次失败于凭证签发前）→ 全量重启
+    if (!cred) return start()
+    cancelled = false
+    const myOp = ++opId
+    // codex r1 P1：快照本操作复用的凭证与直传状态，全程绑定 myCred，不读可能被并发操作改写的共享 cred/putDone
+    const myCred = cred
+    const myPutDone = putDone
+    try {
+      setPhase('uploading')
+      // 直传未完成才重传（复用同一凭证的 uploadUrl）；已完成则直接重确认
+      if (!myPutDone) {
+        const { buffer, mime } = await readFile(options.filePath)
+        if (cancelled || myOp !== opId) {
+          throw cancelledError()
+        }
+        const contentType = options.contentType || mime || getMimeType(name)
+        await putToUploadUrl(myOp, myCred.uploadUrl, buffer, contentType)
+        if (cancelled || myOp !== opId) {
+          throw cancelledError()
+        }
+      }
+      // 复用同一 credentialToken → 服务端一次性确认 → 只生成一个资产。
+      // codex r0 P2 落地依赖（登记）：首次确认「已提交但响应丢失」后，重试需后端 FILE-003 对「已完成凭证 token」
+      // 返回既有资产 ID（幂等成功）方能取回；当前后端对已完成凭证返回 FILE_UPLOAD_CREDENTIAL_ALREADY_USED(1001003022)，
+      // 此「同 token → 既有资产 ID」恢复语义待后端批次落地或对接确认结果查询接口（客户端重试逻辑本身已复用同一 token）。
+      return await confirm(myOp, myCred.credentialToken)
+    } catch (err) {
+      if (!cancelled && myOp === opId) setPhase('failed')
+      throw err
+    }
+  }
+
+  function cancel(): void {
+    cancelled = true
+    opId++ // 作废在途操作：其迟到响应经 myOp !== opId 判定后不得覆盖 cancelled / 伪报 complete
+    putTask?.abort?.()
+    setPhase('cancelled')
+  }
+
+  return {
+    start,
+    retry,
+    cancel,
+    get phase(): UploadPhase { return phase },
+  }
+}

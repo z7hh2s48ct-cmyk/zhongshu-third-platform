@@ -251,3 +251,37 @@ describe('service codex r0 回归：trace-id 合同（P2）', () => {
     expect(getHeader(captured.headers, 'trace-id')).toBe('0123456789abcdef0123456789abcdef')
   })
 })
+
+describe('service 响应拦截器：业务错误结构化传递（ZS-CLIENT-004 codex r0 P2）', () => {
+  it('业务错误（code≠0/200/401/500/901）→ reject 携带 code/msg/data/traceId 的结构化错误，不再丢成裸字符串', async () => {
+    installAdapter({
+      data: { code: 1001003030, msg: '交付已被撤权（或读权限已回收），拒绝继续交付', data: { sessionId: 'DS-9' } },
+      headers: { 'trace-id': 'srv-biz-77' },
+    })
+    const err: any = await service
+      .request({ url: '/infra/file/delivery/read', method: 'GET' })
+      .catch((e: any) => e)
+    // 旧实现 reject 裸字符串 'error'，会丢失 code/msg/traceId，使上层下载错误映射全部退化为通用「下载失败」
+    expect(err).toBeInstanceOf(Error)
+    expect(err.code).toBe(1001003030)
+    expect(err.msg).toContain('撤权')
+    expect(err.message).toContain('撤权')
+    expect(err.data).toEqual({ sessionId: 'DS-9' })
+    expect(err.traceId).toBe('srv-biz-77')
+  })
+
+  it('业务错误仍弹出用户提示（ElNotification.error），结构化 reject 不静默吞错', async () => {
+    const { ElNotification } = await import('element-plus')
+    ;(ElNotification.error as any).mockClear()
+    installAdapter({
+      data: { code: 1001003031, msg: '下载链接已过期，请重新获取' },
+      headers: { 'trace-id': 'srv-biz-88' },
+    })
+    const err: any = await service
+      .request({ url: '/infra/file/delivery/read', method: 'GET' })
+      .catch((e: any) => e)
+    expect(ElNotification.error).toHaveBeenCalledWith({ title: '下载链接已过期，请重新获取' })
+    expect(err.code).toBe(1001003031)
+    expect(err.traceId).toBe('srv-biz-88')
+  })
+})
