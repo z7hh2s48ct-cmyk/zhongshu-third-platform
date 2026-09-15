@@ -98,7 +98,7 @@ import LoginFormTitle from './LoginFormTitle.vue'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { useIcon } from '@/hooks/web/useIcon'
 import * as authUtil from '@/utils/auth'
-import { usePermissionStore } from '@/store/modules/permission'
+import { HOME_ROUTE, resolvePostAuthRedirect, sanitizeLoginRedirect } from '@/router/access'
 import * as LoginApi from '@/api/login'
 import { LoginStateEnum, useLoginState, useFormValid } from './useLogin'
 
@@ -112,7 +112,6 @@ const formLogin = ref()
 const { validForm } = useFormValid(formLogin)
 const { handleBackLogin, getLoginState } = useLoginState()
 const { currentRoute, push } = useRouter()
-const permissionStore = usePermissionStore()
 const redirect = ref<string>('')
 const loginLoading = ref(false)
 const verify = ref()
@@ -198,14 +197,13 @@ const handleRegister = async (params: any) => {
     authUtil.removeLoginForm()
 
     authUtil.setToken(res)
-    if (!redirect.value) {
-      redirect.value = '/'
-    }
-    // 判断是否为SSO登录
-    if (redirect.value.indexOf('sso') !== -1) {
-      window.location.href = window.location.href.replace('/login?redirect=', '')
+    // ZS-CLIENT-001.A：注册成功同样属于「登录后重定向」，目的地必须校验（防开放重定向）；
+    // 与 LoginForm.vue / SocialLogin.vue 共用 resolvePostAuthRedirect，避免三份漂移实现。
+    const postAuth = resolvePostAuthRedirect(redirect.value, import.meta.env.VITE_BASE_PATH)
+    if (postAuth.fullPageUrl) {
+      window.location.assign(postAuth.fullPageUrl)
     } else {
-      push({ path: redirect.value || permissionStore.addRouters[0].path })
+      push({ path: postAuth.target })
     }
   } finally {
     loginLoading.value = false
@@ -248,7 +246,8 @@ const getTenantByWebsite = async () => {
 watch(
   () => currentRoute.value,
   (route: RouteLocationNormalizedLoaded) => {
-    redirect.value = route?.query?.redirect as string
+    // ZS-CLIENT-001.A：redirect 来自 URL，属不可信输入，在此即时消毒。
+    redirect.value = sanitizeLoginRedirect(route?.query?.redirect, HOME_ROUTE)
   },
   {
     immediate: true

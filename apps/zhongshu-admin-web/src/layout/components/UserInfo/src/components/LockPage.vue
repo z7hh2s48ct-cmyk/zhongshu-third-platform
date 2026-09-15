@@ -1,13 +1,10 @@
 <script lang="ts" setup>
-import { deleteUserCache } from '@/hooks/web/useCache'
 import { useLockStore } from '@/store/modules/lock'
 import { useNow } from '@/hooks/web/useNow'
 import { useDesign } from '@/hooks/web/useDesign'
-import { useTagsViewStore } from '@/store/modules/tagsView'
 import { useUserStore } from '@/store/modules/user'
+import { clearAuthorizedSession } from '@/utils/authSession'
 import avatarImg from '@/assets/imgs/avatar.gif'
-
-const tagsViewStore = useTagsViewStore()
 
 const { replace } = useRouter()
 
@@ -48,10 +45,10 @@ async function unLock() {
 // 返回登录
 async function goLogin() {
   await userStore.loginOut().catch(() => {})
-  // 登出后清理
-  deleteUserCache() // 清空用户缓存
-  tagsViewStore.delAllViews()
-  // resetRouter() // 重置静态路由表
+  // ZS-CLIENT-001.A：锁屏页返回登录等同登出，走统一清理合同。
+  // 原实现只调 `deleteUserCache()` + `delAllViews()`，且 `resetRouter()` 被注释掉：
+  // 上一主体的动态路由、keep-alive 缓存、字典快照全部残留（卡片「验收③」）。
+  clearAuthorizedSession('logout')
   lockStore.resetLockInfo()
   replace('/login')
 }

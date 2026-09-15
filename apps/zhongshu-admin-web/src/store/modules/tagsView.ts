@@ -117,6 +117,22 @@ export const useTagsViewStore = defineStore('tagsView', {
         ? this.visitedViews.filter((tag) => tag?.meta?.affix)
         : []
     },
+    /**
+     * ZS-CLIENT-001.A：授权会话清理专用 —— 无条件清空全部页签与 keep-alive 缓存名单。
+     *
+     * 不能用 delAllViews()：
+     *   1. 它经 delAllVisitedViews() 保留 meta.affix 页签（且 userStore.getUser 恒为真值，
+     *      所以退出后固定页签依旧残留）；
+     *   2. 它调用 addCachedView() 依据剩余页签重算缓存名单，cachedViews 从不被真正清空，
+     *      keep-alive 中的组件实例（含上一主体 / 上一租户的敏感数据）继续存活。
+     *
+     * 对应卡片「验收③」：撤权后旧页签 / 返回缓存不展示旧敏感数据。
+     */
+    clearAuthorizedViews() {
+      this.visitedViews = []
+      this.cachedViews = new Set<string>()
+      this.selectedTag = undefined
+    },
     // 删除其他
     delOthersViews(view: RouteLocationNormalizedLoaded) {
       this.delOthersVisitedViews(view)
