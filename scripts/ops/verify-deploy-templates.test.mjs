@@ -293,10 +293,86 @@ test('C1：\\set 反引号命令替换止于行边界，不误报后续 format �
   assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
 });
 
-test('C1：\\set 行尾反斜杠续行后字面量仍检出（codex r7.1）', () => {
+test('C1：\\set 参数不跨行——行尾反斜杠为元命令边界不续行（codex r8 P2-9）', () => {
+  // psql 文档：arguments of a meta-command cannot continue beyond the end of the line；
+  // 行尾未引用反斜杠开启新元命令而非续行，下一行字面量不属 \set 参数
   const text = "\\set app_pass \\\n'RealSecret123'";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
+// ---- C1 codex r8 回归（嵌套注释 / YAML 属性 / format 占位符 / 切参词法 / 块标量 / 相邻串 / 表达式边界 / 元命令行内边界） ----
+
+test('C1：嵌套块注释按深度消费后口令仍检出（codex r8 P2-1）', () => {
+  // indexOf 首个 */ 会在内层闭合处提前退出，嵌套后的文本被误判为注释外
+  const text = "CREATE ROLE app LOGIN PASSWORD /* outer /* inner */*/ 'RealSecret123';";
   const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
   assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：YAML 节点属性（anchor/tag）后引号标量仍按标量拆解（codex r8 P2-2）', () => {
+  // &sql / !!str 位于标量起始位置，属性后的引号才是引号标量；不消费属性会退化为 plain，
+  // 引号内 SQL 被外层 DQ 语义吞掉
+  const anchor = 'command: [psql, -c, &sql "CREATE ROLE app LOGIN PASSWORD \'RealSecret123\';"]';
+  assert.ok(checkSecrets('deploy/docker-compose.deploy.yml', anchor).some((i) => /RealSecret123/.test(i.message)));
+  const tag = 'command: [psql, -c, !!str "CREATE ROLE app LOGIN PASSWORD \'RealSecret123\';"]';
+  assert.ok(checkSecrets('deploy/docker-compose.deploy.yml', tag).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：format %% 转义不消耗实参，%L 实参定位正确（codex r8 P2-3）', () => {
+  const text = 'SELECT format(\'CREATE ROLE "app%%I" LOGIN PASSWORD %L\', \'RealSecret123\')';
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：格式串双单引号转义不提前闭合，%L 实参仍检出（codex r8 P2-4）', () => {
+  const text = "SELECT format('CREATE ROLE app LOGIN PASSWORD %L VALID UNTIL ''infinity''', 'RealSecret123')";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /RealSecret123/.test(i.message)));
+});
+
+test('C1：实参切分词法上下文（注释内括号 / 美元串内逗号）不截断（codex r8 P2-5）', () => {
+  const commentParen = "SELECT format('CREATE ROLE app LOGIN PASSWORD %L', /* ) */ 'RealSecret123')";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', commentParen).some((i) => /RealSecret123/.test(i.message)));
+  const dollarComma = "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', $$app,other$$, 'RealSecret123')";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', dollarComma).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：| / > 块标量跨行内容收集还原后口令检出（codex r8 P2-6）', () => {
+  const literal = [
+    'command:',
+    '  - psql',
+    '  - -c',
+    '  - |',
+    '    CREATE ROLE app LOGIN PASSWORD',
+    "    'RealSecret123';",
+  ].join('\n');
+  assert.ok(checkSecrets('deploy/docker-compose.deploy.yml', literal).some((i) => /RealSecret123/.test(i.message)));
+  const folded = literal.replace('  - |', '  - >');
+  assert.ok(checkSecrets('deploy/docker-compose.deploy.yml', folded).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：相邻字符串跨行拼接与 \\set 多参数均检出（codex r8 P2-7）', () => {
+  const adjacent = "CREATE ROLE app LOGIN PASSWORD ''\n'RealSecret123';";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', adjacent).some((i) => /RealSecret123/.test(i.message)));
+  const multiArg = "\\set app_pass '' 'RealSecret123'";
+  assert.ok(checkSecrets('deploy/postgres-init/01-create-app-role.sql', multiArg).some((i) => /RealSecret123/.test(i.message)));
+});
+
+test('C1：拼接表达式窗口不吞 WHERE 条件字面量（codex r8 P2-8）', () => {
+  const text = "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass')\nWHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app')\n\\gexec";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
+test('C1：元命令行内边界（\\gexec 行内）不越界扫后续语句（codex r8 P2-9）', () => {
+  const text = "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec\nSELECT 'hello';";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
+test('C1：注释 / 美元片段内分号结束候选，不越界误报（codex r8 P2-9）', () => {
+  const lineComment = "-- SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(current_user); SELECT 'hello';";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', lineComment), []);
+  const doBody = "DO $$ BEGIN EXECUTE 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(current_user); END $$;\nSELECT 'hello';";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', doBody), []);
 });
 
 // ---- C2 探针一致性 ----
