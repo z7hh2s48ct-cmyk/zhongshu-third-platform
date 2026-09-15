@@ -222,4 +222,37 @@ describe('admin-web downloadPrivateFile：主体绑定下载会话鉴权取流',
     expect(err1).toBeInstanceOf(Error)
     expect(err1.message).toContain('取消')
   })
+
+  it('取流挂起时直接再次 start（未经 cancel）→ 被取代的旧操作补撤权自身会话，杜绝孤儿泄漏（codex r2 P2）', async () => {
+    h.issueDeliveryTicket
+      .mockResolvedValueOnce({ ticketToken: 'TT-1' }) // S1
+      .mockResolvedValueOnce({ ticketToken: 'TT-2' }) // S2
+    h.redeemDeliveryTicket
+      .mockResolvedValueOnce({ deliverySessionId: 'DS-1', totalSize: 2 }) // S1
+      .mockResolvedValueOnce({ deliverySessionId: 'DS-2', totalSize: 2 }) // S2
+    let resolveChunk1!: (v: any) => void
+    h.readDeliveryChunk.mockImplementation((sid: string) => {
+      // S1 取流挂起（直到被 S2 取代后手动放行）；S2 立即返回单末块
+      if (sid === 'DS-1') return new Promise((r) => { resolveChunk1 = r })
+      return Promise.resolve({ content: 'AQI=', totalSize: 2, last: true })
+    })
+    const handle = downloadPrivateFile({ fileId: 1001, purpose: 'preview', chunkSize: 2 })
+    const p1 = handle.start() // S1：签票→兑换 DS-1→取流挂起
+    await waitFor(() => h.readDeliveryChunk.mock.calls.length === 1) // 停在 DS-1 取流挂起
+    // 关键：不 cancel，直接再次 start（S2）——模拟用户在下载途中直接重新触发下载
+    const p2 = handle.start()
+    await waitFor(() => h.redeemDeliveryTicket.mock.calls.length === 2)
+    const res2 = await p2 // S2 兑换 DS-2、取流、完成
+    expect(Array.from(res2.content)).toEqual([1, 2])
+    // 放行 S1 的迟到块 → S1 因操作版本失效退出取流循环
+    resolveChunk1({ content: 'AQI=', totalSize: 2, last: true })
+    const err1: any = await p1.catch((e: any) => e)
+    expect(err1).toBeInstanceOf(Error)
+    expect(err1.message).toContain('取消')
+    // 区分力：S1 被 S2 直接取代（未经 cancel），退出时必须补撤权自身会话 DS-1；
+    // 否则共享 deliverySessionId 已被 S2 覆盖为 DS-2，DS-1 永久失去跟踪 → 活跃会话孤儿泄漏，此后 cancel() 也只能撤 DS-2。
+    expect(h.revokeDelivery).toHaveBeenCalledWith('DS-1')
+    // S2 拥有 phase（S1 退出不得改写）
+    expect(handle.phase).toBe('complete')
+  })
 })

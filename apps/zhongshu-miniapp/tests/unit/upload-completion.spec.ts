@@ -227,4 +227,43 @@ describe('uploadFileWithCompletion：等待完成确认后返回资产 ID', () =
     expect(h.completeUpload).not.toHaveBeenCalledWith('CT-A-SECRET')
     expect(handle.phase).toBe('complete')
   })
+
+  it('A 直传成功后取消，B 直传失败 → retry 必须重传（新凭证不继承 A 的 putDone）（codex r2 P1）', async () => {
+    const CRED_A = { ...CRED, credentialToken: 'CT-A-SECRET', uploadUrl: 'https://s3.private.test/a?sig=SECRET_A' }
+    const CRED_B = { ...CRED, credentialToken: 'CT-B-SECRET', uploadUrl: 'https://s3.private.test/b?sig=SECRET_B' }
+    h.createUploadCredential
+      .mockResolvedValueOnce(CRED_A) // A 签发
+      .mockResolvedValueOnce(CRED_B) // B 签发
+    // PUT：A 成功（共享 putDone=true）；B 首次非 2xx 失败；B-retry 重传成功
+    let putCall = 0
+    uni.request = vi.fn((cfg: any) => {
+      putCall++
+      if (putCall === 1) cfg.success({ statusCode: 200 })
+      else if (putCall === 2) cfg.success({ statusCode: 500 }) // 非 2xx → 直传失败 reject
+      else cfg.success({ statusCode: 200 })
+      return { abort: vi.fn() }
+    })
+    // A 的完成确认挂起：让 A 停在 processing（此刻 putDone 已为 true），再 cancel
+    let resolveCompleteA!: (v: any) => void
+    h.completeUpload.mockImplementation(() => new Promise((r) => { resolveCompleteA = r }))
+    const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+    const pA = handle.start() // A：直传成功 → 完成确认挂起
+    await waitFor(() => h.completeUpload.mock.calls.length === 1)
+    handle.cancel() // 取消 A（opId++、phase=cancelled；共享 putDone 仍为 true）
+    resolveCompleteA(111) // A 完成确认迟到返回 → 因 cancelled 抛 UPLOAD_CANCELLED
+    await pA.catch(() => {})
+    const pB = handle.start() // B：全新签发 CRED_B → 直传失败
+    await expect(pB).rejects.toBeTruthy()
+    expect(handle.phase).toBe('failed')
+    // retry 前放行完成确认
+    h.completeUpload.mockResolvedValue(222)
+    const retried = await handle.retry()
+    expect(retried).toEqual({ assetId: 222 })
+    // 区分力：B 的对象从未直传成功，retry 必须重传 → PUT 共 3 次（A成功 + B失败 + B-retry成功）。
+    // 若新凭证继承 A 遗留的 putDone=true，retry 会跳过重传（PUT 仅 2 次）并确认未上传的对象。
+    expect(uni.request).toHaveBeenCalledTimes(3)
+    // retry 复用 B 的凭证 token（未被 A 污染）
+    expect(h.completeUpload).toHaveBeenLastCalledWith('CT-B-SECRET')
+    expect(handle.phase).toBe('complete')
+  })
 })

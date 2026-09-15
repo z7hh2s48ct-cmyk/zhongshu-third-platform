@@ -142,6 +142,9 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
         throw cancelledError()
       }
       cred = myCred
+      // codex r2 P1：提交新凭证时重置直传完成标记——putDone 必须归属当前凭证。
+      // 否则上一操作遗留的 putDone=true 会让本次「直传失败后的 retry」误判已直传而跳过重传、确认未上传的对象。
+      putDone = false
       await putToUploadUrl(myOp, myCred.uploadUrl, contentType)
       // 直传挂起期间被取消（abort 会 reject，此处再兜底）→ 不得继续完成确认
       if (cancelled || myOp !== opId) {

@@ -470,6 +470,18 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
     options.onPhase?.(p)
   }
 
+  // codex r2 P2：已撤权会话集合——对同一会话的撤权去重。会话撤权可能由多条路径触发
+  // （cancel() 撤共享会话 / 操作在 catch 中撤自身会话），去重确保「至少撤一次、至多撤一次」，
+  // 既杜绝被取代操作的孤儿会话泄漏，又避免与 cancel() 对同一会话重复撤权。
+  const revokedSessions = new Set<string>()
+
+  /** 幂等撤权下载会话：同一会话仅撤一次（best-effort，不打印会话/票据、撤权失败不掩盖主流程语义） */
+  function revokeOnce(sessionId: string): void {
+    if (revokedSessions.has(sessionId)) return
+    revokedSessions.add(sessionId)
+    FileApi.revokeDelivery(sessionId).catch(() => { /* 撤权失败不掩盖取消/主流程语义 */ })
+  }
+
   async function start(): Promise<PrivateDownloadResult> {
     cancelled = false
     const myOp = ++opId
@@ -489,10 +501,9 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
       const session = await FileApi.redeemDeliveryTicket(ticketToken, options.purpose)
       mySessionId = session.deliverySessionId
       const declaredTotal = session.totalSize ?? 0
-      // codex r0/r1 P2：兑换挂起期间被取消或被更新操作取代时 cancel() 因共享 deliverySessionId 尚为空而跳过撤权；
-      // 兑换返回后若已取消/已被取代，立即对刚建立的「本操作」会话 best-effort 撤权，杜绝活跃会话泄漏，再以 cancelled 拒绝
+      // codex r0/r1/r2 P2：兑换挂起期间被取消或被更新操作取代时，本操作会话尚未提交共享 deliverySessionId，
+      // cancel() 无从撤权；此处直接抛出，由 catch 统一对本操作会话（mySessionId）幂等补撤权，杜绝活跃会话泄漏
       if (cancelled || myOp !== opId) {
-        FileApi.revokeDelivery(mySessionId).catch(() => { /* 撤权失败不掩盖取消语义 */ })
         throw new Error('下载已取消')
       }
       // 仅获胜操作提交共享会话（供 cancel() 撤权）
@@ -539,6 +550,13 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
       setPhase('complete')
       return { content, totalSize: loaded }
     } catch (err) {
+      // codex r2 P2：本操作若已建立会话（mySessionId），任何异常退出（取消 / 被更新操作取代 / 失败）都幂等撤权自身会话。
+      // 关键补口：取流途中被「直接再次 start」取代（未经 cancel）时，共享 deliverySessionId 已被新操作覆盖，
+      // 旧会话失去共享跟踪 → 必须由本操作自行撤权，否则永久孤儿泄漏（cancel() 此后只能撤新会话）。
+      // revokeOnce 去重确保与 cancel() 对同一会话不重复撤权。
+      if (mySessionId) {
+        revokeOnce(mySessionId)
+      }
       // codex r1 P2：被更新操作取代的旧操作不得改写共享 phase（新操作拥有 phase），仅以自身取消语义透传
       if (myOp !== opId) {
         throw err instanceof Error ? err : new Error('下载已取消')
@@ -561,9 +579,9 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
     cancelled = true
     opId++ // codex r1 P2：作废在途操作——其迟到兑换/取流经 myOp !== opId 判定后只撤权自身会话、不写共享状态、不改 phase
     setPhase('cancelled')
-    // 撤权在途下载会话（best-effort，不阻塞取消、不打印会话/票据）
+    // 撤权在途下载会话（best-effort，不阻塞取消、不打印会话/票据）；revokeOnce 与操作 catch 的自撤权去重
     if (deliverySessionId) {
-      FileApi.revokeDelivery(deliverySessionId).catch(() => { /* 撤权失败不掩盖取消语义 */ })
+      revokeOnce(deliverySessionId)
     }
   }
 
