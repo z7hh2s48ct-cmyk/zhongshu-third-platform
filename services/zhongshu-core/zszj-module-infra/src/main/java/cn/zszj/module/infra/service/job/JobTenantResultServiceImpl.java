@@ -196,9 +196,12 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
             if (c == '"' || c == '\'') {
                 break;
             }
-            if (c == ' ' || c == '\t') {
+            // codex r3 [P1] fix: unified Unicode whitespace handling
+            // (previously only space/tab were skipped; other Unicode whitespace caused break,
+            //  leaving credentials after e.g. EM SPACE exposed)
+            if (Character.isWhitespace(c)) {
                 int j = i;
-                while (j < text.length() && (text.charAt(j) == ' ' || text.charAt(j) == '\t')) {
+                while (j < text.length() && Character.isWhitespace(text.charAt(j))) {
                     j++;
                 }
                 if (isSensitiveKeyAt(text, j)) {
@@ -207,8 +210,17 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
                 i = j;
                 continue;
             }
-            if (Character.isWhitespace(c)) {
-                break;
+            // codex r3 [P1] fix: recognize adjacent sensitive key after delimiter
+            // (previously comma/semicolon/ampersand were consumed as value chars,
+            //  causing the next sensitive key to be eaten and its value left exposed)
+            if (c == ',' || c == ';' || c == '&') {
+                int j = i + 1;
+                while (j < text.length() && Character.isWhitespace(text.charAt(j))) {
+                    j++;
+                }
+                if (isSensitiveKeyAt(text, j)) {
+                    break;
+                }
             }
             i++;
             lastNonWs = i;

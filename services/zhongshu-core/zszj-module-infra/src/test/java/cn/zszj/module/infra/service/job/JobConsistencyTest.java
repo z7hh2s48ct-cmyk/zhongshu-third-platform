@@ -1011,6 +1011,86 @@ public class JobConsistencyTest extends BaseDbUnitTest {
         assertEquals(0, jobTenantResultService.getJobTenantResultList(orphanLogId).size());
     }
 
+    @Test
+    public void testScenario21_unicodeWhitespaceDoesNotExposeCredentials() {
+        // codex r3 [P1] regression:
+        // Character.isWhitespace() 包含 Unicode 空白（如 EM SPACE U+2003），
+        // 旧版在非 space/tab 的空白处 break，导致后续凭证暴露
+        String emSpaceBefore = "password=\u2003alpha";
+        String emSpaceMiddle = "password=alpha\u2003beta";
+
+        jobTenantResultService.saveTenantResultsAsync(9015L, TenantJobExecutionResult.builder()
+                .totalTenants(2).successCount(0).failureCount(2)
+                .perTenantResults(Map.of(
+                        831L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(emSpaceBefore).build(),
+                        832L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(emSpaceMiddle).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9015L);
+        assertEquals(2, details.size());
+
+        // EM SPACE 在值前：整个值必须被 mask
+        String beforeSummary = findByTenantId(details, 831L).getErrorSummary();
+        assertFalse(beforeSummary.contains("alpha"),
+                "Unicode whitespace before value must not prevent masking: " + beforeSummary);
+        assertTrue(beforeSummary.contains("password=***"));
+
+        // EM SPACE 在值中间：整个值（含两个词）必须被 mask
+        String middleSummary = findByTenantId(details, 832L).getErrorSummary();
+        assertFalse(middleSummary.contains("alpha"),
+                "Unicode whitespace in middle must not split value: " + middleSummary);
+        assertFalse(middleSummary.contains("beta"),
+                "Unicode whitespace in middle must not expose tail: " + middleSummary);
+        assertTrue(middleSummary.contains("password=***"));
+    }
+
+    @Test
+    public void testScenario22_adjacentSensitiveKeyAfterDelimiterIsMasked() {
+        // codex r3 [P1] regression:
+        // 旧版无引号扫描器会吞噬逗号后的敏感键作为前一个值的一部分，
+        // 导致第二个敏感键的值永久暴露
+        String commaDelimited = "password=alpha,token=\"bravo\"";
+        String semicolonDelimited = "secret=one;api_key=two";
+        String ampersandDelimited = "pwd=x&authorization=y";
+
+        jobTenantResultService.saveTenantResultsAsync(9016L, TenantJobExecutionResult.builder()
+                .totalTenants(3).successCount(0).failureCount(3)
+                .perTenantResults(Map.of(
+                        841L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(commaDelimited).build(),
+                        842L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(semicolonDelimited).build(),
+                        843L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(ampersandDelimited).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9016L);
+        assertEquals(3, details.size());
+
+        // 逗号分隔：两个敏感键都必须独立 mask
+        String commaSummary = findByTenantId(details, 841L).getErrorSummary();
+        assertFalse(commaSummary.contains("alpha"), "First value leaked: " + commaSummary);
+        assertFalse(commaSummary.contains("bravo"), "Second value leaked: " + commaSummary);
+        assertTrue(commaSummary.contains("password=***"));
+        assertTrue(commaSummary.contains("token=\"***\""));
+
+        // 分号分隔
+        String semiSummary = findByTenantId(details, 842L).getErrorSummary();
+        assertFalse(semiSummary.contains("one"), "First value leaked: " + semiSummary);
+        assertFalse(semiSummary.contains("two"), "Second value leaked: " + semiSummary);
+        assertTrue(semiSummary.contains("secret=***"));
+        assertTrue(semiSummary.contains("api_key=***"));
+
+        // & 分隔（URL query param 风格）
+        String ampSummary = findByTenantId(details, 843L).getErrorSummary();
+        assertFalse(ampSummary.contains("=x"), "First value leaked: " + ampSummary);
+        assertFalse(ampSummary.contains("=y"), "Second value leaked: " + ampSummary);
+        assertTrue(ampSummary.contains("pwd=***"));
+        assertTrue(ampSummary.contains("authorization=***"));
+    }
+
     // ==================== 测试辅助 ====================
 
     /**
