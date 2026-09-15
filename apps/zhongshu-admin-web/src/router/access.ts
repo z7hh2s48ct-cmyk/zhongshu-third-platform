@@ -172,14 +172,25 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   // ---- 商城：商品 / 交易 / 会员 / 收银台 / 装修 ----
   { pattern: '/mall/product/spu/add', anchors: ['/mall/product/spu'] },
   { pattern: '/mall/product/spu/edit/:id', anchors: ['/mall/product/spu'] },
-  { pattern: '/mall/product/spu/detail/:id', anchors: ['/mall/product/spu'] },
+  // r1-P3：客服中心消息卡可打开商品详情（kefu/components/message/ProductItem.vue:65）
+  { pattern: '/mall/product/spu/detail/:id', anchors: ['/mall/product/spu', '/mall/kefu'] },
   // remaining.ts 此处 activeMenu 为 '/product/property'（疑似历史遗留），两个锚点都登记以免误伤
   {
     pattern: '/mall/product/property/value/:propertyId',
     anchors: ['/mall/product/property', '/product/property']
   },
-  { pattern: '/mall/trade/order/detail/:id', anchors: ['/mall/trade/order'] },
-  { pattern: '/mall/trade/after-sale/detail/:id', anchors: ['/mall/trade/after-sale'] },
+  // r1-P3：订单详情的四个真实入口——订单列表；售后列表（afterSale/index.vue:254）；
+  // 会员详情订单/售后标签页（UserOrderList.vue:270、UserAftersaleList.vue:249/254）；
+  // 客服中心消息卡（kefu/components/message/OrderItem.vue:60）
+  {
+    pattern: '/mall/trade/order/detail/:id',
+    anchors: ['/mall/trade/order', '/mall/trade/after-sale', '/member/user', '/mall/kefu']
+  },
+  // r1-P3：售后详情可由会员详情售后标签页打开（UserAftersaleList.vue:249）
+  {
+    pattern: '/mall/trade/after-sale/detail/:id',
+    anchors: ['/mall/trade/after-sale', '/member/user']
+  },
   { pattern: '/member/user/detail/:id', anchors: ['/member/user'] },
   // 收银台无 activeMenu；由任意已授权 /pay/** 菜单授权（支付流程由订单页跳入）
   { pattern: '/pay/cashier', anchors: ['/pay'] },
@@ -197,6 +208,10 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   },
 
   // ---- CRM：8 个详情子页（r0-P2：详情页可由商机/合同/回款/联系人/统计等任一入口到达）----
+  // r1-P2：business/contact/contract 三页互为共享组件的宿主（ContactList/ContractList/BusinessList/
+  // FollowUpList），锚点按「组件宿主链」补全——宿主详情页的可进入菜单集合即下游详情页的合法入口集合。
+  // 组件侧证据：customer/detail:95-97、business/detail:71-74、contact/detail:49/56、clue/detail:58、
+  // contract/detail:65 的 import；ContactList:139、ContractList:127、BusinessList:140、followup/index:191/196 的 push。
   { pattern: '/crm/clue/detail/:id', anchors: ['/crm/clue', '/crm/backlog'] },
   {
     pattern: '/crm/customer/detail/:id',
@@ -214,27 +229,67 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   },
   {
     pattern: '/crm/business/detail/:id',
-    anchors: ['/crm/business', '/crm/backlog', '/crm/contract', '/crm/statistics/funnel']
+    anchors: [
+      '/crm/business',
+      '/crm/backlog',
+      '/crm/contract',
+      '/crm/statistics/funnel',
+      '/crm/customer',
+      '/crm/contact',
+      '/crm/clue',
+      '/crm/receivable',
+      '/crm/receivable-plan',
+      '/crm/statistics/product'
+    ]
   },
   {
     pattern: '/crm/contract/detail/:id',
-    anchors: ['/crm/contract', '/crm/backlog', '/crm/receivable', '/crm/statistics/product']
+    anchors: [
+      '/crm/contract',
+      '/crm/backlog',
+      '/crm/receivable',
+      '/crm/statistics/product',
+      '/crm/customer',
+      '/crm/business',
+      '/crm/contact',
+      '/crm/clue',
+      '/crm/receivable-plan',
+      '/crm/statistics/funnel'
+    ]
   },
   {
     pattern: '/crm/receivable-plan/detail/:id',
     anchors: ['/crm/receivable-plan', '/crm/backlog', '/crm/receivable']
   },
   { pattern: '/crm/receivable/detail/:id', anchors: ['/crm/receivable', '/crm/backlog'] },
-  { pattern: '/crm/contact/detail/:id', anchors: ['/crm/contact', '/crm/backlog', '/crm/contract'] },
+  {
+    pattern: '/crm/contact/detail/:id',
+    anchors: [
+      '/crm/contact',
+      '/crm/backlog',
+      '/crm/contract',
+      '/crm/customer',
+      '/crm/business',
+      '/crm/clue',
+      '/crm/receivable',
+      '/crm/receivable-plan',
+      '/crm/statistics/funnel',
+      '/crm/statistics/product'
+    ]
+  },
   { pattern: '/crm/product/detail/:id', anchors: ['/crm/product', '/crm/statistics/product'] },
 
   // ---- HRM：14 个详情 / 表单子页（r0-P2：人才/员工/绩效等详情可由门户与关联页到达）----
   { pattern: '/hrm/portal/opening-guide', anchors: ['/hrm/portal/home', '/hrm/portal'] },
   { pattern: '/hrm/recruit/post/detail/:id', anchors: ['/hrm/recruit/post'] },
   { pattern: '/hrm/recruit/candidate/detail/:id', anchors: ['/hrm/recruit/candidate', '/hrm/home'] },
+  // r1-P2：'/hrm/employee' 是目录（系统菜单仅下挂 list 与 config 两个子菜单），目录前缀锚点
+  // 会让仅持「员工设置 /hrm/employee/config」的账号打开员工详情。真实入口已逐一取证：
+  // 员工列表 employee/index:570、组织管理 dept/detail/DeptEmployeeList:128、
+  // HR 工作台 home/hr/index:66、团队工作台 home/team/index:59。
   {
     pattern: '/hrm/employee/detail/:id',
-    anchors: ['/hrm/employee/list', '/hrm/employee', '/hrm/dept', '/hrm/home', '/hrm/team-home']
+    anchors: ['/hrm/employee/list', '/hrm/dept', '/hrm/home', '/hrm/team-home']
   },
   { pattern: '/hrm/dept/detail/:id', anchors: ['/hrm/dept'] },
   { pattern: '/hrm/attendance/month/detail/:employeeId', anchors: ['/hrm/attendance/month'] },
@@ -280,9 +335,12 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
       '/iot/operation/ota/firmware'
     ]
   },
+  // r1-P2：'/iot/device' 是目录（下挂 device/product/product-category/thing-model/device-group 五个
+  // 异构子菜单），目录前缀锚点会让仅持「产品分类」等菜单的账号打开设备详情。真实入口仅两处：
+  // 设备管理列表 device/device/index:449/510、IoT 首页地图卡 home/components/DeviceMapCard:141。
   {
     pattern: '/iot/device/detail/:id',
-    anchors: ['/iot/device/device', '/iot/device', '/iot/home']
+    anchors: ['/iot/device/device', '/iot/home']
   },
   {
     pattern: '/iot/ota/operation/firmware/detail/:id',

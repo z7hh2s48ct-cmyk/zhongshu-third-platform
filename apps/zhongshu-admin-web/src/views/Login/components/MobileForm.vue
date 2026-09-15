@@ -189,8 +189,14 @@ const signIn = async () => {
   await smsLogin(smsVO.loginSms)
     .then(async (res) => {
       setToken(res)
+      // r1-P3：与 LoginForm 对齐——SSO 回调用带部署 base 的整页跳转，其余站内目的地走 SPA push；
+      // resolvePostAuthRedirect 已保证 target 只可能是站内路径。
       const postAuth = resolvePostAuthRedirect(redirect.value, import.meta.env.VITE_BASE_PATH)
-      await push({ path: postAuth.target })
+      if (postAuth.fullPageUrl) {
+        window.location.assign(postAuth.fullPageUrl)
+      } else {
+        await push({ path: postAuth.target })
+      }
     })
     .catch(() => {})
     .finally(() => {

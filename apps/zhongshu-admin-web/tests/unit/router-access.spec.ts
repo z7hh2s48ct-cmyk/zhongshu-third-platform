@@ -433,12 +433,34 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
   {
     page: '/crm/business/detail/:id',
     sample: '/crm/business/detail/1',
-    entries: ['/crm/business', '/crm/backlog', '/crm/contract', '/crm/statistics/funnel']
+    entries: [
+      '/crm/business',
+      '/crm/backlog',
+      '/crm/contract',
+      '/crm/statistics/funnel',
+      '/crm/customer',
+      '/crm/contact',
+      '/crm/clue',
+      '/crm/receivable',
+      '/crm/receivable-plan',
+      '/crm/statistics/product'
+    ]
   },
   {
     page: '/crm/contract/detail/:id',
     sample: '/crm/contract/detail/1',
-    entries: ['/crm/contract', '/crm/backlog', '/crm/receivable', '/crm/statistics/product']
+    entries: [
+      '/crm/contract',
+      '/crm/backlog',
+      '/crm/receivable',
+      '/crm/statistics/product',
+      '/crm/customer',
+      '/crm/business',
+      '/crm/contact',
+      '/crm/clue',
+      '/crm/receivable-plan',
+      '/crm/statistics/funnel'
+    ]
   },
   {
     page: '/crm/receivable-plan/detail/:id',
@@ -453,7 +475,18 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
   {
     page: '/crm/contact/detail/:id',
     sample: '/crm/contact/detail/1',
-    entries: ['/crm/contact', '/crm/backlog', '/crm/contract']
+    entries: [
+      '/crm/contact',
+      '/crm/backlog',
+      '/crm/contract',
+      '/crm/customer',
+      '/crm/business',
+      '/crm/clue',
+      '/crm/receivable',
+      '/crm/receivable-plan',
+      '/crm/statistics/funnel',
+      '/crm/statistics/product'
+    ]
   },
   {
     page: '/crm/product/detail/:id',
@@ -468,7 +501,8 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
   {
     page: '/hrm/employee/detail/:id',
     sample: '/hrm/employee/detail/1',
-    entries: ['/hrm/employee/list', '/hrm/employee', '/hrm/dept', '/hrm/home', '/hrm/team-home']
+    // r1-P2：'/hrm/employee' 目录锚点已移除（仅持「员工设置」的账号不得打开员工详情）
+    entries: ['/hrm/employee/list', '/hrm/dept', '/hrm/home', '/hrm/team-home']
   },
   {
     page: '/hrm/performance/plan/detail/:id',
@@ -499,7 +533,24 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
   {
     page: '/iot/device/detail/:id',
     sample: '/iot/device/detail/4',
-    entries: ['/iot/device/device', '/iot/device', '/iot/home']
+    // r1-P2：'/iot/device' 目录锚点已移除（仅持「产品分类/产品管理」的账号不得打开设备详情）
+    entries: ['/iot/device/device', '/iot/home']
+  },
+  // r1-P3：商城详情跨入口补登（客服中心 / 会员详情 / 售后列表）
+  {
+    page: '/mall/product/spu/detail/:id',
+    sample: '/mall/product/spu/detail/12',
+    entries: ['/mall/product/spu', '/mall/kefu']
+  },
+  {
+    page: '/mall/trade/order/detail/:id',
+    sample: '/mall/trade/order/detail/99',
+    entries: ['/mall/trade/order', '/mall/trade/after-sale', '/member/user', '/mall/kefu']
+  },
+  {
+    page: '/mall/trade/after-sale/detail/:id',
+    sample: '/mall/trade/after-sale/detail/99',
+    entries: ['/mall/trade/after-sale', '/member/user']
   }
 ]
 
@@ -545,6 +596,59 @@ describe('静态补登表入口锚点完备性（codex r0-P2 处置：共享页�
     // HRM 请假记录页同样是合法入口
     const hrmLeave = buildRouteAccessSnapshot([{ path: '/hrm/attendance/leave' }])
     expect(hasRouteAccess('/bpm/process-instance/detail?id=9', hrmLeave)).toBe(true)
+  })
+})
+
+describe('codex r1 处置回归：目录锚点收窄 + 组件宿主链补登 + 商城跨入口', () => {
+  it('P2#1 撤权反例：仅持目录下异构子菜单时，收窄后的详情页必须拒绝', () => {
+    // /hrm/employee 目录下仅「员工设置」（种子 id=1477 目录 / 1478 员工档案 / 1485 员工设置）
+    const onlyEmployeeConfig = buildRouteAccessSnapshot([{ path: '/hrm/employee/config' }])
+    expect(hasRouteAccess('/hrm/employee/detail/1', onlyEmployeeConfig)).toBe(false)
+    expect(hasRouteAccess('/hrm/employee/config', onlyEmployeeConfig)).toBe(true)
+    // /iot/device 目录下的产品分类 / 产品管理（种子 id=4001 目录 / 4014 / 4002）
+    const onlyProductCategory = buildRouteAccessSnapshot([{ path: '/iot/device/product-category' }])
+    expect(hasRouteAccess('/iot/device/detail/4', onlyProductCategory)).toBe(false)
+    expect(hasRouteAccess('/iot/device/product-category', onlyProductCategory)).toBe(true)
+    const onlyProduct = buildRouteAccessSnapshot([{ path: '/iot/device/product' }])
+    expect(hasRouteAccess('/iot/device/detail/4', onlyProduct)).toBe(false)
+  })
+  it('P2#1 对偶：收窄不得误伤真实入口（员工列表 / 组织管理 / 工作台 / 设备管理）', () => {
+    for (const entry of ['/hrm/employee/list', '/hrm/dept', '/hrm/home', '/hrm/team-home']) {
+      const s = buildRouteAccessSnapshot([{ path: entry }])
+      expect(hasRouteAccess('/hrm/employee/detail/1', s), `不应误伤: ${entry}`).toBe(true)
+    }
+    for (const entry of ['/iot/device/device', '/iot/home']) {
+      const s = buildRouteAccessSnapshot([{ path: entry }])
+      expect(hasRouteAccess('/iot/device/detail/4', s), `不应误伤: ${entry}`).toBe(true)
+    }
+  })
+  it('P2#2 组件宿主链：共享列表组件的宿主菜单必须能进入其 push 目标详情', () => {
+    // ContactList 宿主 customer/detail:95（push 联系人）/ ContractList 宿主 customer/detail:96（push 合同）
+    // BusinessList 宿主 customer/detail:97 与 contact/detail:49（push 商机）
+    const customer = buildRouteAccessSnapshot([{ path: '/crm/customer' }])
+    expect(hasRouteAccess('/crm/contact/detail/1', customer)).toBe(true)
+    expect(hasRouteAccess('/crm/business/detail/1', customer)).toBe(true)
+    expect(hasRouteAccess('/crm/contract/detail/1', customer)).toBe(true)
+    // 线索详情内嵌 FollowUpList（clue/detail:58），followup/index:191/196 push contact/business
+    const clue = buildRouteAccessSnapshot([{ path: '/crm/clue' }])
+    expect(hasRouteAccess('/crm/contact/detail/1', clue)).toBe(true)
+    expect(hasRouteAccess('/crm/business/detail/1', clue)).toBe(true)
+    // 补登不得反向扩散：/crm/product 与共享组件无宿主链，客户域详情仍拒绝
+    const product = buildRouteAccessSnapshot([{ path: '/crm/product' }])
+    expect(hasRouteAccess('/crm/contact/detail/1', product)).toBe(false)
+    expect(hasRouteAccess('/crm/customer/detail/1', product)).toBe(false)
+  })
+  it('P2#3 商城跨入口：售后 / 会员 / 客服入口必须能打开订单与售后详情', () => {
+    const afterSale = buildRouteAccessSnapshot([{ path: '/mall/trade/after-sale' }])
+    expect(hasRouteAccess('/mall/trade/order/detail/1', afterSale)).toBe(true)
+    const member = buildRouteAccessSnapshot([{ path: '/member/user' }])
+    expect(hasRouteAccess('/mall/trade/order/detail/1', member)).toBe(true)
+    expect(hasRouteAccess('/mall/trade/after-sale/detail/1', member)).toBe(true)
+    const kefu = buildRouteAccessSnapshot([{ path: '/mall/kefu' }])
+    expect(hasRouteAccess('/mall/trade/order/detail/1', kefu)).toBe(true)
+    expect(hasRouteAccess('/mall/product/spu/detail/1', kefu)).toBe(true)
+    // 反向：客服菜单不得打开客户域详情
+    expect(hasRouteAccess('/crm/customer/detail/1', kefu)).toBe(false)
   })
 })
 
