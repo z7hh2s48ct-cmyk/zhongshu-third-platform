@@ -111,9 +111,9 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
                     start.await();
                     FileDeliverySessionRespVO session = deliveryService.redeemDeliveryTicket(
                             issued.getTicketToken(), "download", owner, "sess-101");
-                    outcomes.add(RedeemOutcome.ok(session.getDeliverySessionId()));
+                    outcomes.add(RedeemOutcome.owner(session.getDeliverySessionId()));
                 } catch (Exception ex) {
-                    outcomes.add(RedeemOutcome.fail(ex));
+                    outcomes.add(RedeemOutcome.impostorFail(ex));
                 } finally {
                     done.countDown();
                 }
@@ -125,6 +125,7 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
 
         assertEquals(threads, outcomes.size(), "8 个线程必须全部返回");
         for (RedeemOutcome outcome : outcomes) {
+            assertTrue(outcome.owner(), "全部提交者均为票据主体");
             assertNull(outcome.error(), "同主体同会话并发兑换不得出现拒绝/异常");
             assertNotNull(outcome.sessionId());
         }
@@ -154,10 +155,10 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
         pool.submit(() -> {
             try {
                 start.await();
-                outcomes.add(RedeemOutcome.ok(deliveryService.redeemDeliveryTicket(
+                outcomes.add(RedeemOutcome.owner(deliveryService.redeemDeliveryTicket(
                         issued.getTicketToken(), "download", owner, "sess-101").getDeliverySessionId()));
             } catch (Exception ex) {
-                outcomes.add(RedeemOutcome.fail(ex));
+                outcomes.add(RedeemOutcome.impostorFail(ex));
             } finally {
                 done.countDown();
             }
@@ -167,11 +168,11 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
             pool.submit(() -> {
                 try {
                     start.await();
-                    outcomes.add(RedeemOutcome.ok(deliveryService.redeemDeliveryTicket(
-                            issued.getTicketToken(), "download", user(200L + seq, 1L),
-                            "sess-impostor-" + seq).getDeliverySessionId()));
+                    outcomes.add(RedeemOutcome.impostorOk(deliveryService.redeemDeliveryTicket(
+                        issued.getTicketToken(), "download", user(200L + seq, 1L),
+                        "sess-impostor-" + seq).getDeliverySessionId()));
                 } catch (Exception ex) {
-                    outcomes.add(RedeemOutcome.fail(ex));
+                    outcomes.add(RedeemOutcome.impostorFail(ex));
                 } finally {
                     done.countDown();
                 }
@@ -183,18 +184,19 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
 
         assertEquals(1 + impostors, outcomes.size(), "全部线程必须返回结果");
         for (RedeemOutcome outcome : outcomes) {
-            if (outcome.ownerResult()) {
+            if (outcome.owner()) {
                 assertNull(outcome.error(), "主体本人兑换应成功");
                 assertNotNull(outcome.sessionId());
             } else {
                 assertNotNull(outcome.error(), "冒名兑换必须失败");
                 assertTrue(outcome.error() instanceof ServiceException
                                 && ((ServiceException) outcome.error()).getCode() == FILE_DELIVERY_TICKET_FORBIDDEN.getCode(),
-                        "冒名兑换必须按 FORBIDDEN 拒绝");
+                        "冒名兑换必须按 FORBIDDEN 拒绝：" + outcome.error());
             }
         }
-        assertEquals(1, outcomes.stream().filter(RedeemOutcome::ownerResult)
-                .map(RedeemOutcome::sessionId).distinct().count(), "仅主体本人兑换成功");
+        assertEquals(1, outcomes.stream().filter(RedeemOutcome::owner)
+                .filter(o -> o.error() == null).map(RedeemOutcome::sessionId).distinct().count(),
+                "仅主体本人兑换成功");
         FileDeliveryTicketDO ticket = ticketMapper.selectList().get(0);
         assertEquals(FileDeliveryTicketDO.STATUS_REDEEMED, ticket.getStatus());
         assertEquals(101L, ticket.getOwnerUserId(), "会话主体必须为票据绑定主体");
@@ -217,18 +219,18 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
     /**
      * 并发兑换逐线程结果（codex r0 P2：不吞异常、按线程断言）。
      */
-    private record RedeemOutcome(String sessionId, Exception error) {
+    private record RedeemOutcome(boolean owner, String sessionId, Exception error) {
 
-        static RedeemOutcome ok(String sessionId) {
-            return new RedeemOutcome(sessionId, null);
+        static RedeemOutcome owner(String sessionId) {
+            return new RedeemOutcome(true, sessionId, null);
         }
 
-        static RedeemOutcome fail(Exception error) {
-            return new RedeemOutcome(null, error);
+        static RedeemOutcome impostorFail(Exception error) {
+            return new RedeemOutcome(false, null, error);
         }
 
-        boolean ownerResult() {
-            return error == null;
+        static RedeemOutcome impostorOk(String sessionId) {
+            return new RedeemOutcome(false, sessionId, null);
         }
 
     }
