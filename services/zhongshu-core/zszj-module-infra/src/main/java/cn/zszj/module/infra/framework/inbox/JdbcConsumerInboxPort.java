@@ -164,11 +164,11 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         if (existing == null) {
             return claimNew(command, tenantId);
         }
-        return handleExisting(command, tenantId, existing, 0);
+        return handleExisting(command, tenantId, existing);
     }
 
-    /** 既有记录完整判定：指纹检查 → 状态复判（可重放/回查/并发）；FAILED 重领前过版本护栏并条件推进。 */
-    private InboxTryBegin handleExisting(InboxCommand command, Long tenantId, InboxRecord existing, int depth) {
+    /** 既有记录完整判定：指纹检查 → 状态复判（可重放/回查/并发）；FAILED 重领前锁行重读过版本护栏。 */
+    private InboxTryBegin handleExisting(InboxCommand command, Long tenantId, InboxRecord existing) {
         if (!StringUtils.hasText(existing.getPayloadHash())
                 || !existing.getPayloadHash().equals(command.getPayloadHash())) {
             return new InboxTryBegin(InboxTryBegin.Outcome.PARAM_CONFLICT, existing);
@@ -183,19 +183,18 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             case "FAILED":
                 // 失败重入即重领。先锁定处理记录行并重读当前状态（codex r3 发现1：过期 FAILED 快照不得直接
                 // 判定——并发他事务可能已推进为 COMPLETED/RESULT_UNKNOWN，锁序统一为「记录行 → 水位行」）；
-                // retry_count 为已记录失败次数（fail 递增、重领不递增）；条件更新防并发抢领竞争（codex r0/r1）
+                // 锁重读后的正常状态直接分类、不消耗任何递归预算（codex r4 F1：depth 预算只属于竞争循环，
+                // 分类本身有限收敛）；retry_count 为已记录失败次数（fail 递增、重领不递增）
                 List<InboxRecord> locked = jdbcTemplate.query(SELECT_BY_ID_FOR_UPDATE_SQL, this::mapRow,
                         existing.getInboxId(), tenantId);
                 InboxRecord current = locked.isEmpty() ? existing : locked.get(0);
                 if (!"FAILED".equals(current.getStatus())) {
-                    if (depth < 1) {
-                        return handleExisting(command, tenantId, current, depth + 1);
-                    }
-                    throw new IllegalStateException("Inbox 并发复判后仍处竞争状态: " + current.getStatus());
+                    return classify(current);
                 }
                 if (staleVersion(command, tenantId)) {
                     return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, current);
                 }
+                // 持有记录行锁后重领条件更新必然命中；一旦未命中（锁语义被破坏）如实报错
                 int reclaimed = jdbcTemplate.update(RECLAIM_FAILED_SQL, current.getInboxId(), tenantId);
                 if (reclaimed != 1) {
                     throw new IllegalStateException("Inbox 持行锁重领失败: " + current.getInboxId());
@@ -229,7 +228,7 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             if (concurrent == null) {
                 throw e;
             }
-            return handleExisting(command, tenantId, concurrent, 1);
+            return handleExisting(command, tenantId, concurrent);
         }
     }
 

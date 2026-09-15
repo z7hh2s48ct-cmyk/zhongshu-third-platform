@@ -217,7 +217,8 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
         });
     }
 
-    /** 用例 8（失败重试）：fail 后重入即重领（retry_count+1，状态回 PROCESSING），可重新处理。 */
+    /** 用例 8（失败重试）：fail 后重入即重领（retry_count 由失败登记递增为已记录失败次数，
+     * 重领不递增；状态回 PROCESSING），可重新处理。 */
     @Test
     public void testFail_thenRetriedClaimKeepsRecordedFailureCount() {
         long inboxId = transactionTemplate.execute(status -> {

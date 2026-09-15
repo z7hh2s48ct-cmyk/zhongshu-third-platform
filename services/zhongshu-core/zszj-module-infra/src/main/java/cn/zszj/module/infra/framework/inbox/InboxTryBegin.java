@@ -13,9 +13,11 @@ import lombok.Value;
  *   <li>{@code DUPLICATE_IN_FLIGHT}——同键处理中（并发抢占或先前事务未提交）；</li>
  *   <li>{@code DUPLICATE_RESULT_UNKNOWN}——先前结果未知（外部结果不确定），必须先回查
  *       （{@code record} 携带现场），不得盲目重处理；</li>
- *   <li>{@code RETRIED_CLAIMED}——先前 FAILED，本次重领（retry_count 已 +1，可重新处理）；</li>
+ *   <li>{@code RETRIED_CLAIMED}——先前 FAILED，本次重领（retry_count 为已记录失败次数：由失败登记递增，
+ *       重领本身不递增，可重新处理）；</li>
  *   <li>{@code PARAM_CONFLICT}——同键不同载荷指纹（参数冲突不得当作相同成功）；</li>
- *   <li>{@code STALE_VERSION}——旧版本事件（同对象已有更高已完成版本，旧版本不得覆盖新状态）。</li>
+ *   <li>{@code STALE_VERSION}——旧版本事件（同对象版本水位已不低于其版本——水位由处理尝试占坑抬升，
+ *       含已提交的失败占位；旧版本不得覆盖新状态，处置归人工/补偿，D-07 登记）。</li>
  * </ul>
  */
 @Value
@@ -28,7 +30,9 @@ public class InboxTryBegin {
 
     Outcome outcome;
 
-    /** 关联的既有记录（CLAIMED/RETRIED_CLAIMED 为本次登记结果；其余为已存在记录现场） */
+    /** 关联记录：CLAIMED/RETRIED_CLAIMED 为本次登记结果；DUPLICATE_*/PARAM_CONFLICT 为既有记录现场；
+     * STALE_VERSION 在首抢路径为 {@code null}（占位行已随护栏拒绝回滚，无现场可携）。
+     */
     InboxRecord record;
 
 }
