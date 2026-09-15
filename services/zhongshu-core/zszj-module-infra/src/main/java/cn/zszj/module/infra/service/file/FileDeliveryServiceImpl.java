@@ -119,8 +119,13 @@ public class FileDeliveryServiceImpl implements FileDeliveryService {
         if (ticket.getExpiresTime().isBefore(LocalDateTime.now())) {
             throw exception(FILE_DELIVERY_TICKET_EXPIRED);
         }
-        // 交付重检（codex r0 P1：资产已进入删除中间态 → 拒绝新建会话，使引用检查与兑换串行化）
-        FileDO file = requireFile(ticket.getFileId());
+        // 交付重检（codex r0 P1：资产已进入删除中间态 → 拒绝新建会话）。
+        // codex r3 P2：以 FOR UPDATE 锁定文件行并持有至兑换提交——删除侧的中间态转移会阻塞在该行锁上，
+        // 转移后引用检查必能看到已提交的 REDEEMED 票据（锁序统一为「文件行 → 票据行」，无死锁）
+        FileDO file = fileMapper.selectByIdForUpdate(ticket.getFileId());
+        if (file == null) {
+            throw exception(FILE_NOT_EXISTS);
+        }
         if (FileDO.STATUS_DELETING.equals(file.getStatus())) {
             throw exception(FILE_DELIVERY_TICKET_REVOKED);
         }
