@@ -38,6 +38,8 @@ export const DEPLOY_TARGETS = [
   'services/zhongshu-core/deploy/docker-compose.deploy.yml',
   'services/zhongshu-core/deploy/.env.example',
   'services/zhongshu-core/deploy/nginx/zszj-server.conf',
+  // PostgreSQL 初始化脚本（创建应用角色）：同样不得含硬编码秘密
+  'services/zhongshu-core/deploy/postgres-init/01-create-app-role.sql',
 ];
 
 // ---- C1 ----
@@ -46,7 +48,9 @@ const SECRET_KEY_RE = /(password|passwd|secret|token|access.?key|secret.?key|api
 const PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
 const SAFE_LITERALS_RE = /^(redacted.*|xx|''|""|)$/i;
 // 命令行参数中的凭据标志（--requirepass、-a 等）
-const CMD_CREDENTIAL_RE = /(--requirepass|--password|-a)\s+["']?([^\s"'$\}]+)/i;
+// 支持：空格分隔（--requirepass RealPass）与 YAML exec-list（"--requirepass", "RealPass"）
+// flag 后可紧跟闭合引号，再跟分隔符（逗号/空格），再跟值的开引号
+const CMD_CREDENTIAL_RE = /(--requirepass|--password|-a)["']?[\s,]+["']?([^\s"',\]]+)/i;
 
 export function checkSecrets(relPath, text) {
   const issues = [];
@@ -70,6 +74,7 @@ export function checkSecrets(relPath, text) {
       }
     }
     // 命令行参数中的硬编码凭据（如 redis-server --requirepass RealPassword）
+    // 支持两种形式：空格分隔（--requirepass RealPass）和 YAML list（"--requirepass", "RealPass"）
     const cmdMatch = line.match(CMD_CREDENTIAL_RE);
     if (cmdMatch) {
       const credValue = cmdMatch[2];
@@ -83,6 +88,34 @@ export function checkSecrets(relPath, text) {
 
 
 // ---- C2 探针一致性 ----
+
+/**
+ * 从 compose 文本中提取指定服务的块（按缩进层级，非空行终止）。
+ * YAML 服务块以 "  serviceName:" 开始，以同级或更高级缩进结束。
+ * @param {string} composeText
+ * @param {string} serviceName
+ * @returns {string|null}
+ */
+function extractServiceBlock(composeText, serviceName) {
+  const lines = composeText.split(/\r?\n/);
+  const startRe = new RegExp(`^  ${serviceName}:\\s*$`);
+  let startIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (startRe.test(lines[i])) { startIdx = i; break; }
+  }
+  if (startIdx < 0) return null;
+  // 收集后续行，直到遇到同级缩进（2 空格 + 非空格）或更高级缩进（0-1 空格 + 非空格）
+  const block = [lines[startIdx]];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    // 空行属于块内（YAML 允许）
+    if (/^\s*$/.test(line)) { block.push(line); continue; }
+    // 同级服务（2 空格缩进 + 字母）或顶级键（0 空格 + 字母）终止块
+    if (/^  \w/.test(line) || /^\w/.test(line)) break;
+    block.push(line);
+  }
+  return block.join('\n');
+}
 
 /**
  * 校验 compose healthcheck 探针路径与 actuator 暴露一致。
@@ -101,10 +134,8 @@ export function checkProbeConsistency(composeText, actuatorInclude) {
   }
 
   // zszj-server 服务须有专属 healthcheck 且引用 /actuator 路径
-  // 匹配 zszj-server 服务块中的 healthcheck（简化：检查是否存在 zszj-server 后的 /actuator 探针）
-  const serverBlockMatch = composeText.match(/zszj-server:[\s\S]*?(?=\n  \w|\n\n|$)/);
-  if (serverBlockMatch) {
-    const serverBlock = serverBlockMatch[0];
+  const serverBlock = extractServiceBlock(composeText, 'zszj-server');
+  if (serverBlock) {
     if (!/healthcheck/i.test(serverBlock)) {
       issues.push({ rule: 'C2-probe', path: 'deploy/docker-compose.deploy.yml', line: 0, message: 'zszj-server 服务缺少专属 healthcheck（nginx depends_on 需要它）' });
     } else if (!/\/actuator\//.test(serverBlock)) {
@@ -294,11 +325,20 @@ function selfTest() {
   const cmdCred = checkSecrets('compose.yml', 'command: redis-server --requirepass RealSecret123');
   results.push(['C1 负向（命令行硬编码凭据）', cmdCred.length > 0]);
 
+  const listCred = checkSecrets('compose.yml', 'command: ["redis-server", "--requirepass", "RealSecret123"]');
+  results.push(['C1 负向（YAML list 硬编码凭据）', listCred.length > 0]);
+
+  const execListCred = checkSecrets('compose.yml', 'test: ["CMD", "redis-cli", "-a", "RealSecret123", "ping"]');
+  results.push(['C1 负向（exec-list redis-cli -a 硬编码凭据）', execListCred.length > 0]);
+
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
 
-  const noServerProbe = checkProbeConsistency('healthcheck:\n  test: curl\nservices:\n  zszj-server:\n    image: x\n  postgres:\n    healthcheck:\n      test: pg_isready', 'health');
+  const noServerProbe = checkProbeConsistency('services:\n  postgres:\n    healthcheck:\n      test: pg_isready\n  zszj-server:\n    image: x', 'health');
   results.push(['C2 负向（zszj-server 无专属探针）', noServerProbe.length > 0]);
+
+  const blankLineProbe = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
+  results.push(['C2 正向（块内空行不误判缺 healthcheck）', blankLineProbe.length === 0]);
 
   const openNginx = checkManagementClosure('location / { proxy_pass http://x; }');
   results.push(['C3 负向（管理路径未关闭）', openNginx.length > 0]);

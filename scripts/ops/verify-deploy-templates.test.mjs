@@ -64,6 +64,18 @@ test('C1：命令行参数使用占位符不报 issue', () => {
   assert.deepEqual(checkSecrets('deploy/docker-compose.deploy.yml', text), []);
 });
 
+test('C1：YAML exec-list 硬编码凭据（--requirepass 引号逗号分隔）触发 issue（codex r1 P2 修复）', () => {
+  const text = 'command: ["redis-server", "--requirepass", "RealSecret123"]';
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /命令行/.test(i.message)));
+});
+
+test('C1：healthcheck exec-list redis-cli -a 硬编码凭据触发 issue（codex r1 P2 修复）', () => {
+  const text = 'test: ["CMD", "redis-cli", "-a", "RealSecret123", "ping"]';
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /命令行/.test(i.message)));
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
@@ -115,6 +127,19 @@ test('C2：zszj-server healthcheck 未引用 /actuator→报 issue', () => {
   ].join('\n');
   const issues = checkProbeConsistency(compose, 'health');
   assert.ok(issues.some((i) => i.rule === 'C2-probe' && /actuator/.test(i.message)));
+});
+
+test('C2：zszj-server 块内空行不误判缺 healthcheck（codex r1 P2 修复）', () => {
+  // YAML 映射中空行不终止服务块；healthcheck 前有空行仍应被识别
+  const compose = [
+    'services:',
+    '  zszj-server:',
+    '    image: zszj-server:latest',
+    '',
+    '    healthcheck:',
+    '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
+  ].join('\n');
+  assert.deepEqual(checkProbeConsistency(compose, 'health'), []);
 });
 
 // ---- C3 管理路径关闭 ----
