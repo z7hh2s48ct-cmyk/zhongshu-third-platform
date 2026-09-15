@@ -214,10 +214,12 @@ function skipBlockComment(text, from, initialDepth) {
  * @param {Uint8Array} ctxMap
  * @param {number} from 起始索引（通常为候选末尾）
  * @param {number} idx 判定位置
+ * @param {boolean} fromInSq 起点是否已处于字符串内（codex r9 P2-7：候选位于
+ *   片段内字符串中间时，首个引号事件之前的状态需由调用方告知）
  * @returns {{inSq:boolean, inComment:boolean}}
  */
-function scanFragmentLex(text, ctxMap, from, idx) {
-  let inSq = false;
+function scanFragmentLex(text, ctxMap, from, idx, fromInSq = false) {
+  let inSq = fromInSq;
   let inComment = false;
   let blockDepth = 0;
   let first = true;
@@ -282,6 +284,56 @@ function decodeYamlDouble(raw) {
       default: return m;
     }
   });
+}
+
+/**
+ * YAML 块标量头识别（codex r9 P2-2）：仅在实际节点内容起点识别 | / > 指示符——
+ * 先按 YAML 规则剥行尾注释（引号外的 `#`，位于行首或空白之后），再匹配
+ * `|`/`>` + 缩进指示数字 + chomping 符号（`|2-` 与 `|-2` 两种顺序均合法）。
+ * 指示符须位于节点内容起点：行首（可缩进）或 `: `/`- ` 之后；返回内容缩进基准
+ * nodeIndent（块标量所属映射/序列条目的缩进，r9 P2-5：序列标记 `- ` 计入层级）。
+ * @param {string} line YAML 物理行
+ * @returns {null|{mark:string, chomp:string, indentIndicator:number, nodeIndent:number}}
+ */
+function matchYamlBlockHeader(line) {
+  let inSq = false;
+  let inDq = false;
+  let hashAt = -1;
+  for (let k = 0; k < line.length; k++) {
+    const c = line[k];
+    if (inSq) {
+      if (c === "'") { if (line[k + 1] === "'") { k += 1; continue; } inSq = false; }
+      continue;
+    }
+    if (inDq) {
+      if (c === '\\') { k += 1; continue; }
+      if (c === '"') inDq = false;
+      continue;
+    }
+    if (c === "'") { inSq = true; continue; }
+    if (c === '"') { inDq = true; continue; }
+    if (c === '#' && (k === 0 || line[k - 1] === ' ' || line[k - 1] === '\t')) { hashAt = k; break; }
+  }
+  const content = (hashAt < 0 ? line : line.slice(0, hashAt)).replace(/[ \t]+$/, '');
+  if (!content) return null;
+  const m = /([|>])([+-]?)([1-9]?)([+-]?)$/.exec(content);
+  if (!m) return null;
+  const before = content.slice(0, m.index);
+  let nodeIndent;
+  if (/[-]\s+$/.test(before)) {
+    nodeIndent = before.lastIndexOf('-'); // 序列项直接块：基准 = '-' 所在列
+  } else if (/:\s+$/.test(before)) {
+    const colon = before.lastIndexOf(':'); // 映射值：基准 = 键起始列（含 "- " 层级前缀）
+    let keyStart = colon;
+    while (keyStart > 0 && !/\s/.test(before[keyStart - 1])) keyStart -= 1;
+    nodeIndent = keyStart;
+  } else if (/^\s*$/.test(before)) {
+    nodeIndent = line.match(/^\s*/)[0].length; // 行首/纯缩进（文档级块）
+  } else {
+    return null;
+  }
+  const indentIndicator = m[3] ? parseInt(m[3], 10) : 0;
+  return { mark: m[1], chomp: m[2] || m[4] || '', indentIndicator, nodeIndent };
 }
 
 /**
@@ -365,6 +417,23 @@ function extractSqlValue(line, qIdx, limit) {
   return out;
 }
 
+/**
+ * psql 变量插值引用长度（codex r9 P2-9）：从冒号起识别 :'name' / :"name"，
+ * 返回含冒号与引号的总长度；非变量引用（如 ::cast）、未闭合或跨行返回 0。
+ * @param {string} text
+ * @param {number} i 冒号位置
+ * @returns {number}
+ */
+function psqlVarRefLength(text, i) {
+  if (text[i] !== ':') return 0;
+  const q = text[i + 1];
+  if (q !== "'" && q !== '"') return 0;
+  let k = i + 2;
+  while (k < text.length && text[k] !== q && text[k] !== '\n') k += 1;
+  if (k >= text.length || text[k] !== q) return 0;
+  return k + 1 - i;
+}
+
 /** 值是否为「需要报告的硬编码凭据」：非空、非完整 ${VAR} 占位（r7 P2-8：仅完整匹配豁免）、非常量安全值（redacted/xx/空） */
 function isUnsafeValue(v) {
   return Boolean(v) && !PLACEHOLDER_RE.test(v) && !SAFE_LITERALS_RE.test(v);
@@ -411,29 +480,52 @@ function scanSqlText(text) {
 }
 
 /**
- * 隐式占位符序号解析（codex r8 P2-3）：统计格式串片段（目标占位符之前）中
- * 「未使用显式位置」的占位符数量，返回紧随其后的占位符对应实参序号（1-based）。
- * `%%` 为转义百分号不消耗实参；`%n$` 显式位置占位符不计入隐式序列；
- * flags / 宽度 / 精度（如 %-10s）在类型字符前跳过。
+ * format 参数游标（codex r9 P2-1）：按 PostgreSQL format()「从最后消费的参数继续」
+ * 语义解析格式串片段——维护游标 cursor（下一个可用隐式参数序号）：
+ * `%n$` 显式位置消费参数 n 后 cursor=n+1；隐式说明符消费 cursor 后 cursor+=1；
+ * `%*` / `%*n$` 宽度参数同样消费实参；`%%` 转义与 flags / 数字宽度 / 精度不消耗。
+ * 返回片段消费完后的 cursor = 紧随片段的下一个说明符所用参数序号（1-based）。
  * @param {string} fmt 格式串中位于目标占位符之前的文本片段
  * @returns {number} 目标占位符对应的实参序号
  */
-function formatNextArgIndex(fmt) {
-  let ordered = 0;
+function formatArgCursor(fmt) {
+  const n = fmt.length;
+  const digitEnd = (p) => {
+    let d = p;
+    while (d < n && fmt[d] >= '0' && fmt[d] <= '9') d += 1;
+    return d;
+  };
+  let cursor = 1;
   let i = 0;
-  while (i < fmt.length) {
+  while (i < n) {
     if (fmt[i] !== '%') { i += 1; continue; }
     if (fmt[i + 1] === '%') { i += 2; continue; } // %% 转义，不消耗实参
-    let d = i + 1;
-    while (d < fmt.length && fmt[d] >= '0' && fmt[d] <= '9') d += 1;
-    if (d > i + 1 && fmt[d] === '$') { i = d + 1; continue; } // %n$ 显式位置，不计入隐式序列
     let j = i + 1;
-    while (j < fmt.length && /[-+#0 .]/.test(fmt[j])) j += 1;
-    while (j < fmt.length && fmt[j] >= '0' && fmt[j] <= '9') j += 1;
-    ordered += 1;
-    i = j + 1; // 跳过类型字符（s / I / L）
+    const d0 = digitEnd(j); // 显式位置 n$
+    let explicitPos = 0;
+    if (d0 > j && fmt[d0] === '$') { explicitPos = parseInt(fmt.slice(j, d0), 10); j = d0 + 1; }
+    while (j < n && /[+\- 0#]/.test(fmt[j])) j += 1; // flags
+    if (fmt[j] === '*') { // 宽度参数：* 隐式消费，*n$ 显式位置
+      const d1 = digitEnd(j + 1);
+      if (d1 > j + 1 && fmt[d1] === '$') { cursor = parseInt(fmt.slice(j + 1, d1), 10) + 1; j = d1 + 1; }
+      else { cursor += 1; j += 1; }
+    }
+    j = digitEnd(j); // 数字宽度
+    if (fmt[j] === '.') { // 精度：. 与数字，支持 .*
+      j += 1;
+      if (fmt[j] === '*') {
+        const d2 = digitEnd(j + 1);
+        if (d2 > j + 1 && fmt[d2] === '$') { cursor = parseInt(fmt.slice(j + 1, d2), 10) + 1; j = d2 + 1; }
+        else { cursor += 1; j += 1; }
+      }
+      j = digitEnd(j);
+    }
+    // 主参数消费（codex r9 P2-1）：显式位置 → 游标定位其后；隐式 → 顺序消费游标
+    if (explicitPos > 0) cursor = explicitPos + 1;
+    else cursor += 1;
+    i = j + 1; // 跳过类型字符（s / I / L 等）
   }
-  return ordered + 1;
+  return cursor;
 }
 
 /**
@@ -460,9 +552,9 @@ function scanFormatPlaceholder(text, ctxMap, cand) {
     cq += 1;
   }
   if (cq >= text.length) return undefined;
-  // 占位符序号（1-based）：候选自带 %n$ 时取显式位置；否则逐 token 解析此前说明符
-  //（%% 不消耗实参、%n$ 位置与隐式序号分计，codex r8 P2-3）
-  const placeholderIdx = self[1] ? parseInt(self[1], 10) : formatNextArgIndex(text.slice(q + 1, cand.pos));
+  // 占位符序号（1-based）：候选自带 %n$ 时取显式位置；否则按参数游标解析此前说明符
+  //（codex r9 P2-1：从最后消费的参数继续，显式位置与隐式序列共用同一游标）
+  const placeholderIdx = self[1] ? parseInt(self[1], 10) : formatArgCursor(text.slice(q + 1, cand.pos));
   const args = [[q, cq + 1], ...splitCallArgs(text, ctxMap, cq + 1, placeholderIdx + 1)];
   const target = args[placeholderIdx];
   if (!target) return null; // 实参缺失（动态构造等）→ 不判定
@@ -541,6 +633,31 @@ function splitCallArgs(text, ctxMap, from, maxArgCount) {
 }
 
 /**
+ * 候选左侧未闭合的外层括号数（codex r9 P2-6）：expr 状态机自候选闭引号处
+ * 以相对深度 0 起步，无法识别 SELECT ( / CAST( 等已开启的包装括号。向左扫描
+ * 至语句边界（NORMAL 分号）或文本头，统计净未闭合 '('（引用/注释内括号不参与）。
+ * @param {string} text
+ * @param {Uint8Array} ctxMap
+ * @param {number} from 候选起始索引
+ * @returns {number}
+ */
+function openParenDepthBefore(text, ctxMap, from) {
+  let count = 0;
+  let balance = 0;
+  for (let k = from - 1; k >= 0; k--) {
+    if (ctxMap[k] !== CTX_NORMAL) continue;
+    const c = text[k];
+    if (c === ';') break;
+    if (c === ')') { balance += 1; continue; }
+    if (c === '(') {
+      if (balance > 0) balance -= 1;
+      else count += 1;
+    }
+  }
+  return count;
+}
+
+/**
  * 单个口令候选的取值解析（codex r7 语句级结构化取值；r8 边界加固）。
  * psql \set 为单行元命令：参数不能跨行（r8 P2-9，psql 文档），防候选跑野到后续语句。
  * 语句边界：NORMAL 分号 / 片段层级分号（注释与美元引用体内，r8 P2-9）/ 未引用反斜杠
@@ -556,6 +673,12 @@ function scanCandidate(text, ctxMap, cand) {
   if (candCtx === CTX_DOUBLE_QUOTE) return null; // 双引号标识符内的 PASSWORD 字样非口令语句
   // 片段内候选：行/块注释内容与美元引用体（r8 P2-9 扩展 DOLLAR_QUOTE）
   const candInFragment = candCtx === CTX_LINE_COMMENT || candCtx === CTX_BLOCK_COMMENT || candCtx === CTX_DOLLAR_QUOTE;
+  // 候选位于片段内字符串中（codex r9 P2-7）：左侧最近引号为开形态（非闭引号标记）
+  let candInStr = false;
+  if (candInFragment) {
+    const pq = text.lastIndexOf("'", cand.pos);
+    candInStr = pq >= 0 && ctxMap[pq] !== CTX_SINGLE_QUOTE;
+  }
   const fmt = scanFormatPlaceholder(text, ctxMap, cand);
   if (fmt !== undefined) return fmt;
 
@@ -563,6 +686,7 @@ function scanCandidate(text, ctxMap, cand) {
   let mode = 'value'; // value=待取取值 token；after=直接取值已判定（仅 || / 相邻串可延续）；expr=拼接口令表达式窗口
   let exprDepth = 0; // expr 模式：相对括号深度（r8 P2-8）
   let exprExpectOperand = false; // expr 模式：|| 后等待操作数（函数名/变量）
+  let inBacktick = false; // psql 反引号引用（r9 P2-8）：内容交 shell，引号内反斜杠非元命令边界
   while (i < n) {
     const c = text[i];
     const ctx = ctxMap[i];
@@ -572,6 +696,22 @@ function scanCandidate(text, ctxMap, cand) {
     }
     if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f') { i += 1; continue; }
     if (candInFragment && i > cand.end && ctx === CTX_NORMAL) return null; // 片段结束
+    if (ctx === CTX_NORMAL && c === '`') { inBacktick = !inBacktick; i += 1; continue; } // psql 反引号引用切换（r9 P2-8）
+    // 片段内注释消费（codex r9 P2-7）：美元体 / 注释片段内的 -- 与 /* */ 属片段文本词法，
+    // 先于表达式状态机消费（嵌套块注释按深度）；候选起点位于串内时串内不消费
+    if (candInFragment && ctx === candCtx && (c === '/' || c === '-')) {
+      const isBlock = c === '/' && text[i + 1] === '*';
+      const isLine = c === '-' && text[i + 1] === '-';
+      if (isBlock || isLine) {
+        const fragLex = scanFragmentLex(text, ctxMap, cand.end, i, candInStr);
+        if (!fragLex.inSq) {
+          if (isBlock) { i = skipBlockComment(text, i, 0); continue; }
+          const nl = text.indexOf('\n', i);
+          i = nl < 0 ? n : nl;
+          continue;
+        }
+      }
+    }
     if (!candInFragment) {
       // 注释按嵌套深度跳转（不依赖片段配对标记，避免被注释内配对闭合引号干扰）
       if (ctx === CTX_LINE_COMMENT) { const nl = text.indexOf('\n', i); i = nl < 0 ? n : nl; continue; }
@@ -580,20 +720,28 @@ function scanCandidate(text, ctxMap, cand) {
       if (ctx === CTX_NORMAL && c === '/' && text[i + 1] === '*') { i = skipBlockComment(text, i, 0); continue; } // r8 P2-1
     }
     if (c === ';') {
-      if (ctx === CTX_NORMAL) return null; // 语句终止：未取到不安全口令
+      if (ctx === CTX_NORMAL && !inBacktick) return null; // 语句终止：未取到不安全口令（反引号内 shell 文本除外）
       if (candInFragment && ctx === candCtx) {
         // 片段层级语句边界（r8 P2-9）：分号仅在片段内「正常上下文」结束候选，
-        // 字符串内与片段内注释中的分号保留
-        const lex = scanFragmentLex(text, ctxMap, cand.end, i);
+        // 字符串内与片段内注释中的分号保留（串内起点由 candInStr 告知，r9 P2-7）
+        const lex = scanFragmentLex(text, ctxMap, cand.end, i, candInStr);
         if (!lex.inSq && !lex.inComment) return null;
       }
     }
-    if (c === '\\' && ctx === CTX_NORMAL) {
-      // psql 元命令边界（r8 P2-9）：未引用反斜杠即切换元命令，支持同行混合
+    if (c === '\\' && ctx === CTX_NORMAL && !inBacktick) {
+      // psql 元命令边界（r8 P2-9）：未引用反斜杠即切换元命令，支持同行混合；
+      // 反引号内容交 shell（r9 P2-8），引号内反斜杠不作边界
       return null;
     }
 
+    if (c === ':' && (mode === 'after' || mode === 'expr') && ctx === CTX_NORMAL) {
+      // psql 变量插值 :'name' / :"name"（r9 P2-9）：值来自变量，跳过后保持模式继续拼接
+      const vl = psqlVarRefLength(text, i);
+      if (vl) { i += vl; continue; }
+    }
+
     if (mode === 'after') {
+      if (inBacktick) { i += 1; continue; } // 反引号内 shell 文本：继续寻找其中的字面量（r9 P2-8）
       if (c === '|' && text[i + 1] === '|') { mode = 'value'; i += 2; continue; }
       if (c === "'" && ctx === CTX_NORMAL) {
         if (text[i - 1] === ':') {
@@ -636,9 +784,10 @@ function scanCandidate(text, ctxMap, cand) {
 
     if (c === "'") {
       if (ctx === CTX_SINGLE_QUOTE || ctx === CTX_ESCAPE_STRING) {
-        // 闭引号 → 拼接口令表达式窗口（r8 P2-8：重置表达式状态）
+        // 闭引号 → 拼接口令表达式窗口（r8 P2-8：重置表达式状态；
+        // r9 P2-6：继承候选左侧已开启的外层包装括号深度）
         mode = 'expr';
-        exprDepth = 0;
+        exprDepth = openParenDepthBefore(text, ctxMap, cand.pos);
         exprExpectOperand = false;
         i += 1; continue;
       }
@@ -696,39 +845,67 @@ export function checkSecrets(relPath, text) {
       }
     }
   });
-  // SQL/psql 原生硬编码凭据（codex r6：候选独立解析 + YAML 上下文隔离；r7/r8：块标量收集还原）：
+  // SQL/psql 原生硬编码凭据（codex r6：候选独立解析 + YAML 上下文隔离；r7/r8：块标量收集还原；
+  // r9：块头词法边界 / 显式缩进 / 折叠语义 / 序列节点层级）：
   //   - 非 YAML（SQL/.env/conf）：全文建 SQL 词法上下文，注释 / 美元引用内做片段级配对；
   //   - YAML：先按片段隔离（注释 / 引号标量 / 普通文本），标量按 YAML 规则解码后独立建 SQL 上下文，
   //     防注释撇号跨行污染（P2-2）、外层引号转义未解码被漏检（P2-2）；
-  //     | / > 块标量（r8 P2-6）：内容行整体收集、剥公共缩进后统一扫描——跨行断开的
-  //     PASSWORD 与取值合并可检出，行号映射回物理行；`>` 按保留换行处理（保守近似：
-  //     换行可见性不低于折叠语义，不漏检、不引入注释吞并风险）。
+  //     | / > 块标量（r8 P2-6；r9 P2-2/3/4/5）：仅实际节点内容起点识别块头，内容行整体收集、
+  //     按显式缩进或首非空行剥内容缩进（r9 P2-3），同级节点（含序列标记层级，r9 P2-5）
+  //     终止收集并交还外层 YAML 解码；`>` 按 YAML 折叠还原（r9 P2-4：单换行→空格、
+  //     空行→换行、more-indented 保留换行），行号映射回物理行。
   if (isYaml) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      // 块标量指示符（| / >，含 +/- 与缩进指示数字；非注释行）：整体收集内容行
-      if (!/^\s*#/.test(line) && /(?:^|\s|:)[|>][+-]?\d*[ \t]*(?:#.*)?$/.test(line)) {
-        const headerIndent = line.match(/^\s*/)[0].length;
+      // 块标量指示符（codex r9 P2-2：YAML 词法边界识别——仅实际节点内容起点，
+      // 注释 / 普通标量内指示符不触发；支持 |2- 与 |-2 两种指示顺序）：
+      // 整体收集内容行，按显式缩进（r9 P2-3）或首非空行剥内容缩进；
+      // 同级节点（含序列标记层级，r9 P2-5）终止收集并交还外层按普通 YAML 行处理；
+      // `>` 按 YAML 折叠还原（r9 P2-4），并维护还原行到物理行的映射
+      const header = matchYamlBlockHeader(line);
+      if (header) {
+        const { mark, indentIndicator, nodeIndent } = header;
         const rows = [];
+        const physRows = [];
         let j = i + 1;
         for (; j < lines.length; j++) {
           const cl = lines[j];
-          if (/^\s*$/.test(cl)) { rows.push(null); continue; }
-          if (cl.match(/^\s*/)[0].length <= headerIndent) break;
-          rows.push(cl);
+          if (/^\s*$/.test(cl)) { rows.push(null); physRows.push(j); continue; }
+          if (cl.match(/^\s*/)[0].length <= nodeIndent) break;
+          rows.push(cl); physRows.push(j);
         }
-        while (rows.length && rows[rows.length - 1] === null) rows.pop(); // 块后尾随空行不属内容
+        while (rows.length && rows[rows.length - 1] === null) { rows.pop(); physRows.pop(); } // 块后尾随空行不属内容
         if (rows.length) {
-          let base = null;
-          for (const r of rows) {
-            if (r === null) continue;
-            base = r.match(/^\s*/)[0].length;
-            break;
+          let base = indentIndicator ? nodeIndent + indentIndicator : null;
+          if (base === null) {
+            for (const r of rows) { if (r === null) continue; base = r.match(/^\s*/)[0].length; break; }
           }
-          if (base === null) base = headerIndent + 1;
-          const restored = rows.map((r) => (r === null ? '' : r.slice(base))).join('\n');
+          if (base === null) base = nodeIndent + 1;
+          const outLines = [];
+          const outPhys = [];
+          let blanks = 0;
+          let prevMore = false;
+          for (let r = 0; r < rows.length; r++) {
+            const row = rows[r];
+            if (row === null) { blanks += 1; continue; }
+            const ind = row.match(/^\s*/)[0].length;
+            const more = ind > base; // more-indented 行：折叠时换行保留
+            const textRow = row.slice(Math.min(base, ind));
+            if (mark !== '>') { // | 字面块：逐行保留
+              for (let b = 0; b < blanks; b++) { outLines.push(''); outPhys.push(physRows[r]); }
+              outLines.push(textRow); outPhys.push(physRows[r]);
+            } else if (outLines.length === 0 || blanks > 0 || prevMore || more) {
+              for (let b = 0; b < blanks; b++) { outLines.push(''); outPhys.push(physRows[r]); }
+              outLines.push(textRow); outPhys.push(physRows[r]);
+            } else {
+              outLines[outLines.length - 1] += ' ' + textRow; // 折叠：单换行 → 空格
+            }
+            blanks = 0; prevMore = more;
+          }
+          const restored = outLines.join('\n');
           for (const f of scanSqlText(restored)) {
-            issues.push({ rule: 'C1-secret', path: relPath, line: i + f.line + 1, message: f.message });
+            const physLine = outPhys[f.line - 1] ?? i;
+            issues.push({ rule: 'C1-secret', path: relPath, line: physLine + 1, message: f.message });
           }
         }
         i = j - 1; // 内容行已整体处理，从终止行继续
@@ -1171,6 +1348,58 @@ function selfTest() {
 
   const doDollarFragment = checkSecrets('init.sql', "DO $$ BEGIN EXECUTE 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(current_user); END $$;\nSELECT 'hello';");
   results.push(['C1 正向（DO 美元体内分号结束候选，不误报后续语句，r8 P2-9）', doDollarFragment.length === 0]);
+
+  // ---- codex r9 回归（format 参数游标 / YAML 块头词法 / 显式缩进 / 折叠 / 序列节点层级 / 外层括号 / 片段注释 / 反引号 / 变量插值） ----
+  const formatExplicitPos = checkSecrets('init.sql', "SELECT format('CREATE ROLE %1$I LOGIN PASSWORD %L', :'app_user', 'RealSecret123')");
+  results.push(['C1 负向（%1$I 后隐式 %L 用第二实参检出，r9 P2-1）', formatExplicitPos.length > 0]);
+
+  const formatExplicitPosSafe = checkSecrets('init.sql', "SELECT format('CREATE ROLE %1$I LOGIN PASSWORD %L', 'app', :'app_pass')");
+  results.push(['C1 正向（显式位置混用时 %L 实参为变量不误报，r9 P2-1）', formatExplicitPosSafe.length === 0]);
+
+  const yamlCommentGt = checkSecrets('compose.yml', "command: [psql, -c, \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"] # >");
+  results.push(['C1 负向（注释中的 > 不吞行，口令仍检出，r9 P2-2）', yamlCommentGt.length > 0]);
+
+  const yamlChompOrder = checkSecrets('compose.yml', "command: |2-\n  CREATE ROLE app LOGIN PASSWORD\n  'RealSecret123';");
+  results.push(['C1 负向（|2- 指示顺序识别后检出，r9 P2-2）', yamlChompOrder.length > 0]);
+
+  const yamlExplicitIndent = checkSecrets('compose.yml', "command: |2\n    CREATE ROLE app LOGIN\n  PASSWORD 'RealSecret123';");
+  results.push(['C1 负向（显式缩进按节点缩进+数字剥离后检出，r9 P2-3）', yamlExplicitIndent.length > 0]);
+
+  const yamlFoldComment = checkSecrets('compose.yml', "command: >\n  SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(current_user) -- note\n  || quote_literal('hello')");
+  results.push(['C1 正向（> 折叠与注释吞并后不误报 hello，r9 P2-4）', yamlFoldComment.length === 0]);
+
+  const yamlFoldSet = checkSecrets('compose.yml', "command: >\n  \\set app_pass\n  'RealSecret123'");
+  results.push(['C1 负向（> 折叠后 \\set 参数合并且检出，r9 P2-4）', yamlFoldSet.length > 0]);
+
+  const yamlSeqCompact = checkSecrets('compose.yml', "- command: |\n    SELECT 1;\n  entrypoint: \"CREATE ROLE app LOGIN PASSWORD 'RealSecret123';\"");
+  results.push(['C1 负向（序列标记节点层级终止块收集，同级键回归检索出，r9 P2-5）', yamlSeqCompact.length > 0]);
+
+  const exprParenWrap = checkSecrets('init.sql', "SELECT ('CREATE ROLE app LOGIN PASSWORD ') || quote_literal('RealSecret123');");
+  results.push(['C1 负向（外层括号包装的拼接表达式仍检出，r9 P2-6）', exprParenWrap.length > 0]);
+
+  const exprCastWrap = checkSecrets('init.sql', "SELECT CAST('CREATE ROLE app LOGIN PASSWORD ' AS text) || quote_literal('RealSecret123');");
+  results.push(['C1 负向（CAST 包装的拼接表达式仍检出，r9 P2-6）', exprCastWrap.length > 0]);
+
+  const fragBlockComment = checkSecrets('init.sql', "DO $$ BEGIN EXECUTE 'CREATE ROLE app LOGIN PASSWORD ' || /* note */ quote_literal('RealSecret123'); END $$;");
+  results.push(['C1 负向（美元体内片段注释消费后检出，r9 P2-7）', fragBlockComment.length > 0]);
+
+  const fragNestedComment = checkSecrets('init.sql', "DO $$ BEGIN EXECUTE 'CREATE ROLE app LOGIN PASSWORD ' || /* outer /* inner */ */ quote_literal('RealSecret123'); END $$;");
+  results.push(['C1 负向（美元体内嵌套片段注释消费后检出，r9 P2-7）', fragNestedComment.length > 0]);
+
+  const fragLineComment = checkSecrets('init.sql', "-- EXECUTE 'CREATE ROLE app LOGIN PASSWORD ' || /* note */ quote_literal('RealSecret123');");
+  results.push(['C1 负向（行注释片段内注释消费后检出，r9 P2-7）', fragLineComment.length > 0]);
+
+  const backtickSet = checkSecrets('init.sql', "\\set app_pass `printf \\%s 'RealSecret123'`");
+  results.push(['C1 负向（反引号内反斜杠不截断，硬编码检出，r9 P2-8）', backtickSet.length > 0]);
+
+  const backtickSafe = checkSecrets('init.sql', "\\set app_pass `echo \"$ZSZJ_DATASOURCE_PASSWORD\"`");
+  results.push(['C1 正向（反引号内环境变量引用不误报，r9 P2-8）', backtickSafe.length === 0]);
+
+  const setVarThenLiteral = checkSecrets('init.sql', "\\set app_pass '' :'safe' 'RealSecret123'");
+  results.push(['C1 负向（空串+变量插值后硬编码后缀仍检出，r9 P2-9）', setVarThenLiteral.length > 0]);
+
+  const setVarOnly = checkSecrets('init.sql', "\\set app_pass '' :'safe'");
+  results.push(['C1 正向（空串+变量插值无硬编码不误报，r9 P2-9）', setVarOnly.length === 0]);
 
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
