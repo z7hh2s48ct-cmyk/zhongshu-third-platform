@@ -58,6 +58,17 @@ const CMD_CREDENTIAL_RE = /(--requirepass|--password|-a)["']?[\s,]+["']?([^\s"',
 const SQL_PASSWORD_RE = /\bPASSWORD\s+'([^']+)'/i;
 const SQL_SETPASS_RE = /\\set\s+\w*(?:pass|pwd|secret)\w*\s+'([^']+)'/i;
 
+/**
+ * 判断 line 中 quoteIdx 处的单引号是否为 SQL 字面量的「起始」引号。
+ * 前导单引号为偶数个 → 当前引号开启新字面量；奇数个 → 它是字符串闭合引号。
+ * 用于区分 `PASSWORD '真口令'`（起始）与 `'xx PASSWORD ' || quote_literal(:'v')`（闭合，安全）。
+ */
+function isQuoteOpener(line, quoteIdx) {
+  const before = line.slice(0, quoteIdx);
+  const n = (before.match(/'/g) || []).length;
+  return n % 2 === 0;
+}
+
 export function checkSecrets(relPath, text) {
   const issues = [];
   const lines = text.split(/\r?\n/);
@@ -89,15 +100,17 @@ export function checkSecrets(relPath, text) {
       }
     }
     // SQL/psql 原生硬编码凭据（.sql 初始化脚本，codex r2 P2 修复）
+    // 引号奇偶校验：仅当 PASSWORD/\set 后的引号是字面量「起始」时才判定，
+    // 避免把 SQL 字符串的「闭合引号」误当字面量起始（codex r3 P2）
     const sqlPwMatch = line.match(SQL_PASSWORD_RE);
-    if (sqlPwMatch) {
+    if (sqlPwMatch && isQuoteOpener(line, sqlPwMatch.index + sqlPwMatch[0].indexOf("'"))) {
       const v = sqlPwMatch[1];
       if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
         issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'SQL 中出现硬编码 PASSWORD 字面量: ' + v.slice(0, 20) });
       }
     }
     const sqlSetMatch = line.match(SQL_SETPASS_RE);
-    if (sqlSetMatch) {
+    if (sqlSetMatch && isQuoteOpener(line, sqlSetMatch.index + sqlSetMatch[0].indexOf("'"))) {
       const v = sqlSetMatch[1];
       if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
         issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'psql \\set 出现硬编码口令字面量: ' + v.slice(0, 20) });
@@ -119,21 +132,43 @@ export function checkSecrets(relPath, text) {
  */
 function extractServiceBlock(composeText, serviceName) {
   const lines = composeText.split(/\r?\n/);
-  // 服务头：任意缩进 + 服务名 + 冒号 + 可选 YAML anchor(&x)/行内注释(#)
-  const startRe = new RegExp(`^(\\s*)${serviceName}:[ \\t]*(?:&\\w+[ \\t]*)?(?:#.*)?$`);
+  // 定位顶层 services: 映射，确定其直接子键（各服务）的缩进层级，
+  // 避免把 nginx.depends_on.zszj-server 等深层同名键误当服务头（codex r3 P2）
+  let servicesIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^services:[ \t]*(?:#.*)?$/.test(lines[i])) { servicesIdx = i; break; }
+  }
+  let childIndent = null;
+  if (servicesIdx >= 0) {
+    for (let i = servicesIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue;
+      const ind = line.match(/^\s*/)[0].length;
+      if (ind === 0) break; // 顶级键，services 段结束
+      childIndent = ind;
+      break;
+    }
+  }
+  // 服务头：缩进 + 服务名 + 冒号 + 可选 YAML anchor(&x)/行内注释(#)
+  const headerRe = new RegExp(`^(\\s*)${serviceName}:[ \\t]*(?:&\\w+[ \\t]*)?(?:#.*)?$`);
   let startIdx = -1;
   let headerIndent = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(startRe);
-    if (m) { startIdx = i; headerIndent = m[1].length; break; }
+  const searchFrom = servicesIdx >= 0 ? servicesIdx + 1 : 0;
+  for (let i = searchFrom; i < lines.length; i++) {
+    const m = lines[i].match(headerRe);
+    if (!m) continue;
+    const ind = m[1].length;
+    // 若已确定 services 直接子键层级，服务头须恰在该层级（排除 depends_on 下深层同名键）
+    if (childIndent !== null && ind !== childIndent) continue;
+    startIdx = i; headerIndent = ind; break;
   }
   if (startIdx < 0) return null;
-  // 收集后续行，直到遇到缩进 <= 服务头缩进的非空行（同级/更高级键）
+  // 收集后续行，直到遇到缩进 <= 服务头缩进的非空非注释行（同级/更高级键）
   const block = [lines[startIdx]];
   for (let i = startIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    // 空行属于块内（YAML 允许）
-    if (/^\s*$/.test(line)) { block.push(line); continue; }
+    // 空行与注释行属于块内（YAML 注释缩进可低于映射而不结束它，codex r3 P2）
+    if (/^\s*$/.test(line) || /^\s*#/.test(line)) { block.push(line); continue; }
     const indent = line.match(/^\s*/)[0].length;
     if (indent <= headerIndent) break;
     block.push(line);
@@ -364,6 +399,9 @@ function selfTest() {
   const sqlSafe = checkSecrets('init.sql', "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'u', :'app_pass')");
   results.push(['C1 正向（SQL format %L 占位符不误报）', sqlSafe.length === 0]);
 
+  const sqlConcat = checkSecrets('init.sql', "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec");
+  results.push(['C1 正向（SQL 字符串闭合引号不误报）', sqlConcat.length === 0]);
+
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
 
@@ -372,6 +410,12 @@ function selfTest() {
 
   const annotatedHeader = checkProbeConsistency('services:\n  postgres:\n    healthcheck:\n      test: pg_isready\n  zszj-server: # backend\n    image: x', 'health');
   results.push(['C2 负向（带注释服务头缺探针仍检出）', annotatedHeader.length > 0]);
+
+  const dependsOnHeader = checkProbeConsistency('services:\n  nginx:\n    depends_on:\n      zszj-server:\n        condition: service_healthy\n  zszj-server:\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
+  results.push(['C2 正向（depends_on 深层同名键不误判服务头）', dependsOnHeader.length === 0]);
+
+  const commentInBlock = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n  # probe\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
+  results.push(['C2 正向（块内低缩进注释不截断）', commentInBlock.length === 0]);
 
   const blankLineProbe = checkProbeConsistency('services:\n  zszj-server:\n    image: x\n\n    healthcheck:\n      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]', 'health');
   results.push(['C2 正向（块内空行不误判缺 healthcheck）', blankLineProbe.length === 0]);

@@ -96,6 +96,12 @@ test('C1：SQL format(%L) 占位符与 psql 变量引用不误报（codex r2 P2 
   assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
 });
 
+test('C1：SQL 字符串拼接 quote_literal(:变量) 不误报为硬编码口令（codex r3 P2 修复）', () => {
+  // PASSWORD 后的引号是字符串闭合引号（前面有奇数个引号），非字面量起始
+  const text = "SELECT 'CREATE ROLE app LOGIN PASSWORD ' || quote_literal(:'app_pass') \\gexec";
+  assert.deepEqual(checkSecrets('deploy/postgres-init/01-create-app-role.sql', text), []);
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {
@@ -206,6 +212,35 @@ test('C2：带注释服务头且有 /actuator healthcheck 不误报（codex r2 P
     'services:',
     '  zszj-server: # backend',
     '    image: zszj-server:latest',
+    '    healthcheck:',
+    '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
+  ].join('\n');
+  assert.deepEqual(checkProbeConsistency(compose, 'health'), []);
+});
+
+test('C2：nginx.depends_on.zszj-server 不被误当作服务头（codex r3 P2 修复）', () => {
+  // nginx 服务排在 zszj-server 之前；depends_on 下的深层同名键不得被当成服务头
+  const compose = [
+    'services:',
+    '  nginx:',
+    '    depends_on:',
+    '      zszj-server:',
+    '        condition: service_healthy',
+    '  zszj-server:',
+    '    image: zszj-server:latest',
+    '    healthcheck:',
+    '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
+  ].join('\n');
+  assert.deepEqual(checkProbeConsistency(compose, 'health'), []);
+});
+
+test('C2：healthcheck 前的低缩进注释行不截断服务块（codex r3 P2 修复）', () => {
+  // YAML 注释缩进可低于周围映射而不结束该映射；块提取应忽略注释行
+  const compose = [
+    'services:',
+    '  zszj-server:',
+    '    image: zszj-server:latest',
+    '  # probe configuration',
     '    healthcheck:',
     '      test: ["CMD","curl","-f","http://localhost:48080/actuator/health"]',
   ].join('\n');
