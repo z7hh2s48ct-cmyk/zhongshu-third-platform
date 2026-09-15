@@ -372,6 +372,119 @@ function collectNavCalls(body: string): NavCall[] {
 }
 
 /**
+ * r5-P3 通用词法工具集（失信判定与导航实参检查共用）：
+ *   - splitTopLevel：按顶层定界符深度拆分——解构参数 / 解构条目内的逗号不算分隔
+ *     （`({ value: X, unused })` 整体成块，不破坏花括号完整性）；
+ *   - bindingName：解构条目绑定名——默认值取 `=` 前、别名取 `:` 后、嵌套取最内层名
+ *     （`target` / `target = X` / `target: t` / `target: t = X` / `a: { b: c }`）；
+ *   - escapeRegExpName：名字拼入正则前转义全部特殊字符（`$` 不再成为结束锚点）；
+ *   - countCodeMatches：仅统计代码位置匹配（字符串 / 注释内伪匹配不计入失信判定）；
+ *   - countDeclaredBindings：声明初始化计数（普通声明 + 解构声明条目，防默认值误判重赋值）。
+ */
+function splitTopLevel(s: string, sep = ','): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let cur = ''
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '{' || c === '[' || c === '(') {
+      depth += 1
+    } else if (c === '}' || c === ']' || c === ')') {
+      depth = Math.max(0, depth - 1)
+    } else if (c === sep && depth === 0) {
+      parts.push(cur)
+      cur = ''
+      continue
+    }
+    cur += c
+  }
+  parts.push(cur)
+  return parts
+}
+
+/** 解构条目绑定名：`target` / `target = X` / `target: t` / `target: t = X` / `a: { b: c }` 取最内层名 */
+function bindingName(raw: string): string {
+  const piece = raw.replace(/^\.\.\./, '').trim()
+  if (!piece) {
+    return ''
+  }
+  const eqIdx = piece.indexOf('=')
+  const head = (eqIdx >= 0 ? piece.slice(0, eqIdx) : piece).trim()
+  const colonIdx = head.lastIndexOf(':')
+  const tail = (colonIdx >= 0 ? head.slice(colonIdx + 1) : head).trim()
+  const m = tail.match(/^\{?\s*([A-Za-z_$][\w$]*)/)
+  return m?.[1] ?? ''
+}
+
+/** 解构条目绑定名集合（收集嵌套解构的全部绑定）：`{ a: { b, c }, d = X }` → [b, c, d]；
+ *  默认值对象（`target = { a: 1 }`）不解构绑定，仅收集 `=` 前的 target */
+function collectBindingNames(raw: string): string[] {
+  const out: string[] = []
+  const walk = (s: string) => {
+    for (const part of splitTopLevel(s)) {
+      const piece = part.replace(/^\.\.\./, '').trim()
+      if (!piece) {
+        continue
+      }
+      const braceStart = piece.indexOf('{')
+      const braceEnd = piece.lastIndexOf('}')
+      if (braceStart >= 0 && braceEnd > braceStart) {
+        const head = piece.slice(0, braceStart).trim()
+        if (head.endsWith('=')) {
+          const n = bindingName(head.slice(0, -1))
+          if (n) {
+            out.push(n)
+          }
+        }
+        walk(piece.slice(braceStart + 1, braceEnd))
+        continue
+      }
+      const n = bindingName(piece)
+      if (n) {
+        out.push(n)
+      }
+    }
+  }
+  walk(raw)
+  return out
+}
+
+/** r5-P3：把名字拼入正则前转义全部特殊字符（`\b` 不适合作含 `$` 标识符的边界） */
+function escapeRegExpName(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 仅统计「代码位置」的匹配次数（正则须带 g；字符串 / 注释内伪匹配经掩码排除） */
+function countCodeMatches(body: string, re: RegExp, mask: boolean[]): number {
+  let count = 0
+  re.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(body)) !== null) {
+    if (mask[m.index]) {
+      count += 1
+    }
+    if (m.index === re.lastIndex) {
+      re.lastIndex += 1
+    }
+  }
+  return count
+}
+
+/** 声明初始化计数：普通 `const X =` + 解构条目（`{ target = X }` / `{ target: t = X }` 的默认值不是重赋值） */
+function countDeclaredBindings(body: string, name: string, mask: boolean[], esc: string): number {
+  let count = countCodeMatches(body, new RegExp(`(?:const|let|var)\\s+${esc}\\s*=(?!=)`, 'g'), mask)
+  const destructRe = /(?:const|let|var)\s*\{([^}]*)\}\s*=/g
+  destructRe.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = destructRe.exec(body)) !== null) {
+    if (mask[m.index] && collectBindingNames(m[1] ?? '').includes(name)) {
+      count += 1
+    }
+  }
+  return count
+}
+
+/**
  * r3-P3：解析结果的可用引用名——绑定 `const X = resolvePostAuthRedirect(...)`（含 await）
  * 与解构 `const { target } = ...`（含别名 `{ target: t }`、默认值 `{ target = X }`）两种形态。
  */
@@ -406,17 +519,35 @@ function collectResolutionNames(body: string): string[] {
  *   ① 绑定的 target / fullPageUrl 属性被覆盖赋值（`X.target = redirect`）；
  *   ② 绑定被非声明形式整体重赋值（`X = …`，声明初始化除外）；
  *   ③ 同名标识符出现在嵌套函数/回调的参数列表中（作用域遮蔽，文本层保守判定）。
+ * r5-P3 加固（codex 裁决四连）：
+ *   - 全部检查限定代码位置（maskCodePositions 掩码）——字符串 / 注释内的伪赋值
+ *     （`"X.target = redirect"`）与伪参数（`"(postAuth) => x"`）不触发失信；
+ *   - 名字正则统一转义，标识符边界用 `(?<![\w$])` / `(?!...)` 表达——`\b` 对含
+ *     `$` 的合法绑定（`$postAuth` / `postAuth$` / `post$Auth`）失效；
+ *   - ② 的声明计数纳入解构声明条目——`const { target = HOME_ROUTE } = …` 与别名
+ *     `{ target: t = HOME_ROUTE }` 的默认值不再被误判为整体重赋值；
+ *   - ③ 的参数列表按顶层逗号拆分——多字段解构 `({ value: X, unused })` 不被切断。
  */
 function isNameTainted(body: string, name: string): boolean {
-  const esc = name.replace(/\$/g, '\\$&')
-  // ① 属性覆盖赋值（排除 == / === 比较）
-  if (new RegExp(`\\b${esc}\\s*\\.\\s*(?:target|fullPageUrl)\\s*=(?!=)`).test(body)) {
+  const mask = maskCodePositions(body)
+  const esc = escapeRegExpName(name)
+  // ① 属性覆盖赋值（排除 == / === 比较；字符串 / 注释内伪赋值经掩码排除）
+  if (
+    countCodeMatches(
+      body,
+      new RegExp(`(?<![\\w$])${esc}\\s*\\.\\s*(?:target|fullPageUrl)\\s*=(?!=)`, 'g'),
+      mask
+    ) > 0
+  ) {
     return true
   }
-  // ② 整体重赋值：声明初始化之外仍有 `X =` 赋值
-  const declCount = (body.match(new RegExp(`(?:const|let|var)\\s+${esc}\\s*=(?!=)`, 'g')) ?? [])
-    .length
-  const assignCount = (body.match(new RegExp(`(?<![\\w$.])${esc}\\s*=(?!=)`, 'g')) ?? []).length
+  // ② 整体重赋值：声明初始化（含解构条目默认值）之外仍有 `X =` 赋值
+  const declCount = countDeclaredBindings(body, name, mask, esc)
+  const assignCount = countCodeMatches(
+    body,
+    new RegExp(`(?<![\\w$.])${esc}\\s*=(?!=)`, 'g'),
+    mask
+  )
   if (assignCount > declCount) {
     return true
   }
@@ -427,31 +558,26 @@ function isNameTainted(body: string, name: string): boolean {
   const arrowBareRe = /(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=>/g
   let pm: RegExpExecArray | null
   while ((pm = fnParamRe.exec(body)) !== null) {
-    paramLists.push(pm[1] ?? pm[2] ?? '')
+    if (mask[pm.index]) {
+      paramLists.push(pm[1] ?? pm[2] ?? '')
+    }
   }
   while ((pm = arrowParenRe.exec(body)) !== null) {
-    paramLists.push(pm[1] ?? '')
+    if (mask[pm.index]) {
+      paramLists.push(pm[1] ?? '')
+    }
   }
   while ((pm = arrowBareRe.exec(body)) !== null) {
-    paramLists.push(pm[1] ?? '')
+    if (mask[pm.index]) {
+      paramLists.push(pm[1] ?? '')
+    }
   }
   return paramLists.some((list) =>
-    list.split(',').some((raw) => {
+    splitTopLevel(list).some((raw) => {
       const piece = raw.replace(/^\.\.\./, '').trim()
       // 嵌套回调时捕获组可能带外层 '(' 前缀（如 `forEach((postAuth) =>` → `(postAuth`）：剥至最后一个 '('
       const cleaned = piece.includes('(') ? piece.slice(piece.lastIndexOf('(') + 1) : piece
-      const destructured = cleaned.match(/^\{\s*([^}]*)\}/)
-      if (destructured) {
-        return destructured[1].split(',').some(
-          (part) =>
-            part
-              .split(':')
-              .pop()
-              ?.trim()
-              .match(/^[A-Za-z_$][\w$]*/)?.[0] === name
-        )
-      }
-      return cleaned.match(/^[A-Za-z_$][\w$]*/)?.[0] === name
+      return collectBindingNames(cleaned).includes(name)
     })
   )
 }
@@ -478,7 +604,9 @@ function findUncoveredNavArgs(
       return
     }
     const argText = body.slice(call.argStart, call.argEnd)
-    const byName = resolutionNames.some((n) => new RegExp(`\\b${n}\\b`).test(argText))
+    const byName = resolutionNames.some((n) =>
+      new RegExp(`(?<![\\w$])${escapeRegExpName(n)}(?![\\w$])`).test(argText)
+    )
     const inline = /resolvePostAuthRedirect\s*\(/.test(argText)
     if (!byName && !inline) {
       bad.push(argText)
@@ -742,5 +870,90 @@ describe('登录落地解析契约（函数级 + 变异，codex r2-P3）', () =>
         `违规变体 ${i} 漏报`
       ).toEqual([`components/Bad${i}.vue#handleLogin`])
     })
+  })
+
+  it('变异 11（r5-P3）：多字段解构参数遮蔽（value: tryPostAuth, unused）→ 实参不再视为消费', () => {
+    const code = [
+      'const tryLogin = async () => {',
+      '  setToken(res)',
+      '  const tryPostAuth = resolvePostAuthRedirect(redirect, base)',
+      '  ;[{ value: { target: redirect }, unused: 0 }].forEach(({ value: tryPostAuth, unused }) => {',
+      '    void unused',
+      '    router.push({ path: tryPostAuth.target })',
+      '  })',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/DestructShadow.vue', code }])).toEqual([
+      'components/DestructShadow.vue#tryLogin'
+    ])
+  })
+
+  it('变异 12（r5-P3）：解构默认值（含别名）不是整体重赋值 → 合规', () => {
+    const okCases: string[] = [
+      [
+        'const handleLogin = async () => {',
+        '  setToken(res)',
+        '  const { target = HOME_ROUTE } = resolvePostAuthRedirect(redirect, base)',
+        '  push({ path: target })',
+        '}'
+      ].join('\n'),
+      [
+        'const handleLogin = async () => {',
+        '  setToken(res)',
+        '  const { target: t = HOME_ROUTE } = resolvePostAuthRedirect(redirect, base)',
+        '  push({ path: t })',
+        '}'
+      ].join('\n')
+    ]
+    okCases.forEach((code, i) => {
+      expect(
+        findNavigationOffenders([{ rel: `components/DestructDefault${i}.vue`, code }]),
+        `解构默认值合规变体 ${i} 被误判`
+      ).toEqual([])
+    })
+  })
+
+  it('变异 13（r5-P3）：字符串 / 注释中的伪赋值与伪参数不触发失信 → 合规', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const postAuth = resolvePostAuthRedirect(redirect, base)',
+      '  const note = "postAuth.target = redirect"',
+      '  const doc = "(postAuth) => x"',
+      '  // postAuth = redirect',
+      '  router.push({ path: postAuth.target })',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/StringText.vue', code }])).toEqual([])
+  })
+
+  it('变异 14（r5-P3）：含 $ 的绑定（$postAuth / postAuth$ / post$Auth）正常消费 → 合规', () => {
+    ;['$postAuth', 'postAuth$', 'post$Auth'].forEach((n) => {
+      const code = [
+        'const handleLogin = async () => {',
+        '  setToken(res)',
+        `  const ${n} = resolvePostAuthRedirect(redirect, base)`,
+        `  push({ path: ${n}.target })`,
+        '}'
+      ].join('\n')
+      expect(
+        findNavigationOffenders([{ rel: 'components/DollarName.vue', code }]),
+        `含 $ 绑定 ${n} 被误判`
+      ).toEqual([])
+    })
+  })
+
+  it('变异 15（r5-P3）：参数默认值数组内的绑定名不产生伪遮蔽（深度拆分判别）→ 合规', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const target = resolvePostAuthRedirect(redirect, base)',
+      '  items.forEach(({ path = [a, target] }) => {',
+      '    console.info(path)',
+      '  })',
+      '  push({ path: target.target })',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/DefaultComma.vue', code }])).toEqual([])
   })
 })
