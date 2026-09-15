@@ -109,17 +109,23 @@ describe('登录入口重定向契约：全部入口共用同一消毒函数（�
   })
 
   it('不得使用 permissionStore.addRouters[0].path 之类兜底（登录成功时动态路由尚未装配，一旦生效即 TypeError）', () => {
-    const offenders = LOGIN_FILES.filter((f) => /addRouters\s*\[\s*0\s*\]/.test(f.code)).map((f) => f.rel)
+    const offenders = LOGIN_FILES.filter((f) => /addRouters\s*\[\s*0\s*\]/.test(f.code)).map(
+      (f) => f.rel
+    )
     expect(offenders, `以下登录入口仍有 addRouters[0] 兜底: ${offenders.join(', ')}`).toEqual([])
   })
 
   it('不得对 location.href 做字符串裁剪式整页跳转（绕过消毒结果，且对 percent-encoding 不成立）', () => {
-    const offenders = LOGIN_FILES.filter((f) => /location\.href\.replace\s*\(/.test(f.code)).map((f) => f.rel)
+    const offenders = LOGIN_FILES.filter((f) => /location\.href\.replace\s*\(/.test(f.code)).map(
+      (f) => f.rel
+    )
     expect(offenders, `以下登录入口仍在裁剪 location.href: ${offenders.join(', ')}`).toEqual([])
   })
 
   it("SSO 回调判定不得用 indexOf('sso') 子串匹配（会把 /system/sso-config 之类站内页误判为回调）", () => {
-    const offenders = LOGIN_FILES.filter((f) => /indexOf\(\s*'sso'\s*\)/.test(f.code)).map((f) => f.rel)
+    const offenders = LOGIN_FILES.filter((f) => /indexOf\(\s*'sso'\s*\)/.test(f.code)).map(
+      (f) => f.rel
+    )
     expect(offenders, `以下登录入口仍用 sso 子串匹配: ${offenders.join(', ')}`).toEqual([])
   })
 
@@ -186,7 +192,11 @@ interface NamedFunctionBody {
   body: string
 }
 
-/** 跳过字符串字面量（单/双引号、模板串），返回关闭引号后的下一位置 */
+/**
+ * 跳过字符串字面量（单/双引号、模板串），返回关闭引号后的下一位置。
+ * r4-P3：模板串 `${…}` 插值经 matchDelimiter 递归配平（支持嵌套模板串），
+ * 不再把插值内的反引号误当外层闭合（防函数体提取被截断）。
+ */
 function skipStringLiteral(code: string, start: number): number {
   const quote = code[start]
   let i = start + 1
@@ -194,6 +204,14 @@ function skipStringLiteral(code: string, start: number): number {
     const c = code[i]
     if (c === '\\') {
       i += 2
+      continue
+    }
+    if (quote === '`' && c === '$' && code[i + 1] === '{') {
+      const end = matchDelimiter(code, i + 1, '{', '}')
+      if (end === -1) {
+        return code.length
+      }
+      i = end + 1
       continue
     }
     if (c === quote) {
@@ -252,6 +270,47 @@ function matchDelimiter(code: string, openIndex: number, open: string, close: st
 }
 
 /**
+ * r4-P3：代码位置掩码——字符串（含模板串）/注释覆盖区间的索引标记 false，
+ * 供导航调用提取排除字符串文本中的伪调用（如 query: { note: "push(raw)" }）。
+ * 模板串整段（含插值）标记 false：插值中的调用保守忽略（真实登录代码不依赖该形态）。
+ */
+function maskCodePositions(code: string): boolean[] {
+  const mask = new Array<boolean>(code.length).fill(true)
+  const blackout = (from: number, to: number) => {
+    const end = Math.min(to, code.length)
+    for (let k = from; k < end; k++) {
+      mask[k] = false
+    }
+  }
+  let i = 0
+  while (i < code.length) {
+    const c = code[i]
+    if (c === "'" || c === '"' || c === '`') {
+      const end = skipStringLiteral(code, i)
+      blackout(i, end)
+      i = end
+      continue
+    }
+    if (c === '/' && code[i + 1] === '/') {
+      const nl = code.indexOf('\n', i)
+      const end = nl === -1 ? code.length : nl
+      blackout(i, end)
+      i = end
+      continue
+    }
+    if (c === '/' && code[i + 1] === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const end = closeIdx === -1 ? code.length : closeIdx + 2
+      blackout(i, end)
+      i = end
+      continue
+    }
+    i += 1
+  }
+  return mask
+}
+
+/**
  * 提取具名函数体：function 声明（含返回类型）/ function 表达式 / 具名箭头函数赋值。
  * 粒度=最外层具名函数：入口把 setToken 写进 `.then(async (res) => …)` 内层回调也没关系，
  * 内层回调仍落在外层具名函数体内，契约按外层函数断言（如 MobileForm.vue 的 signIn）。
@@ -274,12 +333,43 @@ function extractNamedFunctionBodies(code: string): NamedFunctionBody[] {
 
 /** 「写访问凭据」与「随后导航」的判定（函数级审计用） */
 const SET_TOKEN_RE = /setToken\s*\(/
-const NAVIGATE_RE = /(?:^|[^.\w])push\s*\(|router\.push\s*\(|router\.replace\s*\(|location\.assign\s*\(/
 const RESOLVE_CALL_RE = /resolvePostAuthRedirect\s*\(/
 
 /** r3-P3：逐个导航调用提取实参文本（lookbehind 不误吃前置字符，定位 '(' 后精确配平） */
 const NAV_CALL_RE =
   /(?<![\w.])(?:push|replace)\s*\(|router\s*\.\s*(?:push|replace)\s*\(|location\s*\.\s*assign\s*\(/g
+
+/** r4-P3：导航调用提取结果（实参区间 + 配平状态） */
+interface NavCall {
+  argStart: number
+  argEnd: number
+  balanced: boolean
+}
+
+/**
+ * r4-P3：统一导航调用提取——入口过滤与实参检查共用同一结果（裸 push / 裸 replace /
+ * router.push / router.replace / location.assign 同权，覆盖范围一致）；
+ * 字符串 / 注释内伪调用（如 query: { note: "push(raw)" }）经掩码排除。
+ */
+function collectNavCalls(body: string): NavCall[] {
+  const mask = maskCodePositions(body)
+  const calls: NavCall[] = []
+  NAV_CALL_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = NAV_CALL_RE.exec(body)) !== null) {
+    if (!mask[m.index]) {
+      continue
+    }
+    const open = m.index + m[0].length - 1
+    const close = matchDelimiter(body, open, '(', ')')
+    if (close === -1) {
+      calls.push({ argStart: open + 1, argEnd: body.length, balanced: false })
+      continue
+    }
+    calls.push({ argStart: open + 1, argEnd: close, balanced: true })
+  }
+  return calls
+}
 
 /**
  * r3-P3：解析结果的可用引用名——绑定 `const X = resolvePostAuthRedirect(...)`（含 await）
@@ -311,6 +401,62 @@ function collectResolutionNames(body: string): string[] {
 }
 
 /**
+ * r4-P3：解析结果绑定的失信判定——以下任一情形后，该名字出现在导航实参中不再视为
+ * 「消费了解析结果」：
+ *   ① 绑定的 target / fullPageUrl 属性被覆盖赋值（`X.target = redirect`）；
+ *   ② 绑定被非声明形式整体重赋值（`X = …`，声明初始化除外）；
+ *   ③ 同名标识符出现在嵌套函数/回调的参数列表中（作用域遮蔽，文本层保守判定）。
+ */
+function isNameTainted(body: string, name: string): boolean {
+  const esc = name.replace(/\$/g, '\\$&')
+  // ① 属性覆盖赋值（排除 == / === 比较）
+  if (new RegExp(`\\b${esc}\\s*\\.\\s*(?:target|fullPageUrl)\\s*=(?!=)`).test(body)) {
+    return true
+  }
+  // ② 整体重赋值：声明初始化之外仍有 `X =` 赋值
+  const declCount = (body.match(new RegExp(`(?:const|let|var)\\s+${esc}\\s*=(?!=)`, 'g')) ?? [])
+    .length
+  const assignCount = (body.match(new RegExp(`(?<![\\w$.])${esc}\\s*=(?!=)`, 'g')) ?? []).length
+  if (assignCount > declCount) {
+    return true
+  }
+  // ③ 参数遮蔽：同名标识符出现在嵌套函数/回调（含解构参数 `{ target }`）的参数列表
+  const paramLists: string[] = []
+  const fnParamRe = /function\s*[A-Za-z_$][\w$]*\s*\(([^)]*)\)|function\s*\(([^)]*)\)/g
+  const arrowParenRe = /\(([^)]*)\)\s*=>/g
+  const arrowBareRe = /(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=>/g
+  let pm: RegExpExecArray | null
+  while ((pm = fnParamRe.exec(body)) !== null) {
+    paramLists.push(pm[1] ?? pm[2] ?? '')
+  }
+  while ((pm = arrowParenRe.exec(body)) !== null) {
+    paramLists.push(pm[1] ?? '')
+  }
+  while ((pm = arrowBareRe.exec(body)) !== null) {
+    paramLists.push(pm[1] ?? '')
+  }
+  return paramLists.some((list) =>
+    list.split(',').some((raw) => {
+      const piece = raw.replace(/^\.\.\./, '').trim()
+      // 嵌套回调时捕获组可能带外层 '(' 前缀（如 `forEach((postAuth) =>` → `(postAuth`）：剥至最后一个 '('
+      const cleaned = piece.includes('(') ? piece.slice(piece.lastIndexOf('(') + 1) : piece
+      const destructured = cleaned.match(/^\{\s*([^}]*)\}/)
+      if (destructured) {
+        return destructured[1].split(',').some(
+          (part) =>
+            part
+              .split(':')
+              .pop()
+              ?.trim()
+              .match(/^[A-Za-z_$][\w$]*/)?.[0] === name
+        )
+      }
+      return cleaned.match(/^[A-Za-z_$][\w$]*/)?.[0] === name
+    })
+  )
+}
+
+/**
  * r3-P3：逐个导航调用验证实参——每个 push / replace / location.assign 的实参文本必须引用
  * 解析结果（绑定/解构名，或内联 resolvePostAuthRedirect 调用），否则解析结果未真正用于导航。
  * 返回未覆盖的实参文本清单（仅用于违规判定，不进错误消息）。
@@ -318,40 +464,45 @@ function collectResolutionNames(body: string): string[] {
  * r3-P3 教训（codex 变异）：旧检查只看「绑定变量被读取过 .target/.fullPageUrl」——
  * 把 `router.push({ path: tryPostAuth.target })` 替换为 `window.location.assign(redirect)`
  * 后，if 分支里的 tryPostAuth.fullPageUrl 读取仍在场，旧检查全过（漏报）。
+ * r4-P3：接收 collectNavCalls 的统一提取结果（入口过滤与实参检查同源）。
  */
-function findUncoveredNavArgs(body: string, resolutionNames: string[]): string[] {
+function findUncoveredNavArgs(
+  navCalls: NavCall[],
+  body: string,
+  resolutionNames: string[]
+): string[] {
   const bad: string[] = []
-  let m: RegExpExecArray | null
-  NAV_CALL_RE.lastIndex = 0
-  while ((m = NAV_CALL_RE.exec(body)) !== null) {
-    const open = m.index + m[0].length - 1
-    const close = matchDelimiter(body, open, '(', ')')
-    if (close === -1) {
+  navCalls.forEach((call) => {
+    if (!call.balanced) {
       bad.push('<unbalanced-nav-call>')
-      continue
+      return
     }
-    const argText = body.slice(open + 1, close)
+    const argText = body.slice(call.argStart, call.argEnd)
     const byName = resolutionNames.some((n) => new RegExp(`\\b${n}\\b`).test(argText))
     const inline = /resolvePostAuthRedirect\s*\(/.test(argText)
     if (!byName && !inline) {
       bad.push(argText)
     }
-  }
+  })
   return bad
 }
 
 /**
- * 「写 token 且随后导航」的函数级审计（r3-P3 强化为实参级）：命中函数必须
+ * 「写 token 且随后导航」的函数级审计（r3-P3 强化为实参级；r4-P3 绑定失信判定）：
+ * 命中函数必须
  *   ① 调用 resolvePostAuthRedirect；
  *   ② **每个**导航调用的实参消费解析结果（绑定/解构名或内联调用）——
- *      不再接受「函数内任意位置读取过绑定变量」的弱判定。
+ *      不再接受「函数内任意位置读取过绑定变量」的弱判定；
+ *   ③ 绑定被覆盖赋值或同名遮蔽时不再计入有效引用名（防「名字在场」式漏报）。
+ * 入口过滤与实参检查共用 collectNavCalls 的统一提取结果。
  * 返回 `文件#函数名` 违规清单。抽为纯函数以便变异用例验证其有效性。
  */
 function findNavigationOffenders(files: LoginSource[]): string[] {
   const offenders: string[] = []
   files.forEach((f) => {
     extractNamedFunctionBodies(f.code).forEach((fn) => {
-      if (!SET_TOKEN_RE.test(fn.body) || !NAVIGATE_RE.test(fn.body)) {
+      const navCalls = collectNavCalls(fn.body)
+      if (!SET_TOKEN_RE.test(fn.body) || navCalls.length === 0) {
         return
       }
       const label = `${f.rel}#${fn.name}`
@@ -359,8 +510,9 @@ function findNavigationOffenders(files: LoginSource[]): string[] {
         offenders.push(label)
         return
       }
-      const names = collectResolutionNames(fn.body)
-      if (findUncoveredNavArgs(fn.body, names).length > 0) {
+      // r4-P3：被覆盖赋值/遮蔽的绑定不再可信（从有效引用名中剔除）
+      const names = collectResolutionNames(fn.body).filter((n) => !isNameTainted(fn.body, n))
+      if (findUncoveredNavArgs(navCalls, fn.body, names).length > 0) {
         offenders.push(label)
       }
     })
@@ -381,7 +533,7 @@ describe('登录落地解析契约（函数级 + 变异，codex r2-P3）', () =>
     const units: string[] = []
     LOGIN_FILES.forEach((f) => {
       extractNamedFunctionBodies(f.code).forEach((fn) => {
-        if (SET_TOKEN_RE.test(fn.body) && NAVIGATE_RE.test(fn.body)) {
+        if (SET_TOKEN_RE.test(fn.body) && collectNavCalls(fn.body).length > 0) {
           units.push(`${f.rel}#${fn.name}`)
         }
       })
@@ -449,6 +601,87 @@ describe('登录落地解析契约（函数级 + 变异，codex r2-P3）', () =>
       )
     }
     expect(findNavigationOffenders([mutated])).toEqual(['Login/SocialLogin.vue#handleLogin'])
+  })
+
+  it('变异 5（r4-P3）：解析结果属性被覆盖赋值（tryPostAuth.target = redirect）→ 实参级必须点名 tryLogin', () => {
+    const social = LOGIN_FILES.find((f) => f.rel === 'Login/SocialLogin.vue')
+    expect(social, 'SocialLogin.vue 未被扫描到').toBeTruthy()
+    const mutated: LoginSource = {
+      rel: 'Login/SocialLogin.vue',
+      code: (social?.code ?? '').replace(
+        'router.push({ path: tryPostAuth.target })',
+        'tryPostAuth.target = redirect\n      router.push({ path: tryPostAuth.target })'
+      )
+    }
+    // 解析调用与名字读取均在场的「名字在场式」变异：仅名字出现不能证明消费未被覆盖的解析结果
+    expect(findNavigationOffenders([mutated])).toEqual(['Login/SocialLogin.vue#tryLogin'])
+  })
+
+  it('变异 6（r4-P3）：绑定被整体重赋值（postAuth = { target: redirect }）→ 必须点名', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const postAuth = resolvePostAuthRedirect(redirect, base)',
+      '  postAuth = { target: redirect, fullPageUrl: null }',
+      '  push({ path: postAuth.target })',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/Rebind.vue', code }])).toEqual([
+      'components/Rebind.vue#handleLogin'
+    ])
+  })
+
+  it('变异 7（r4-P3）：同名回调参数遮蔽绑定 → 实参不再视为消费解析结果', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const postAuth = resolvePostAuthRedirect(redirect, base)',
+      '  items.forEach((postAuth) => {',
+      '    push({ path: postAuth })',
+      '  })',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/Shadow.vue', code }])).toEqual([
+      'components/Shadow.vue#handleLogin'
+    ])
+  })
+
+  it('变异 8（r4-P3）：裸 replace(...) 与 router.push 同权（入口过滤统一）→ 必须点名', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const postAuth = resolvePostAuthRedirect(redirect, base)',
+      '  replace(redirect)',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/BareReplace.vue', code }])).toEqual([
+      'components/BareReplace.vue#handleLogin'
+    ])
+  })
+
+  it('变异 9（r4-P3）：字符串字面量中的伪 push(...) 不误报（合规实参仍通过）', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const postAuth = resolvePostAuthRedirect(redirect, base)',
+      '  router.push({ path: postAuth.target, query: { note: "push(raw)" } })',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/QuotedPush.vue', code }])).toEqual([])
+  })
+
+  it('变异 10（r4-P3）：模板串嵌套插值不截断函数体，后续裸导航仍检出', () => {
+    const code = [
+      'const handleLogin = async () => {',
+      '  setToken(res)',
+      '  const postAuth = resolvePostAuthRedirect(redirect, base)',
+      '  const note = `outer${`}`}`',
+      '  window.location.assign(redirect)',
+      '}'
+    ].join('\n')
+    expect(findNavigationOffenders([{ rel: 'components/NestedTpl.vue', code }])).toEqual([
+      'components/NestedTpl.vue#handleLogin'
+    ])
   })
 
   it('变体覆盖：解构 / 直用（含 await）三种消费形态均判为合规', () => {
