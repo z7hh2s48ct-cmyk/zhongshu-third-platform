@@ -76,6 +76,18 @@ export const useDictStore = defineStore('dict', {
       }
       return this.dictMap[type]
     },
+    /**
+     * ZS-CLIENT-001.A：授权会话清理专用 —— 同步清空字典快照与 sessionStorage 缓存。
+     *
+     * 字典是租户级业务数据，属于卡片「调整」中退出 / 撤权 / 技术租户变化时必须清理的
+     * 「缓存和数据」。不能用 resetDict()：它是 async 且会立即重新拉取，
+     * 在清理合同里等于「清了又装回旧租户数据」。
+     */
+    clearDictState() {
+      wsCache.delete(CACHE_KEY.DICT_CACHE)
+      this.dictMap = new Map<string, any>()
+      this.isSetDict = false
+    },
     async resetDict() {
       wsCache.delete(CACHE_KEY.DICT_CACHE)
       const res = await getSimpleDictDataList()

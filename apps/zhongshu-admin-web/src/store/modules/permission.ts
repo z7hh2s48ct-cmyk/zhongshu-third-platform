@@ -3,9 +3,6 @@ import { store } from '@/store'
 import { cloneDeep } from 'lodash-es'
 import remainingRouter from '@/router/modules/remaining'
 import { flatMultiLevelRoutes, generateRoute } from '@/utils/routerHelper'
-import { CACHE_KEY, useCache } from '@/hooks/web/useCache'
-
-const { wsCache } = useCache()
 
 export interface PermissionState {
   routers: AppRouteRecordRaw[]
@@ -36,14 +33,21 @@ export const usePermissionStore = defineStore('permission', {
     }
   },
   actions: {
-    async generateRoutes(): Promise<unknown> {
-      return new Promise<void>(async (resolve) => {
-        // 获得菜单列表，它在登录的时候，setUserInfoAction 方法中已经进行获取
-        let res: AppCustomRouteRecordRaw[] = []
-        const roleRouters = wsCache.get(CACHE_KEY.ROLE_ROUTERS)
-        if (roleRouters) {
-          res = roleRouters as AppCustomRouteRecordRaw[]
-        }
+    /**
+     * 生成动态路由。
+     *
+     * ZS-CLIENT-001.A 关键收敛：菜单**只接受调用方传入的内存值**（服务端本次响应），
+     * 不再从 `CACHE_KEY.ROLE_ROUTERS` 本地缓存回读。原实现以缓存为来源，使
+     * 「失效缓存 / 伪造前端角色」可以凭空生成路由（卡片「验收②」），且撤权后
+     * 旧菜单仍会被重新装配（卡片「验收③」）。
+     *
+     * @param menus 服务端下发的菜单树（`userStore.getMenus`）。
+     *              缺省 / 非数组一律按空处理 —— 宁可生成空路由表（只剩 404 兜底），
+     *              也绝不回退本地缓存。
+     */
+    async generateRoutes(menus?: AppCustomRouteRecordRaw[] | null): Promise<unknown> {
+      return new Promise<void>((resolve) => {
+        const res: AppCustomRouteRecordRaw[] = Array.isArray(menus) ? menus : []
         const routerMap: AppRouteRecordRaw[] = generateRoute(res)
         // 动态路由，404一定要放到最后面
         // preschooler：vue-router@4以后已支持静态404路由，此处可不再追加

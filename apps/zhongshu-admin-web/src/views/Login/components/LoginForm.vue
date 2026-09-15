@@ -130,7 +130,7 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { useIcon } from '@/hooks/web/useIcon'
 
 import * as authUtil from '@/utils/auth'
-import { usePermissionStore } from '@/store/modules/permission'
+import { HOME_ROUTE, resolvePostAuthRedirect, sanitizeLoginRedirect } from '@/router/access'
 import * as LoginApi from '@/api/login'
 import { LoginStateEnum, useFormValid, useLoginState } from './useLogin'
 
@@ -145,7 +145,6 @@ const formLogin = ref()
 const { validForm } = useFormValid(formLogin)
 const { setLoginState, getLoginState } = useLoginState()
 const { currentRoute, push } = useRouter()
-const permissionStore = usePermissionStore()
 const redirect = ref<string>('')
 const loginLoading = ref(false)
 const verify = ref()
@@ -247,14 +246,16 @@ const handleLogin = async (params: any) => {
       authUtil.removeLoginForm()
     }
     authUtil.setToken(res)
-    if (!redirect.value) {
-      redirect.value = '/'
-    }
-    // 判断是否为SSO登录
-    if (redirect.value.indexOf('sso') !== -1) {
-      window.location.href = window.location.href.replace('/login?redirect=', '')
+    // ZS-CLIENT-001.A：登录成功后的落地目的地必须校验（卡片「调整」：校验登录重定向目的地）。
+    // resolvePostAuthRedirect 只放行站内路径，跨站 / 协议相对 / 反斜杠 / 目录穿越一律回退首页；
+    // SSO 回调改为精确判定 + 带部署 base 的整页跳转，不再对地址栏做字符串裁剪；
+    // 同时清除 `permissionStore.addRouters[0].path` 兜底——登录成功时动态路由尚未装配，
+    // 该表达式一旦生效就是 TypeError。
+    const postAuth = resolvePostAuthRedirect(redirect.value, import.meta.env.VITE_BASE_PATH)
+    if (postAuth.fullPageUrl) {
+      window.location.assign(postAuth.fullPageUrl)
     } else {
-      await push({ path: redirect.value || permissionStore.addRouters[0].path })
+      await push({ path: postAuth.target })
     }
   } finally {
     loginLoading.value = false
@@ -300,7 +301,9 @@ const doSocialLogin = async (type: number) => {
 watch(
   () => currentRoute.value,
   (route: RouteLocationNormalizedLoaded) => {
-    redirect.value = route?.query?.redirect as string
+    // ZS-CLIENT-001.A：redirect 来自 URL，属不可信输入；在此即时消毒，
+    // 保证 doSocialLogin 拼进 redirectUri 的值同样只可能是站内路径（防开放重定向）。
+    redirect.value = sanitizeLoginRedirect(route?.query?.redirect, HOME_ROUTE)
   },
   {
     immediate: true

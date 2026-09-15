@@ -158,7 +158,7 @@ import { ElLoading } from 'element-plus'
 import { useDesign } from '@/hooks/web/useDesign'
 import { useAppStore } from '@/store/modules/app'
 import { useIcon } from '@/hooks/web/useIcon'
-import { usePermissionStore } from '@/store/modules/permission'
+import { resolvePostAuthRedirect } from '@/router/access'
 
 import * as LoginApi from '@/api/login'
 import * as authUtil from '@/utils/auth'
@@ -183,7 +183,6 @@ const formLogin = ref<any>()
 const { validForm } = useFormValid(formLogin)
 const { getLoginState } = useLoginState()
 const { push } = useRouter()
-const permissionStore = usePermissionStore()
 const loginLoading = ref(false)
 const verify = ref()
 const captchaType = ref('blockPuzzle') // blockPuzzle 滑块 clickWord 点击文字 pictureWord 文字验证码
@@ -258,7 +257,13 @@ const tryLogin = async () => {
     const res = await LoginApi.socialLogin(type, code, state)
     authUtil.setToken(res)
 
-    router.push({ path: redirect || '/' })
+    // ZS-CLIENT-001.A：redirect 取自回调 URL，属不可信输入，必须校验后再落地（防开放重定向）
+    const tryPostAuth = resolvePostAuthRedirect(redirect, import.meta.env.VITE_BASE_PATH)
+    if (tryPostAuth.fullPageUrl) {
+      window.location.assign(tryPostAuth.fullPageUrl)
+    } else {
+      router.push({ path: tryPostAuth.target })
+    }
   } catch (err) {}
 }
 
@@ -272,7 +277,7 @@ const handleLogin = async (params) => {
       return
     }
 
-    let redirect = getUrlValue('redirect')
+    const redirect = getUrlValue('redirect')
 
     const type = getUrlValue('type')
     const code = route?.query?.code as string
@@ -303,14 +308,15 @@ const handleLogin = async (params) => {
       authUtil.removeLoginForm()
     }
     authUtil.setToken(res)
-    if (!redirect) {
-      redirect = '/'
-    }
-    // 判断是否为SSO登录
-    if (redirect.indexOf('sso') !== -1) {
-      window.location.href = window.location.href.replace('/login?redirect=', '')
+    // ZS-CLIENT-001.A：社交登录成功后的落地目的地必须校验（卡片「调整」：校验登录重定向目的地）。
+    // 与 LoginForm.vue / RegisterForm.vue 共用 resolvePostAuthRedirect：只放行站内路径，
+    // SSO 回调精确判定并带上部署 base，不再对地址栏做字符串裁剪；
+    // 同时清除 `permissionStore.addRouters[0].path` 兜底（登录时动态路由尚未装配，一旦生效即 TypeError）。
+    const postAuth = resolvePostAuthRedirect(redirect, import.meta.env.VITE_BASE_PATH)
+    if (postAuth.fullPageUrl) {
+      window.location.assign(postAuth.fullPageUrl)
     } else {
-      push({ path: redirect || permissionStore.addRouters[0].path })
+      push({ path: postAuth.target })
     }
   } finally {
     loginLoading.value = false

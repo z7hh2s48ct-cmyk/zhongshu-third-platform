@@ -3,8 +3,8 @@ import { ElMessageBox } from 'element-plus'
 
 import avatarImg from '@/assets/imgs/avatar.gif'
 import { useDesign } from '@/hooks/web/useDesign'
-import { useTagsViewStore } from '@/store/modules/tagsView'
 import { useUserStore } from '@/store/modules/user'
+import { clearAuthorizedSession } from '@/utils/authSession'
 import LockDialog from './components/LockDialog.vue'
 import LockPage from './components/LockPage.vue'
 import { useLockStore } from '@/store/modules/lock'
@@ -16,8 +16,6 @@ const { t } = useI18n()
 const { push, replace } = useRouter()
 
 const userStore = useUserStore()
-
-const tagsViewStore = useTagsViewStore()
 
 const { getPrefixCls } = useDesign()
 
@@ -42,7 +40,9 @@ const loginOut = async () => {
       type: 'warning'
     })
     await userStore.loginOut()
-    tagsViewStore.delAllViews()
+    // ZS-CLIENT-001.A：登出必须走统一清理合同。原 `tagsViewStore.delAllViews()` 会保留 affix 页签、
+    // 且 `cachedViews` 从不真正清空，keep-alive 中的旧主体敏感数据仍存活（卡片「验收③」）。
+    clearAuthorizedSession('logout')
     replace('/login?redirect=/index')
   } catch {}
 }
