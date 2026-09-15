@@ -13,3 +13,4 @@ DELETE FROM "infra_config_history";
 DELETE FROM "outbox_event";
 DELETE FROM "dispatcher_lease";
 DELETE FROM "infra_file_delivery_ticket";
+DELETE FROM "inbox_event";

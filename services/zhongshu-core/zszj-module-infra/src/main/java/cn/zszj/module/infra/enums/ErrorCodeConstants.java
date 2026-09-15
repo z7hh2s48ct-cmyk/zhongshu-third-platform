@@ -104,6 +104,11 @@ public interface ErrorCodeConstants {
     ErrorCode OUTBOX_EVENT_PAYLOAD_SERIALIZE_FAILED = new ErrorCode(1_001_009_003, "Outbox 事件载荷序列化失败");
     ErrorCode OUTBOX_EVENT_WRITE_FAILED = new ErrorCode(1_001_009_004, "Outbox 事件写入失败");
 
+    // ========== 任务事件 Inbox 1-001-010-000（ZS-JOB-003） ==========
+    ErrorCode INBOX_COMMAND_FIELD_MISSING = new ErrorCode(1_001_010_000, "Inbox 消费命令必填字段({})缺失");
+    ErrorCode INBOX_TRANSACTION_REQUIRED = new ErrorCode(1_001_010_001, "Inbox 幂等记录必须在业务事务内登记，禁止无事务写入");
+    ErrorCode INBOX_TENANT_CONTEXT_REQUIRED = new ErrorCode(1_001_010_002, "Inbox 登记缺少技术租户上下文，拒绝默认归属");
+
     // ========== 学生 1-001-201-000 ==========
     ErrorCode DEMO01_CONTACT_NOT_EXISTS = new ErrorCode(1_001_201_000, "示例联系人不存在");
     ErrorCode DEMO02_CATEGORY_NOT_EXISTS = new ErrorCode(1_001_201_001, "示例分类不存在");
