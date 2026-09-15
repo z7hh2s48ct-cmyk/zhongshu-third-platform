@@ -234,7 +234,7 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
         transactionTemplate.executeWithoutResult(status -> {
             InboxTryBegin retry = inboxPort.tryBegin(command().build());
             assertEquals(InboxTryBegin.Outcome.RETRIED_CLAIMED, retry.getOutcome());
-            assertEquals(1, retry.getRecord().getRetryCount(), "重领应推进重试计数");
+            assertEquals(1, retry.getRecord().getRetryCount(), "重领后计数保持 fail 记录的失败次数（重领不重复递增）");
         });
         assertEquals("PROCESSING", loadRow(inboxId).get("status"));
     }

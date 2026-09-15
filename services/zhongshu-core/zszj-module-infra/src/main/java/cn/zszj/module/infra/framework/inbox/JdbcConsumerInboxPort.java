@@ -188,6 +188,7 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
                     return new InboxTryBegin(InboxTryBegin.Outcome.RETRIED_CLAIMED,
                             withStatusAndRetry(existing, "PROCESSING", existing.getRetryCount()));
                 }
+                // 竞争落败：同键重试通常同版本，落败者抬升为同值无实质影响（codex r2 登记）；按实际状态有界复判
                 if (depth < 1) {
                     return handleExisting(command, tenantId,
                             findByKey(tenantId, command.getConsumer(), command.getEventKey()), depth + 1);
@@ -198,17 +199,22 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         }
     }
 
-    /** 新登记：先过版本护栏（对象级 FOR UPDATE 串行化），插入撞唯一键则保存点回滚后按并发复判。 */
+    /**
+     * 新登记（codex r2 顺序修正）：同一保存点内「先占处理键、后过版本护栏」——护栏拒绝/并发撞键一律
+     * 回滚保存点，<b>占位行与水位抬升一并撤销</b>（被拒请求不得抬高水位，否则合法后续版本被误拒）；
+     * 撞键后复判走完整判定入口（指纹检查优先——同键不同指纹并发首抢同样 PARAM_CONFLICT）。
+     */
     private InboxTryBegin claimNew(InboxCommand command, Long tenantId) {
-        if (staleVersion(command, tenantId)) {
-            return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, null);
-        }
         Savepoint savepoint = createClaimSavepoint();
         try {
-            return insertClaimed(command, tenantId);
+            InboxTryBegin claimed = insertClaimed(command, tenantId);
+            if (staleVersion(command, tenantId)) {
+                rollbackClaimSavepoint(savepoint);
+                return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, null);
+            }
+            return claimed;
         } catch (DuplicateKeyException e) {
-            // 并发首抢撞 uk_inbox_event_key：PG 事务已因 23505 中止，须回滚到插入前保存点才能继续复判查询；
-            // 复判走完整判定入口（指纹检查优先——同键不同指纹并发首抢同样 PARAM_CONFLICT，codex r1 P1）
+            // 并发首抢撞 uk_inbox_event_key：PG 事务已因 23505 中止，须回滚到插入前保存点才能继续复判查询
             rollbackClaimSavepoint(savepoint);
             InboxRecord concurrent = findByKey(tenantId, command.getConsumer(), command.getEventKey());
             if (concurrent == null) {
