@@ -39,6 +39,13 @@ public interface ConsumerInboxPort {
     boolean fail(long inboxId, Throwable error);
 
     /**
+     * 回查确认出口（codex r0 P1：RESULT_UNKNOWN 唯一合法出口）——外部结果经回查核实后推进：
+     * executed=true → COMPLETED（result 为回查核实到的业务结果）；executed=false → FAILED（可重试）。
+     * evidence 为回查依据（受控限长），仅 RESULT_UNKNOWN 可推进，返回 false 表示状态已被并发改变。
+     */
+    boolean resolveAfterVerification(long inboxId, boolean executed, String resultJson, String evidence);
+
+    /**
      * 结果未知（外部调用后不确定）：标记 RESULT_UNKNOWN 可查中间态——必须先回查再决定处理，不得盲目重试；
      * 仅 PROCESSING 可推进，返回 false 表示状态已被并发改变。
      */

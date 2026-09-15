@@ -20,9 +20,9 @@ import javax.sql.DataSource;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.Timestamp;
 import java.sql.Types;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,18 +39,27 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.INBOX_TRANSACTION_RE
  * payment_notification_inbox：唯一键抢占 + DuplicateKey 即重复 + 状态推进 + 补偿扫描），落地众墅要求：
  * <ul>
  *   <li><b>处理键唯一约束 DB 硬兜底</b>：(tenant_id, consumer, event_key)——同事件并发、ACK 丢失、重启重放
- *       只产生一次业务副作用；不同租户同业务号互不冲突（键含租户，去除一切默认租户归属）；</li>
- *   <li><b>幂等记录与业务副作用同事务（MANDATORY）</b>：抢位/推进必须加入调用方真实事务，业务回滚则抢位
- *       一并回滚（无代开、无半态残留）；DataSource/TM 构造期同源配对强制（循 ZS-JOB-002 OutboxTransactions
- *       r2 产物同款缺陷预防，包内独立成 {@link InboxTransactions} 保持两机制独立可评审）；</li>
- *   <li><b>参数冲突不当相同成功</b>：同键不同 payload_hash → PARAM_CONFLICT（供体 body_hash 语义推广）；</li>
- *   <li><b>版本乱序护栏</b>：checkVersionStale 时与同对象（consumer+bizType+bizId）已完成记录比较——
- *       旧版本 STALE_VERSION 拒绝；版本为可解析整数才比较（非数值语义由事件类型解释，D-07 登记）；</li>
- *   <li><b>可回查中间态</b>：RESULT_UNKNOWN 状态 + 查询端口（find/listByStatus）；重入结果未知记录返回
- *       DUPLICATE_RESULT_UNKNOWN，须先回查不得盲目重处理；FAILED 重入即重领（retry_count+1）可重试；</li>
- *   <li><b>失败留痕不落原文</b>：fail 只存受控描述（异常类别/长度，循 ZS-JOB-002 last_error 惯例——
- *       自由文本无可靠值级脱敏）；fail-closed：守卫失败毒化本数据源 {@link ConnectionHolder}
- *       （@Transactional 与编程式事务同样生效），调用方吞异常也无法「无幂等记录而提交」。</li>
+ *       只产生一次业务副作用；不同租户同业务号互不冲突（键含租户，去除一切默认租户归属）；并发首抢撞键经
+ *       <b>SAVEPOINT 回滚后复判</b>（codex r0 P1：PG 撞 23505 后事务即中止，不回滚到保存点则后续复判查询
+ *       报 25P02）；</li>
+ *   <li><b>幂等记录与业务副作用同事务（MANDATORY）</b>：抢位/推进/确认必须加入调用方真实事务，业务回滚则
+ *       抢位一并回滚；DataSource/TM 构造期同源配对强制（循 ZS-JOB-002 r2 产物同款缺陷预防，包内独立成
+ *       {@link InboxTransactions} 保持两机制独立可评审）；</li>
+ *   <li><b>租户全量强制</b>（codex r0 P1）：抢位/推进/确认/回查统一按当前租户过滤（缺失即拒绝），
+ *       跨租户运维另设显式接口（登记待办）；</li>
+ *   <li><b>参数冲突不当相同成功</b>：同键不同 payload_hash → PARAM_CONFLICT（供体 body_hash 语义推广）；
+ *       分类顺序：既有记录先按状态复判（COMPLETED 可重放 / UNKNOWN 须回查 / IN_FLIGHT 并发），
+ *       版本护栏仅作用于将执行副作用的首抢/重领路径（codex r0 P2：STALE 不得吞掉可重放结果与回查合同）；</li>
+ *   <li><b>版本乱序护栏（对象级串行化）</b>：checkVersionStale 时对同对象最新已完成记录
+ *       {@code FOR UPDATE} 行锁——新旧版本事件在此行上串行，后到者持锁后读到已提交的最新版本，
+ *       旧版本 STALE_VERSION 拒绝（codex r0 P1：无锁快照可被并发反超，旧版本后提交覆盖新状态；
+ *       同时只锁/读单行，不随历史增长放大，codex r0 P2）；可解析整数才比较（非数值语义由事件类型
+ *       解释，D-07 登记）；</li>
+ *   <li><b>可回查中间态且有确认出口</b>：RESULT_UNKNOWN 经 {@link #resolveAfterVerification}
+ *       按回查依据推进（codex r0 P1：无出口则永久悬挂）；FAILED 重入即重领（retry_count 语义=
+ *       已记录失败次数，由 fail 递增、重领不重复递增）；失败留痕不落原文（循 ZS-JOB-002 惯例）；
+ *       fail-closed：守卫失败毒化本数据源 {@link ConnectionHolder}（@Transactional 与编程式事务同样生效），
+ *       调用方吞异常也无法「无幂等记录而提交」。</li>
  * </ul>
  */
 @Repository
@@ -60,14 +69,16 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
     /** 受控 reason/描述限长（防撑爆存储，循 JOB-002 last_error 惯例）。 */
     private static final int MAX_ERROR_LENGTH = 512;
 
-    private static final String SELECT_BY_KEY_SQL = "SELECT id, consumer, event_key, payload_hash, status, result, "
-            + "retry_count, biz_type, biz_id, biz_version, last_error, tenant_id, trace_id FROM inbox_event "
+    private static final String RECORD_COLUMNS = "id, consumer, event_key, payload_hash, status, result, "
+            + "retry_count, biz_type, biz_id, biz_version, last_error, tenant_id, trace_id";
+
+    private static final String SELECT_BY_KEY_SQL = "SELECT " + RECORD_COLUMNS + " FROM inbox_event "
             + "WHERE tenant_id = ? AND consumer = ? AND event_key = ?";
 
-    /** 同对象已完成版本清单（版本乱序护栏；数量有限——同一消费者对同一对象的已完成事件数，Java 侧解析比较）。 */
-    private static final String SELECT_COMPLETED_VERSIONS_SQL = "SELECT biz_version FROM inbox_event "
-            + "WHERE tenant_id = ? AND consumer = ? AND biz_type = ? AND biz_id = ? "
-            + "AND status = 'COMPLETED' AND biz_version IS NOT NULL";
+    /** 同对象最新已完成记录（版本乱序护栏的串行化点）：FOR UPDATE 行锁使新旧版本事件互斥到提交。 */
+    private static final String SELECT_LATEST_COMPLETED_FOR_UPDATE_SQL = "SELECT " + RECORD_COLUMNS
+            + " FROM inbox_event WHERE tenant_id = ? AND consumer = ? AND biz_type = ? AND biz_id = ? "
+            + "AND status = 'COMPLETED' AND biz_version IS NOT NULL ORDER BY id DESC LIMIT 1 FOR UPDATE";
 
     private static final String INSERT_SQL = "INSERT INTO inbox_event "
             + "(consumer, event_key, payload_hash, status, biz_type, biz_id, biz_version, tenant_id, trace_id) "
@@ -75,21 +86,30 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
 
     private static final String RECLAIM_FAILED_SQL = "UPDATE inbox_event "
             + "SET status = 'PROCESSING', last_error = NULL "
-            + "WHERE id = ? AND status = 'FAILED'";
+            + "WHERE id = ? AND tenant_id = ? AND status = 'FAILED'";
 
     private static final String COMPLETE_SQL = "UPDATE inbox_event "
-            + "SET status = 'COMPLETED', result = ?, complete_time = ? WHERE id = ? AND status = 'PROCESSING'";
+            + "SET status = 'COMPLETED', result = ?, complete_time = ? "
+            + "WHERE id = ? AND tenant_id = ? AND status = 'PROCESSING'";
 
     private static final String FAIL_SQL = "UPDATE inbox_event "
             + "SET status = 'FAILED', last_error = ?, retry_count = retry_count + 1 "
-            + "WHERE id = ? AND status = 'PROCESSING'";
+            + "WHERE id = ? AND tenant_id = ? AND status = 'PROCESSING'";
 
     private static final String UNKNOWN_SQL = "UPDATE inbox_event "
-            + "SET status = 'RESULT_UNKNOWN', last_error = ? WHERE id = ? AND status = 'PROCESSING'";
+            + "SET status = 'RESULT_UNKNOWN', last_error = ? "
+            + "WHERE id = ? AND tenant_id = ? AND status = 'PROCESSING'";
 
-    private static final String LIST_BY_STATUS_SQL = "SELECT id, consumer, event_key, payload_hash, status, result, "
-            + "retry_count, biz_type, biz_id, biz_version, last_error, tenant_id, trace_id FROM inbox_event "
-            + "WHERE consumer = ? AND status = ? ORDER BY id LIMIT ?";
+    private static final String RESOLVE_COMPLETED_SQL = "UPDATE inbox_event "
+            + "SET status = 'COMPLETED', result = ?, last_error = ?, complete_time = ? "
+            + "WHERE id = ? AND tenant_id = ? AND status = 'RESULT_UNKNOWN'";
+
+    private static final String RESOLVE_FAILED_SQL = "UPDATE inbox_event "
+            + "SET status = 'FAILED', last_error = ?, retry_count = retry_count + 1 "
+            + "WHERE id = ? AND tenant_id = ? AND status = 'RESULT_UNKNOWN'";
+
+    private static final String LIST_BY_STATUS_SQL = "SELECT " + RECORD_COLUMNS + " FROM inbox_event "
+            + "WHERE tenant_id = ? AND consumer = ? AND status = ? ORDER BY id LIMIT ?";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -125,30 +145,18 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         }
     }
 
-    /** 抢位核心：先查既有（含跨键对象版本护栏），再插入/重领；并发首抢撞唯一键时按并发抢占复判。 */
+    /**
+     * 抢位核心：既有记录先按状态复判（可重放/回查/并发），版本护栏仅作用于将执行副作用的首抢/重领；
+     * 并发首抢撞唯一键经 SAVEPOINT 回滚后复判（PG 撞 23505 后事务中止，不回滚保存点则后续查询 25P02）。
+     */
     private InboxTryBegin doTryBegin(InboxCommand command, Long tenantId) {
         InboxRecord existing = findByKey(tenantId, command.getConsumer(), command.getEventKey());
         if (existing == null) {
-            if (staleVersion(command, tenantId)) {
-                return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, null);
-            }
-            try {
-                return insertClaimed(command, tenantId);
-            } catch (DuplicateKeyException e) {
-                // 并发首抢撞 uk_inbox_event_key：复判为并发抢占现场（DB 硬兜底）
-                InboxRecord concurrent = findByKey(tenantId, command.getConsumer(), command.getEventKey());
-                if (concurrent == null) {
-                    throw e;
-                }
-                existing = concurrent;
-            }
+            return claimNew(command, tenantId);
         }
         if (!StringUtils.hasText(existing.getPayloadHash())
                 || !existing.getPayloadHash().equals(command.getPayloadHash())) {
             return new InboxTryBegin(InboxTryBegin.Outcome.PARAM_CONFLICT, existing);
-        }
-        if (staleVersion(command, tenantId)) {
-            return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, existing);
         }
         switch (existing.getStatus()) {
             case "PROCESSING":
@@ -158,22 +166,76 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             case "RESULT_UNKNOWN":
                 return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_RESULT_UNKNOWN, existing);
             case "FAILED":
-                // 失败重入即重领（retry_count 已由 fail 推进为「已尝试次数」，重领不重复递增；
-                // 条件更新防并发抢领竞争：已被他线程领走则按并发抢占复判）
-                int reclaimed = jdbcTemplate.update(RECLAIM_FAILED_SQL, existing.getInboxId());
+                // 失败重入即重领（将重新执行副作用，先过版本护栏）；retry_count 已由 fail 递增（已记录失败
+                // 次数），重领不重复递增；条件更新防并发抢领竞争，竞争后按实际状态复判（codex r0 P2）
+                if (staleVersion(command, tenantId)) {
+                    return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, existing);
+                }
+                int reclaimed = jdbcTemplate.update(RECLAIM_FAILED_SQL, existing.getInboxId(), tenantId);
                 if (reclaimed == 1) {
                     return new InboxTryBegin(InboxTryBegin.Outcome.RETRIED_CLAIMED,
                             withStatusAndRetry(existing, "PROCESSING", existing.getRetryCount()));
                 }
-                // 领取竞争失败：此刻记录必然已回 PROCESSING（他线程持有），按并发抢占复判
-                return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_IN_FLIGHT,
-                        findByKey(tenantId, command.getConsumer(), command.getEventKey()));
+                return classify(findByKey(tenantId, command.getConsumer(), command.getEventKey()));
             default:
                 throw new IllegalStateException("Inbox 未知状态: " + existing.getStatus());
         }
     }
 
-    /** 版本乱序护栏：同对象已完成记录中存在数值更大的版本即判旧版本（可解析整数才比较，D-07 登记语义边界）。 */
+    /** 新登记：先过版本护栏（对象级 FOR UPDATE 串行化），插入撞唯一键则保存点回滚后按并发复判。 */
+    private InboxTryBegin claimNew(InboxCommand command, Long tenantId) {
+        if (staleVersion(command, tenantId)) {
+            return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, null);
+        }
+        Savepoint savepoint = createClaimSavepoint();
+        try {
+            return insertClaimed(command, tenantId);
+        } catch (DuplicateKeyException e) {
+            // 并发首抢撞 uk_inbox_event_key：PG 事务已因 23505 中止，须回滚到插入前保存点才能继续复判查询
+            rollbackClaimSavepoint(savepoint);
+            InboxRecord concurrent = findByKey(tenantId, command.getConsumer(), command.getEventKey());
+            if (concurrent == null) {
+                throw e;
+            }
+            return classify(concurrent);
+        }
+    }
+
+    /** 既有记录按实际状态统一分类（FAILED 重领竞争后复判共用，codex r0 P2：不固定报并发抢占）。 */
+    private InboxTryBegin classify(InboxRecord record) {
+        if (record == null) {
+            throw new IllegalStateException("Inbox 并发复判时记录消失");
+        }
+        switch (record.getStatus()) {
+            case "PROCESSING":
+                return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_IN_FLIGHT, record);
+            case "COMPLETED":
+                return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_COMPLETED, record);
+            case "RESULT_UNKNOWN":
+                return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_RESULT_UNKNOWN, record);
+            default:
+                return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_IN_FLIGHT, record);
+        }
+    }
+
+    /** 抢位保存点（与 INSERT 同一事务连接——经 DataSourceUtils 绑定；撞键后回滚到它恢复事务可用性）。 */
+    private Savepoint createClaimSavepoint() {
+        return jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Savepoint>)
+                con -> con.setSavepoint());
+    }
+
+    private void rollbackClaimSavepoint(Savepoint savepoint) {
+        jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) con -> {
+            con.rollback(savepoint);
+            return null;
+        });
+    }
+
+    /**
+     * 版本乱序护栏：对同对象最新已完成记录 FOR UPDATE 行锁（对象级串行化——新旧版本事件在此行上互斥到
+     * 提交，后到者持锁后读到已提交最新版本，杜绝无锁快照的并发反超），仅与该单行比较（不随历史放大）。
+     * 版本为可解析整数才比较；非数值语义由事件类型解释（D-07 登记）。
+     */
     private boolean staleVersion(InboxCommand command, Long tenantId) {
         if (!command.isCheckVersionStale() || !StringUtils.hasText(command.getBizType())
                 || !StringUtils.hasText(command.getBizId())
@@ -184,12 +246,13 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         if (incoming == null) {
             return false;
         }
-        List<Long> completed = jdbcTemplate.queryForList(SELECT_COMPLETED_VERSIONS_SQL, String.class,
-                tenantId, command.getConsumer(), command.getBizType(), command.getBizId()).stream()
-                .map(JdbcConsumerInboxPort::parseVersion)
-                .filter(v -> v != null)
-                .toList();
-        return completed.stream().anyMatch(v -> v > incoming);
+        List<InboxRecord> latest = jdbcTemplate.query(SELECT_LATEST_COMPLETED_FOR_UPDATE_SQL, this::mapRow,
+                tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
+        if (latest.isEmpty()) {
+            return false;
+        }
+        Long committed = parseVersion(latest.get(0).getBizVersion());
+        return committed != null && committed > incoming;
     }
 
     private static Long parseVersion(String version) {
@@ -227,28 +290,37 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
 
     @Override
     public boolean complete(long inboxId, String resultJson) {
-        return inCallerTransaction(() ->
-                jdbcTemplate.update(COMPLETE_SQL, resultJson, new Timestamp(System.currentTimeMillis()), inboxId) == 1);
+        return inCallerTransaction(tenantId ->
+                jdbcTemplate.update(COMPLETE_SQL, resultJson, new Timestamp(System.currentTimeMillis()),
+                        inboxId, tenantId) == 1);
     }
 
     @Override
     public boolean fail(long inboxId, Throwable error) {
-        return inCallerTransaction(() ->
-                jdbcTemplate.update(FAIL_SQL, describeThrowable(error), inboxId) == 1);
+        return inCallerTransaction(tenantId ->
+                jdbcTemplate.update(FAIL_SQL, describeThrowable(error), inboxId, tenantId) == 1);
     }
 
     @Override
     public boolean markResultUnknown(long inboxId, String reason) {
-        String controlled = reason == null ? null
-                : reason.length() > MAX_ERROR_LENGTH ? reason.substring(0, MAX_ERROR_LENGTH) : reason;
-        return inCallerTransaction(() ->
-                jdbcTemplate.update(UNKNOWN_SQL, controlled, inboxId) == 1);
+        String controlled = cap(reason);
+        return inCallerTransaction(tenantId ->
+                jdbcTemplate.update(UNKNOWN_SQL, controlled, inboxId, tenantId) == 1);
     }
 
-    /** 推进操作同样必须处于调用方业务事务内（与抢位同合同，防终态在无事务下静默自提交）。 */
-    private boolean inCallerTransaction(java.util.function.Supplier<Boolean> action) {
+    @Override
+    public boolean resolveAfterVerification(long inboxId, boolean executed, String resultJson, String evidence) {
+        String controlledEvidence = cap(evidence);
+        return inCallerTransaction(tenantId -> executed
+                ? jdbcTemplate.update(RESOLVE_COMPLETED_SQL, resultJson, controlledEvidence,
+                        new Timestamp(System.currentTimeMillis()), inboxId, tenantId) == 1
+                : jdbcTemplate.update(RESOLVE_FAILED_SQL, controlledEvidence, inboxId, tenantId) == 1);
+    }
+
+    /** 推进/确认操作同样必须处于调用方业务事务内且按当前租户过滤（与抢位同合同）。 */
+    private boolean inCallerTransaction(java.util.function.Function<Long, Boolean> action) {
         try {
-            return callerTransactionTemplate.execute(status -> action.get());
+            return callerTransactionTemplate.execute(status -> action.apply(requireTenant()));
         } catch (IllegalTransactionStateException e) {
             return failClosed(exception(INBOX_TRANSACTION_REQUIRED));
         }
@@ -256,19 +328,20 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
 
     @Override
     public Optional<InboxRecord> find(String consumer, String eventKey) {
-        // 回查入口：有租户上下文按租户过滤，无则跨租户回查（运维/系统租户台账场景）
-        Long tenantId = TenantContextHolder.getTenantId();
-        List<InboxRecord> rows = tenantId != null
-                ? jdbcTemplate.query(SELECT_BY_KEY_SQL, this::mapRow, tenantId, consumer, eventKey)
-                : jdbcTemplate.query("SELECT id, consumer, event_key, payload_hash, status, result, retry_count, "
-                        + "biz_type, biz_id, biz_version, last_error, tenant_id, trace_id FROM inbox_event "
-                        + "WHERE consumer = ? AND event_key = ?", this::mapRow, consumer, eventKey);
+        Long tenantId = requireTenantForQuery();
+        List<InboxRecord> rows = jdbcTemplate.query(SELECT_BY_KEY_SQL, this::mapRow, tenantId, consumer, eventKey);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public List<InboxRecord> listByStatus(String consumer, String status, int limit) {
-        return new ArrayList<>(jdbcTemplate.query(LIST_BY_STATUS_SQL, this::mapRow, consumer, status, limit));
+        Long tenantId = requireTenantForQuery();
+        return List.copyOf(jdbcTemplate.query(LIST_BY_STATUS_SQL, this::mapRow, tenantId, consumer, status, limit));
+    }
+
+    /** 回查同样强制租户上下文（codex r0 P1：跨租户运维另设显式接口，登记待办）。 */
+    private Long requireTenantForQuery() {
+        return requireTenant();
     }
 
     private InboxRecord findByKey(Long tenantId, String consumer, String eventKey) {
@@ -323,6 +396,13 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             throw exception(INBOX_TENANT_CONTEXT_REQUIRED);
         }
         return tenantId;
+    }
+
+    private static String cap(String text) {
+        if (text == null) {
+            return null;
+        }
+        return text.length() > MAX_ERROR_LENGTH ? text.substring(0, MAX_ERROR_LENGTH) : text;
     }
 
     /** 失败留痕受控描述（循 ZS-JOB-002 describeThrowable 惯例：不落异常原文）。 */

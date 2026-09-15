@@ -325,4 +325,66 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
         assertThrows(IllegalArgumentException.class, () -> new JdbcConsumerInboxPort(dataSource, otherTxManager));
     }
 
+    /** 用例 14（codex r0 P1 确认出口）：RESULT_UNKNOWN 经 resolveAfterVerification 按回查依据推进——
+     *  核实已执行 → COMPLETED（携核实结果）；核实未执行 → FAILED（可重试）。 */
+    @Test
+    public void testResolveAfterVerification_exitsUnknownState() {
+        long unknownId = transactionTemplate.execute(status -> {
+            InboxTryBegin first = inboxPort.tryBegin(command().eventKey("evt-unknown").build());
+            assertTrue(inboxPort.markResultUnknown(first.getRecord().getInboxId(), "外部渠道超时"));
+            return first.getRecord().getInboxId();
+        });
+
+        // 回查核实：确已执行 → COMPLETED
+        Boolean verifiedExecuted = transactionTemplate.execute(status -> {
+            return inboxPort.resolveAfterVerification(unknownId, true, "{\"verified\":true}", "渠道对账单 #77");
+        });
+        assertTrue(verifiedExecuted);
+        assertEquals("COMPLETED", loadRow(unknownId).get("status"));
+        assertEquals("{\"verified\":true}", loadRow(unknownId).get("result"));
+
+        // 第二条：核实未执行 → FAILED 可重试（重入即 RETRIED_CLAIMED）
+        long unknown2 = transactionTemplate.execute(status -> {
+            InboxTryBegin second = inboxPort.tryBegin(command().eventKey("evt-unknown-2").build());
+            assertTrue(inboxPort.markResultUnknown(second.getRecord().getInboxId(), "响应丢失"));
+            return second.getRecord().getInboxId();
+        });
+        Boolean verifiedNotExecuted = transactionTemplate.execute(status -> {
+            return inboxPort.resolveAfterVerification(unknown2, false, null, "渠道侧无此事件");
+        });
+        assertTrue(verifiedNotExecuted);
+        assertEquals("FAILED", loadRow(unknown2).get("status"));
+        transactionTemplate.executeWithoutResult(status -> {
+            assertEquals(InboxTryBegin.Outcome.RETRIED_CLAIMED,
+                    inboxPort.tryBegin(command().eventKey("evt-unknown-2").build()).getOutcome());
+        });
+    }
+
+    /** 用例 15（codex r0 P1 租户全量强制）：跨租户推进/回查一律拒绝——他租户记录不可推进、不可见。 */
+    @Test
+    public void testCrossTenant_advanceAndQueryRejected() {
+        long inboxId = transactionTemplate.execute(status -> {
+            InboxTryBegin first = inboxPort.tryBegin(command().build());
+            return first.getRecord().getInboxId();
+        });
+
+        // 租户 2 上下文：不可推进租户 1 的记录，回查不可见
+        TenantContextHolder.setTenantId(2L);
+        transactionTemplate.executeWithoutResult(status -> {
+            assertFalse(inboxPort.complete(inboxId, "{\"hijack\":true}"), "跨租户不得推进");
+            assertFalse(inboxPort.fail(inboxId, new RuntimeException("x")));
+            assertFalse(inboxPort.markResultUnknown(inboxId, "x"));
+        });
+        assertTrue(inboxPort.find(CONSUMER, "evt-1").isEmpty(), "跨租户回查不可见");
+        assertEquals(0, inboxPort.listByStatus(CONSUMER, "PROCESSING", 10).size());
+
+        // 回到属主租户：一切正常
+        TenantContextHolder.setTenantId(1L);
+        Boolean ownerComplete = transactionTemplate.execute(status -> {
+            return inboxPort.complete(inboxId, "{\"ok\":true}");
+        });
+        assertTrue(ownerComplete);
+        assertTrue(inboxPort.find(CONSUMER, "evt-1").isPresent());
+    }
+
 }
