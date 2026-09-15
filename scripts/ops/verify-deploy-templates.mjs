@@ -104,34 +104,33 @@ function newlineWithin(text, from, limit) {
 }
 
 /**
- * CAST 调用左括号判定（r13 P2-1；r14 P2-1/P2-5 重写为 ctxMap 感知左向扫描）：自左括号
- * 左向按字符的 sqlContextMap 状态跳过空白与注释区间，读取完整标识符词并要求恰为 CAST。
- * 两种上下文分治：
- *   - 普通 SQL 上下文：行 / 块注释段作为分隔符整段跳过——取代原「上一行 indexOf('--')
- *     回溯」：字符串内的 `--`（如 ' -- '）不再被当作行注释（跨行回溯漏检修复），
- *     `CAST--comment\n(` 无空白夹注释也可识别；
- *   - 注释 / 美元引用片段内（r13 P2-3 注释内 CAST 判定）：注释文本本身是被解析
- *     对象——不跳区间、不越出片段边界；
- *   - 无全文搜索 / 回溯，每字符 O(1)（原 indexOf('--') 无行尾上限，长输入 O(n²) 修复）。
+ * CAST 调用左括号判定（r13 P2-1；r14 P2-1/P2-5 重写为 ctxMap 感知左向扫描；
+ * r15 P2-1/P2-2 改注释区间表驱动）：自左括号左向跳过空白与注释区间，读取完整
+ * 标识符词并要求恰为 CAST。注释区间取 buildParenDepthMap 的 commentLeft /
+ * commentRight 表——普通注释与片段内局部注释（美元体文本里的块注释与行注释）
+ * 同表同路径整段跳过：
+ *   - 原 ctxMap 注释标记整段跳过会被注释内配对引号的 CTX_SINGLE_QUOTE 闭引号
+ *     标记打断（r15 P2-1 漏检修复）；
+ *   - 片段模式原仅跳空白、不跳局部注释（r15 P2-2 漏检修复）。
+ * 片段内（注释 / 美元引用）不越出片段边界（r13 P2-3）；包含左括号自身的区间
+ * （包着左括号的注释 / 片段环境）不跳过；无全文搜索 / 回溯，每字符 O(1)（r14 P2-5）。
  * 词边界完整（xCAST( / 1CAST( 不误认定）。
  * @param {string} text
- * @param {Uint8Array} ctxMap sqlContextMap(text)（注释定界符两字符均标注释 ctx，区间连续）
+ * @param {Uint8Array} ctxMap sqlContextMap(text)
  * @param {number} openPos 左括号位置
+ * @param {Int32Array} commentLeft 注释区间起点表（-1=非注释区）
+ * @param {Int32Array} commentRight 注释区间终点表（不含；-1=非注释区）
  * @returns {boolean}
  */
-function isCastCallParen(text, ctxMap, openPos) {
+function isCastCallParen(text, ctxMap, openPos, commentLeft, commentRight) {
   const openCtx = ctxMap[openPos];
   const openInFrag = openCtx === CTX_LINE_COMMENT || openCtx === CTX_BLOCK_COMMENT || openCtx === CTX_DOLLAR_QUOTE;
   let k = openPos - 1;
   for (;;) {
     if (k < 0) return false;
-    const ctx = ctxMap[k];
-    if (openInFrag) {
-      if (ctx !== openCtx) break; // 越出片段边界：不在片段外继续找词
-    } else if (ctx === CTX_LINE_COMMENT || ctx === CTX_BLOCK_COMMENT) {
-      while (k >= 0 && ctxMap[k] === ctx) k -= 1; // 注释区间整段跳过
-      continue;
-    }
+    if (openInFrag && ctxMap[k] !== openCtx) break; // 越出片段边界：不在片段外继续找词
+    const l = commentLeft[k];
+    if (l >= 0 && commentRight[k] <= openPos) { k = l - 1; continue; } // 注释区间整段跳过（含左括号自身的区间不跳）
     if (/\s/.test(text[k])) { k -= 1; continue; }
     break;
   }
@@ -673,7 +672,7 @@ function scanSqlText(text) {
   const n = text.length;
   if (!n) return found;
   const ctxMap = sqlContextMap(text);
-  const { depthAt: parenDepth, openAt } = buildParenDepthMap(text, ctxMap); // r11 P2-10 深度缓存；r12 P2-6 括号层开括号索引
+  const { depthAt: parenDepth, openAt, commentLeft, commentRight } = buildParenDepthMap(text, ctxMap); // r11 P2-10 深度缓存；r12 P2-6 括号层开括号索引；r15 P2-1/P2-2 注释区间表
   // r14 P2-4：片段结束位置 O(1) 查询表——nextNormal[k] = 自 k 起首个 NORMAL 位置
   //（原实现每候选预扫描片段全程定位 fragEnd，候选数 × 片段长退化为 O(n²)）
   const nextNormal = new Int32Array(n + 1);
@@ -692,7 +691,7 @@ function scanSqlText(text) {
   for (const m of text.matchAll(SQL_SETPASS_KEYWORD_RE)) cands.push({ pos: m.index, end: m.index + m[0].length, kind: 'setpass' });
   cands.sort((a, b) => a.pos - b.pos);
   for (const cand of cands) {
-    const hit = scanCandidate(text, ctxMap, cand, parenDepth, openAt, nextNormal);
+    const hit = scanCandidate(text, ctxMap, cand, parenDepth, openAt, nextNormal, commentLeft, commentRight);
     if (hit) {
       const stmtLabel = cand.kind === 'setpass' ? 'psql \\set ' : 'SQL ';
       found.push({ line: lineNo(hit.at), at: hit.at, message: stmtLabel + hit.message + hit.value.slice(0, 20) });
@@ -891,13 +890,18 @@ function splitCallArgs(text, ctxMap, from, maxArgCount) {
  * 字符串跳过，体内代码括号照常计入外层深度（被引用代码的括号结构有效）。
  * @param {string} text
  * @param {Uint8Array} ctxMap
- * @returns {{depthAt: Int32Array, openAt: Int32Array}} depthAt[pos] = pos 左侧未闭合
- *   括号数；openAt[pos] = pos 所在括号层的开括号索引（顶层 / 片段内为 -1）
+ * @returns {{depthAt: Int32Array, openAt: Int32Array, commentLeft: Int32Array,
+ *   commentRight: Int32Array}} depthAt[pos] = pos 左侧未闭合
+ *   括号数；openAt[pos] = pos 所在括号层的开括号索引（顶层 / 片段内为 -1）；
+ *   commentLeft / commentRight = 注释区间表（r15 P2-1/P2-2，-1=非注释区，区间
+ *   [left, right) 含普通注释与片段内局部注释，供 CAST 判定左向整段跳过）
  */
 function buildParenDepthMap(text, ctxMap) {
   const n = text.length;
   const depthAt = new Int32Array(n + 1);
   const openAt = new Int32Array(n).fill(-1);
+  const commentLeft = new Int32Array(n).fill(-1); // r15 P2-1/P2-2：注释区间起点表
+  const commentRight = new Int32Array(n).fill(-1); // 终点（不含）
   const openStack = []; // r12 P2-6：未闭合左括号位置栈（与 count 同步，`;` 清空）
   let count = 0;
   let i = 0;
@@ -923,6 +927,8 @@ function buildParenDepthMap(text, ctxMap) {
       if (cc === "'" && !isApostropheWord(text, k)) {
         let j = k + 1;
         while (j < end) {
+          // r15 P2-3（同约束）：层内未闭合引号不得吞掉关闭当前层的定界符
+          if (layers.length > 1 && text[j] === '*' && text[j + 1] === '/') break;
           if (text[j] === "'") {
             if (text[j + 1] === "'") { j += 2; continue; }
             j += 1; break;
@@ -940,6 +946,9 @@ function buildParenDepthMap(text, ctxMap) {
         // `"/*"` 等标识符文本不被当嵌套注释开启
         let j = k + 1;
         while (j < end) {
+          // r15 P2-3：双引号消费受当前注释层的真实结束边界约束——层内未闭合
+          // 引号不得吞掉关闭该层的定界符（嵌套层栈得以恢复）
+          if (layers.length > 1 && text[j] === '*' && text[j + 1] === '/') break;
           if (text[j] === '"') {
             if (text[j + 1] === '"') { j += 2; continue; }
             j += 1; break;
@@ -988,6 +997,61 @@ function buildParenDepthMap(text, ctxMap) {
       k += 1;
     }
   };
+  // r15 P2-1/P2-2：注释区间表构建——供 isCastCallParen 左向整段跳过注释。
+  //   fillSpan：把 [s, e) 内尚未标记的字符补填为区间 [s, e)；遇到已填（更内层）
+  //     段整段跳跃，分摊每字符 O(1)、总量 O(n)；
+  //   markInnerCommentSpans：片段文本内按独立词法配对块注释——引号（'' / "" /
+  //     \' 转义）整体消费、层内未闭合引号不吞关闭当前层的定界符（与 fillFragment
+  //     同约束）；只处理块注释配对（行注释内的块注释符与块注释内的行注释符均无
+  //     注释语义）；未闭合段不填（保守保持既有行为）。
+  const fillSpan = (s, e) => {
+    let t = s;
+    while (t < e) {
+      if (commentLeft[t] >= 0) { t = commentRight[t]; continue; }
+      commentLeft[t] = s;
+      commentRight[t] = e;
+      t += 1;
+    }
+  };
+  const markInnerCommentSpans = (from, to) => {
+    const starts = [];
+    let i = from;
+    while (i < to) {
+      const c = text[i];
+      if (c === '/' && text[i + 1] === '*') { starts.push(i); i += 2; continue; }
+      if (c === '*' && text[i + 1] === '/' && starts.length > 0) {
+        const s = starts.pop(); // 最内层优先：先闭合先填，外层回填时跳跃补全
+        fillSpan(s, i + 2);
+        i += 2; continue;
+      }
+      if (c === "'" && !isApostropheWord(text, i)) {
+        let j = i + 1;
+        while (j < to) {
+          if (starts.length > 0 && text[j] === '*' && text[j + 1] === '/') break; // r15 P2-3 同约束
+          if (text[j] === "'") {
+            if (text[j + 1] === "'") { j += 2; continue; }
+            j += 1; break;
+          }
+          if (text[j] === '\\' && text[j + 1] === "'") { j += 2; continue; }
+          j += 1;
+        }
+        i = j; continue;
+      }
+      if (c === '"') {
+        let j = i + 1;
+        while (j < to) {
+          if (starts.length > 0 && text[j] === '*' && text[j + 1] === '/') break;
+          if (text[j] === '"') {
+            if (text[j + 1] === '"') { j += 2; continue; }
+            j += 1; break;
+          }
+          j += 1;
+        }
+        i = j; continue;
+      }
+      i += 1;
+    }
+  };
   while (i < n) {
     const c = text[i];
     const ctx = ctxMap[i];
@@ -997,6 +1061,10 @@ function buildParenDepthMap(text, ctxMap) {
       if (nl < 0) nl = n;
       if (nl === i) nl += 1; // 行尾换行符本身带注释尾标记：推进防零步进
       fillFragment(start, nl);
+      // r15 P2-1/P2-2：注释区间表——先标记内部伪嵌套段（CAST 与括号之间夹注释
+      // 文本时左向扫描可整段跳过），再整段回填外层区间
+      markInnerCommentSpans(start + 2, nl);
+      fillSpan(start, nl);
       i = nl;
       continue;
     }
@@ -1005,6 +1073,8 @@ function buildParenDepthMap(text, ctxMap) {
       // 定初始深度（避免 skipBlockComment 重复计入 '/*' 一层）
       i = skipBlockComment(text, i, text[i] === '/' && text[i + 1] === '*' ? 0 : 1);
       fillFragment(start, i);
+      // r15 P2-1/P2-2：注释区间表——片段自身 '/*' 进栈，匹配闭合时整段回填
+      markInnerCommentSpans(start, i);
       continue;
     }
     if (ctx === CTX_NORMAL && c === '$') { // r12 P2-3：美元引用体局部重扫
@@ -1021,11 +1091,13 @@ function buildParenDepthMap(text, ctxMap) {
             // r13 P2-9：换行搜索限定在美元体内（原 indexOf 无上限，单次即扫全文）
             const nl = newlineWithin(text, i, bodyEnd);
             fillFragment(i, nl);
+            fillSpan(i, nl); // r15 P2-1/P2-2：体内行注释整段入表（内部块注释符无嵌套语义）
             i = nl; continue;
           }
           if (bc === '/' && text[i + 1] === '*') { // 体内块注释：同上
             const end = skipBlockComment(text, i, 0, bodyEnd);
             fillFragment(i, end);
+            markInnerCommentSpans(i, end); // r15 P2-1/P2-2：体内块注释自身进栈、匹配闭合回填
             i = end; continue;
           }
           if (bc === "'") { // 体内字符串整体跳过（'' 转义）：串内括号不参与
@@ -1096,7 +1168,7 @@ function buildParenDepthMap(text, ctxMap) {
     i += 1;
   }
   depthAt[n] = count;
-  return { depthAt, openAt };
+  return { depthAt, openAt, commentLeft, commentRight };
 }
 
 /**
@@ -1293,9 +1365,11 @@ function skipToClosingParen(text, ctxMap, from, n, fragCtx = -1, nextNormal) {
  * @param {Uint8Array} ctxMap sqlContextMap(text)
  * @param {{pos:number,end:number,kind:string}} cand 关键字候选（pos=起始，end=末尾后一位）
  * @param {Int32Array} nextNormal r14 P2-4：片段结束 O(1) 查询表（自位置起首个 NORMAL）
+ * @param {Int32Array} commentLeft r15 P2-1/P2-2：注释区间起点表（-1=非注释区）
+ * @param {Int32Array} commentRight 注释区间终点表（不含）
  * @returns {null|{at:number,value:string,message:string}} 命中位置 / 值 / 消息主体
  */
-function scanCandidate(text, ctxMap, cand, parenDepth, openAt, nextNormal) {
+function scanCandidate(text, ctxMap, cand, parenDepth, openAt, nextNormal, commentLeft, commentRight) {
   const n = text.length;
   const candCtx = ctxMap[cand.pos];
   if (candCtx === CTX_DOUBLE_QUOTE) return null; // 双引号标识符内的 PASSWORD 字样非口令语句
@@ -1424,7 +1498,7 @@ function scanCandidate(text, ctxMap, cand, parenDepth, openAt, nextNormal) {
             const openPos = openAt[i];
             i = w;
             // r13 P2-1：完整 token 左向词法（跳过空白 / 注释 + 词边界），取代 8 字符窗口
-            if (openPos >= 0 && isCastCallParen(text, ctxMap, openPos)) {
+            if (openPos >= 0 && isCastCallParen(text, ctxMap, openPos, commentLeft, commentRight)) {
               // r11 P2-3：CAST 括号带内 AS 为类型转换语法——消费完整类型短语
               // （多词类型 / 引用标识符 / 类型参数 / 数组修饰），不让类型后继词终结表达式
               i = consumeCastType(text, i, n);
