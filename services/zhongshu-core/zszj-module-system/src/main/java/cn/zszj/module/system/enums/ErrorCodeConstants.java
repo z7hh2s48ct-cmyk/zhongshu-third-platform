@@ -204,5 +204,8 @@ public interface ErrorCodeConstants {
 
     // ========== OAuth2 令牌会话管理 1-002-029-000 ==========
     ErrorCode OAUTH2_TOKEN_SESSION_NOT_OWNED = new ErrorCode(1_002_029_000, "无法操作他人的登录会话");
+    // ZS-LOGIN-006 codex r0 P1：自助会话管理要求真实用户登录态；client_credentials 机器令牌（userId=0）
+    // 没有「本人会话」语义，拒绝其列出 / 撤销同为 userId=0 的其它客户端会话（跨客户端越权）
+    ErrorCode OAUTH2_TOKEN_SESSION_SELF_REQUIRES_USER = new ErrorCode(1_002_029_001, "自助会话管理要求真实用户登录态");
 
 }

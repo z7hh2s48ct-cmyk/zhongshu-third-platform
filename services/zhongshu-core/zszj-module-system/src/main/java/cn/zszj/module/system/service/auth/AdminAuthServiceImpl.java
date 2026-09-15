@@ -268,9 +268,9 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     }
 
     @Override
-    public void logoutById(Long id, Long expectedUserId, Integer logType) {
-        // ZS-LOGIN-006：按会话 ID 撤销（不暴露凭据），归属 / 租户 / 幂等由 service 保证
-        OAuth2AccessTokenDO accessTokenDO = oauth2TokenService.removeAccessTokenById(id, expectedUserId);
+    public void logoutById(Long id, Long expectedUserId, Integer expectedUserType, Integer logType) {
+        // ZS-LOGIN-006：按会话 ID 撤销（不暴露凭据），归属 / 类型 / 租户 / 幂等由 service 保证
+        OAuth2AccessTokenDO accessTokenDO = oauth2TokenService.removeAccessTokenById(id, expectedUserId, expectedUserType);
         if (accessTokenDO == null) {
             return;
         }
