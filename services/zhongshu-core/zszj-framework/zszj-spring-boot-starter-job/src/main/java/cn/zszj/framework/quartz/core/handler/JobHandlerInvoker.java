@@ -68,7 +68,7 @@ public class JobHandlerInvoker extends QuartzJobBean {
         LocalDateTime startTime = LocalDateTime.now();
         String data = null;
         Throwable exception = null;
-        int tenantFailureCount = 0;
+        TenantJobExecutionResult tenantResult = null;
         try {
             // 记录 Job 日志（初始）
             jobLogId = jobLogFrameworkService.createJobLog(jobId, startTime, jobHandlerName, jobHandlerParam, refireCount + 1);
@@ -77,9 +77,8 @@ public class JobHandlerInvoker extends QuartzJobBean {
             // 执行任务
             data = this.executeInternal(jobHandlerName, jobHandlerParam);
             // 解析租户级执行结果：某租户失败不能被汇总为整体成功
-            TenantJobExecutionResult tenantResult = TenantJobExecutionResult.tryParse(data);
+            tenantResult = TenantJobExecutionResult.tryParse(data);
             if (tenantResult != null) {
-                tenantFailureCount = tenantResult.getFailureCount();
                 this.handleTenantResult(jobHandlerName, jobLogId, tenantResult);
             }
         } catch (Throwable ex) {
@@ -87,7 +86,7 @@ public class JobHandlerInvoker extends QuartzJobBean {
         }
 
         // 第三步，记录执行日志
-        this.updateJobLogResultAsync(jobLogId, startTime, data, exception, tenantFailureCount, executionContext);
+        this.updateJobLogResultAsync(jobLogId, startTime, data, exception, tenantResult, executionContext);
 
         // 第四步，处理有异常的情况
         handleException(exception, refireCount, retryCount, retryInterval);
@@ -126,13 +125,19 @@ public class JobHandlerInvoker extends QuartzJobBean {
     }
 
     private void updateJobLogResultAsync(Long jobLogId, LocalDateTime startTime, String data, Throwable exception,
-                                         int tenantFailureCount, JobExecutionContext executionContext) {
+                                         TenantJobExecutionResult tenantResult, JobExecutionContext executionContext) {
         LocalDateTime endTime = LocalDateTime.now();
         // 处理是否成功：既没有异常，也不存在租户级失败。
-        // 仅看 exception 会把"部分租户失败"汇总成整体成功，这里以 tenantFailureCount 兜住这一类漏判。
+        // 仅看 exception 会把“部分租户失败”汇总成整体成功，这里以租户级失败计数兜住这一类漏判。
+        int tenantFailureCount = tenantResult == null ? 0 : tenantResult.getFailureCount();
         boolean success = exception == null && tenantFailureCount == 0;
         if (exception != null) {
             data = getRootCauseMessage(exception);
+        } else if (tenantResult != null) {
+            // 租户级结构化结果随租户数线性增长，写入前压到执行日志结果列的列宽内：
+            // 溢出会让写库失败，而那里的异常被吞掉，执行日志将永久停留在“运行中”，比截断更难排查。
+            // 逐租户明细已按完整结果单独落库，这里只保留有界聚合。
+            data = tenantResult.toBoundedJsonString(TenantJobExecutionResult.JOB_LOG_RESULT_MAX_LENGTH);
         }
         // 更新日志
         try {

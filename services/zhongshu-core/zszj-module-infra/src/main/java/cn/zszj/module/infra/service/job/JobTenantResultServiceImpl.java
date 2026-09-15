@@ -38,11 +38,28 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
      */
     static final String MASK = "***";
     /**
+     * 敏感键名。键与值两侧都允许可选引号，用于覆盖 JSON 形式的 {@code {"password":"secret"}}
+     */
+    private static final String SENSITIVE_KEYS =
+            "password|passwd|pwd|secret|token|access[-_]?key|api[-_]?key|private[-_]?key|authorization";
+    /**
      * 敏感"键=值"结构，命中后把值替换为 {@link #MASK}
+     *
+     * 值允许一个空格分隔的第二段，用于覆盖 {@code Authorization: Bearer <凭证>} 这类两段式凭证——
+     * 只匹配单个 token 会留下 {@code Bearer} 后面的真实令牌。
+     * 第二段带负向断言，避免吃穿到下一个敏感键值对（否则 {@code password=a token=b} 会被当成一个值）。
      */
     private static final Pattern SENSITIVE_PATTERN = Pattern.compile(
-            "(?i)(password|passwd|pwd|secret|token|access[-_]?key|api[-_]?key|private[-_]?key|authorization)"
-                    + "(\\s*[=:]\\s*)(\\S+)");
+            "(?i)([\"']?(?:" + SENSITIVE_KEYS + ")[\"']?)"
+                    + "(\\s*[=:]\\s*)"
+                    + "([\"']?)"
+                    + "([^\\s\"',;)}\\]]+(?:[ \\t]+(?!(?:" + SENSITIVE_KEYS + ")[\"']?\\s*[=:])[^\\s\"',;)}\\]]+)?)"
+                    + "([\"']?)");
+    /**
+     * 单独出现的凭证前缀（没有敏感键名时也要脱敏），例如异常栈里直接打印的 {@code Bearer eyJhbGciOi...}
+     */
+    private static final Pattern CREDENTIAL_PATTERN = Pattern.compile(
+            "(?i)\\b(bearer|basic)[ \\t]+[A-Za-z0-9\\-._~+/]+=*");
 
     @Resource
     private JobTenantResultMapper jobTenantResultMapper;
@@ -92,6 +109,9 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
     /**
      * 先脱敏再截断，产出可安全入库、可安全回显的摘要
      *
+     * 脱敏分两步，且顺序不可颠倒：先处理单独的凭证前缀，再处理敏感键值对。
+     * 颠倒的话，键值对规则会先把 {@code Bearer} 当成值替换掉，留下后面的真实凭证。
+     *
      * @param text 原始文本
      * @return 摘要，入参为空时返回空串
      */
@@ -99,7 +119,8 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
         if (StrUtil.isBlank(text)) {
             return StrUtil.EMPTY;
         }
-        String masked = SENSITIVE_PATTERN.matcher(text).replaceAll("$1$2" + MASK);
+        String masked = CREDENTIAL_PATTERN.matcher(text).replaceAll("$1 " + MASK);
+        masked = SENSITIVE_PATTERN.matcher(masked).replaceAll("$1$2$3" + MASK + "$5");
         return masked.length() <= SUMMARY_MAX_LENGTH ? masked : masked.substring(0, SUMMARY_MAX_LENGTH);
     }
 

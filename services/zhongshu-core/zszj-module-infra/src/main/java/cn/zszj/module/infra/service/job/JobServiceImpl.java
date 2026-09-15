@@ -21,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
-import java.util.Objects;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.containsAny;
@@ -150,7 +149,7 @@ public class JobServiceImpl implements JobService {
         JobDO job = validateJobExists(id);
         // 校验状态（ZS-JOB-001）：只有开启状态的任务才允许手动触发。
         // 暂停中的任务被手动触发，会绕过“暂停”这个运维意图产生副作用，且执行日志与任务表状态相互矛盾，因此直接拒绝。
-        if (!Objects.equals(job.getStatus(), JobStatusEnum.NORMAL.getStatus())) {
+        if (!JobStatusEnum.shouldRun(job.getStatus())) {
             throw exception(JOB_TRIGGER_ON_PAUSED, job.getStatus());
         }
         // 校验白名单（ZS-JOB-001）：手动触发是第四个入口，与登记侧（createJob/updateJob）、执行侧（JobHandlerInvoker）
@@ -174,8 +173,11 @@ public class JobServiceImpl implements JobService {
             schedulerManager.deleteJob(job.getHandlerName());
             schedulerManager.addJob(job.getId(), job.getHandlerName(), job.getHandlerParam(), job.getCronExpression(),
                     job.getRetryCount(), job.getRetryInterval());
-            // 2.2 如果 status 为暂停，则需要暂停
-            if (Objects.equals(job.getStatus(), JobStatusEnum.STOP.getStatus())) {
+            // 2.2 只要不是「应当可跑」的状态就暂停。INIT（尚未开启）与 STOP 同样不该跑：
+            // 此处与 JobSchedulerReconciler 共用 JobStatusEnum#shouldRun 单一真源，
+            // 若各自判断（这里只看 STOP、对账看非 NORMAL），INIT 任务会在重启同步后被留在可跑状态，
+            // 并由对账再补一刀，每次重启都制造一次无意义的「漂移→修正」噪音。
+            if (!JobStatusEnum.shouldRun(job.getStatus())) {
                 schedulerManager.pauseJob(job.getHandlerName());
             }
             log.info("[syncJob][id({}) handlerName({}) 同步完成]", job.getId(), job.getHandlerName());

@@ -7,6 +7,8 @@ import cn.zszj.module.infra.dal.mysql.job.JobMapper;
 import cn.zszj.module.infra.enums.job.JobStatusEnum;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.quartz.JobKey;
+import org.quartz.ObjectAlreadyExistsException;
 import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
 import org.quartz.Trigger;
@@ -19,7 +21,6 @@ import org.springframework.stereotype.Component;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -36,7 +37,8 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.JOB_SCHEDULER_STATE_
  * 1. 权威源恒为任务表，调度器是被修正方；对账不会改写任务表；
  * 2. 只有任务表 status=NORMAL 才认为"应当可跑"，其余状态（INIT/STOP）一律要求调度器处于暂停；
  * 3. 触发器缺失或已进入终态（COMPLETE/ERROR）时按任务表重建，重建后按任务表状态决定是否暂停；
- * 4. 调度器中存在、任务表已无对应任务的孤儿触发器直接删除；
+ * 4. 孤儿触发器按「触发器归属的 JobKey」判定，而不是按触发器名：「立即触发」会为已注册任务
+ *    生成一次性触发器（DEFAULT.MT_*），它的名字不是任何 handler 名，按名字比会把它误当孤儿删掉；
  * 5. 定时任务被禁用（无 Scheduler Bean）时整体 fail-safe：不检查、不修正、不抛异常。
  *
  * 触发入口：{@link JobService#syncJob()}（进程重启同步后自动对账）与 {@link #reconcileJob(Long)}（运维手动对账单个任务）。
@@ -158,12 +160,7 @@ public class JobSchedulerReconciler {
             // 情况一：触发器缺失或已进入终态，按任务表重建
             if (state == null || state == Trigger.TriggerState.NONE || TERMINAL_STATES.contains(state)) {
                 report.recordDrift(handlerName, DRIFT_TRIGGER_REBUILD, job.getStatus(), stateName(state));
-                schedulerManager.deleteJob(handlerName);
-                schedulerManager.addJob(job.getId(), handlerName, job.getHandlerParam(), job.getCronExpression(),
-                        job.getRetryCount(), job.getRetryInterval());
-                if (expectPaused(job.getStatus())) {
-                    schedulerManager.pauseJob(handlerName);
-                }
+                rebuildTrigger(job, handlerName);
                 report.recordCorrected();
                 log.warn("[reconcileJob][handlerName({}) 调度器触发器状态({})，已按任务表状态({}) 重建]",
                         handlerName, stateName(state), job.getStatus());
@@ -191,10 +188,38 @@ public class JobSchedulerReconciler {
     }
 
     /**
+     * 按任务表重建触发器
+     *
+     * 多实例同时启动、或运维同时对账时，另一实例可能已经完成重建，此时 addJob 会抛
+     * {@link ObjectAlreadyExistsException}。这不是「漂移未被修正」，而是「目标状态已达成」，
+     * 因此降级为提示、不计入失败——否则单任务对账入口会把已经正确的状态误报成 JOB_SCHEDULER_STATE_DRIFT。
+     *
+     * @param job         任务（权威侧）
+     * @param handlerName Handler 名字
+     * @throws SchedulerException 重建失败（并发重复除外）
+     */
+    private void rebuildTrigger(JobDO job, String handlerName) throws SchedulerException {
+        schedulerManager.deleteJob(handlerName);
+        try {
+            schedulerManager.addJob(job.getId(), handlerName, job.getHandlerParam(), job.getCronExpression(),
+                    job.getRetryCount(), job.getRetryInterval());
+        } catch (ObjectAlreadyExistsException ex) {
+            log.warn("[rebuildTrigger][handlerName({}) 重建时触发器已存在，视为其它实例已完成重建]", handlerName);
+        }
+        if (expectPaused(job.getStatus())) {
+            schedulerManager.pauseJob(handlerName);
+        }
+    }
+
+    /**
      * 清理调度器中任务表已不存在的孤儿触发器
      *
      * 典型成因：任务被直接删库（绕过 Service）、或 Quartz 表被手工回滚，
      * 遗留的触发器会继续按旧配置执行，属于"关不掉的任务"。
+     *
+     * 归属判定必须看触发器指向的 JobKey，不能拿触发器名去比 handler 名：
+     * 「立即触发」生成的一次性触发器（DEFAULT.MT_*）归属于一个仍然在册的任务，
+     * 按名字比会把它误判为孤儿，连带取消运维已接受的那一次手动执行。
      *
      * @param scheduler    调度器
      * @param handlerNames 任务表中全部的 Handler 名字
@@ -214,20 +239,35 @@ public class JobSchedulerReconciler {
             return;
         }
         for (TriggerKey triggerKey : triggerKeys) {
-            String handlerName = triggerKey.getName();
-            if (handlerNames.contains(handlerName)) {
+            Trigger trigger;
+            try {
+                trigger = scheduler.getTrigger(triggerKey);
+            } catch (SchedulerException ex) {
+                report.recordFailed();
+                log.error("[reconcileOrphanTriggers][triggerKey({}) 读取触发器详情失败]", triggerKey, ex);
+                continue;
+            }
+            if (trigger == null) {
+                // 本轮对账期间触发器已消失（例如一次性手动触发执行完毕），不是孤儿
+                continue;
+            }
+            JobKey jobKey = trigger.getJobKey();
+            String owningHandlerName = jobKey == null ? triggerKey.getName() : jobKey.getName();
+            if (handlerNames.contains(owningHandlerName)) {
+                // 归属任务仍在任务表中：cron 触发器与「立即触发」产生的一次性触发器都属于这一类，不能删
                 continue;
             }
             report.recordOrphanTrigger();
             try {
-                report.recordDrift(handlerName, DRIFT_ORPHAN_TRIGGER, null, stateName(
-                        scheduler.getTriggerState(triggerKey)));
-                schedulerManager.deleteJob(handlerName);
+                report.recordDrift(owningHandlerName, DRIFT_ORPHAN_TRIGGER, null,
+                        stateName(scheduler.getTriggerState(triggerKey)));
+                schedulerManager.deleteOrphanTrigger(triggerKey, jobKey);
                 report.recordCorrected();
-                log.warn("[reconcileOrphanTriggers][handlerName({}) 为孤儿触发器（任务表已无对应任务），已删除]", handlerName);
+                log.warn("[reconcileOrphanTriggers][triggerKey({}) 归属任务({}) 已不在任务表，判定为孤儿触发器，已清理]",
+                        triggerKey, owningHandlerName);
             } catch (SchedulerException ex) {
                 report.recordFailed();
-                log.error("[reconcileOrphanTriggers][handlerName({}) 孤儿触发器清理失败]", handlerName, ex);
+                log.error("[reconcileOrphanTriggers][triggerKey({}) 孤儿触发器清理失败]", triggerKey, ex);
             }
         }
     }
@@ -235,11 +275,14 @@ public class JobSchedulerReconciler {
     /**
      * 任务表状态是否要求调度器处于暂停。只有 NORMAL 才认为"应当可跑"
      *
+     * 判定必须与 JobServiceImpl#syncJob 同源（{@link JobStatusEnum#shouldRun(Integer)}），
+     * 否则 INIT 任务会在同步后被留在可跑状态、再由对账暂停，每次重启都制造一次无意义的漂移噪音。
+     *
      * @param status 任务表状态，见 {@link JobStatusEnum}
      * @return 是否应当暂停
      */
     private static boolean expectPaused(Integer status) {
-        return !Objects.equals(status, JobStatusEnum.NORMAL.getStatus());
+        return !JobStatusEnum.shouldRun(status);
     }
 
     /**

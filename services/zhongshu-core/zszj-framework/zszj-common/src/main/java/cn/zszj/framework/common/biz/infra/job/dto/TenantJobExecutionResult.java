@@ -29,6 +29,15 @@ import java.util.Map;
 public class TenantJobExecutionResult {
 
     /**
+     * 执行日志结果列（infra_job_log.result）的宽度上限
+     *
+     * 结构化结果会随租户数线性增长，超出列宽后执行日志写库会失败，
+     * 而那里的异常被吞掉，最终表现为执行记录永久停留在“运行中”——比截断更难排查。
+     * 写入执行日志前统一走 {@link #toBoundedJsonString(int)}。
+     */
+    public static final int JOB_LOG_RESULT_MAX_LENGTH = 4000;
+
+    /**
      * 参与执行的租户总数
      */
     private int totalTenants;
@@ -45,6 +54,12 @@ public class TenantJobExecutionResult {
      */
     @Builder.Default
     private Map<Long, TenantItem> perTenantResults = new LinkedHashMap<>();
+    /**
+     * 逐租户明细是否因超出长度上限而被裁剪
+     *
+     * 裁剪只发生在写入执行日志的有界副本上，不影响顶层计数，也不影响单独落库的完整明细。
+     */
+    private boolean truncated;
 
     /**
      * 是否全部租户执行成功
@@ -64,6 +79,66 @@ public class TenantJobExecutionResult {
 
     public String toJsonString() {
         return JsonUtils.toJsonString(this);
+    }
+
+    /**
+     * 产出长度不超过 maxLength 的 JSON，用于写入执行日志的结果列
+     *
+     * 逐租户明细已单独落 infra_job_tenant_result，因此超长时按“先丢成功明细、再逐条丢明细”的顺序裁剪，
+     * 顶层计数（totalTenants/successCount/failureCount）始终完整——消费方靠 failureCount 判定整体成败，
+     * 明细裁剪不能影响判定。产出必须是合法 JSON：直接截断字符串会得到半个 JSON，让执行日志不可解析。
+     *
+     * @param maxLength 长度上限
+     * @return 有界 JSON；未超长时等价于 {@link #toJsonString()}
+     */
+    public String toBoundedJsonString(int maxLength) {
+        String full = toJsonString();
+        if (full.length() <= maxLength) {
+            return full;
+        }
+        // 第一步：只保留失败租户明细，运维排查失败时需要它，成功租户的明细在明细表里查
+        TenantJobExecutionResult bounded = copyWithFailedDetailsOnly();
+        String json = bounded.toJsonString();
+        // 第二步：失败租户仍装不下时逐条丢弃明细，直到顶层计数骨架能装进列宽
+        while (json.length() > maxLength && !bounded.getPerTenantResults().isEmpty()) {
+            removeLastDetail(bounded.getPerTenantResults());
+            json = bounded.toJsonString();
+        }
+        return json;
+    }
+
+    /**
+     * 拷一份只带失败租户明细、且标记为已裁剪的副本，顶层计数原样保留
+     */
+    private TenantJobExecutionResult copyWithFailedDetailsOnly() {
+        Map<Long, TenantItem> failedDetails = new LinkedHashMap<>();
+        if (perTenantResults != null) {
+            perTenantResults.forEach((tenantId, item) -> {
+                if (item != null && !item.isSuccess()) {
+                    failedDetails.put(tenantId, item);
+                }
+            });
+        }
+        TenantJobExecutionResult copy = new TenantJobExecutionResult();
+        copy.setTotalTenants(totalTenants);
+        copy.setSuccessCount(successCount);
+        copy.setFailureCount(failureCount);
+        copy.setPerTenantResults(failedDetails);
+        copy.setTruncated(true);
+        return copy;
+    }
+
+    /**
+     * 丢掉最后一条明细。用遍历取尾键而不是迭代器，避开 LinkedHashMap 迭代中 remove 的限制
+     */
+    private static void removeLastDetail(Map<Long, TenantItem> details) {
+        Long lastKey = null;
+        for (Long key : details.keySet()) {
+            lastKey = key;
+        }
+        if (lastKey != null) {
+            details.remove(lastKey);
+        }
     }
 
     /**
