@@ -22,9 +22,12 @@ export const deleteFile = (id: number) => {
   return request.delete({ url: '/infra/file/delete?id=' + id })
 }
 
-// 批量删除文件
+// 批量删除文件（ZS-FILE-005.A：返回逐项结果，中段失败不伪报全成功）
 export const deleteFileList = (ids: number[]) => {
-  return request.delete({ url: '/infra/file/delete-list', params: { ids: ids.join(',') } })
+  return request.delete<{ successIds: number[]; failures: { id: number; errorMessage: string }[] }>({
+    url: '/infra/file/delete-list',
+    params: { ids: ids.join(',') }
+  })
 }
 
 // 获取文件预签名地址

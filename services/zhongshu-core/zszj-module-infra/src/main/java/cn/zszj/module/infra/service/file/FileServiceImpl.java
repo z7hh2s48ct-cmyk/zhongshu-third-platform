@@ -25,7 +25,10 @@ import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCr
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCreateRespVO;
 import cn.zszj.module.infra.dal.dataobject.file.FileDO;
 import cn.zszj.module.infra.dal.dataobject.file.FileUploadCredentialDO;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import cn.zszj.module.infra.dal.mysql.file.FileDeliveryTicketMapper;
 import cn.zszj.module.infra.dal.mysql.file.FileMapper;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeleteBatchRespVO;
 import cn.zszj.module.infra.dal.mysql.file.FileUploadCredentialMapper;
 import cn.zszj.module.infra.framework.file.core.client.FileClient;
 import cn.zszj.module.infra.framework.file.core.utils.FilePathUtils;
@@ -46,6 +49,8 @@ import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PRESIGN_NOT_SUPPORTED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELETE_REFERENCED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELETE_IN_PROGRESS;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_NOT_EXISTS;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_EXPIRED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_UPLOAD_CREDENTIAL_ALREADY_USED;
@@ -119,6 +124,9 @@ public class FileServiceImpl implements FileService {
 
     @Resource
     private FileMapper fileMapper;
+
+    @Resource
+    private FileDeliveryTicketMapper deliveryTicketMapper;
 
     @Override
     public PageResult<FileDO> getFilePage(FilePageReqVO pageReqVO) {
@@ -284,18 +292,46 @@ public class FileServiceImpl implements FileService {
         // 1.2 校验路径合法性，避免误删文件存储器中的其他文件
         FilePathUtils.validatePath(file.getPath());
 
-        // 2.1 从文件存储器中删除
+        // 2 中间态推进（ZS-FILE-005.A，codex r0 P1：先锁定删除意图——兑换/取流侧据 DELETING 拒绝，
+        //   使引用检查与兑换串行化）：非 DELETING 态（含存量/历史值）条件推进为 DELETING 可恢复中间态；
+        //   已处于 DELETING（人工对账重试）直接继续；并发双删败者按「删除进行中」拒绝
+        if (!FileDO.STATUS_DELETING.equals(file.getStatus())) {
+            int affected = fileMapper.update(null, new LambdaUpdateWrapper<FileDO>()
+                    .set(FileDO::getStatus, FileDO.STATUS_DELETING)
+                    .eq(FileDO::getId, id)
+                    .ne(FileDO::getStatus, FileDO.STATUS_DELETING));
+            if (affected == 0) {
+                throw exception(FILE_DELETE_IN_PROGRESS);
+            }
+        }
+
+        // 3 引用保护（ZS-FILE-005.A）：中间态锁定后复查进行中的交付会话——命中则回退 PUBLISHED 并拒绝，
+        //   不误删仍被引用的对象（转移后新建兑换已被 DELETING 检查拒绝，引用集不再增长）
+        if (CollUtil.isNotEmpty(deliveryTicketMapper.selectActiveRedeemedByFileId(id, LocalDateTime.now()))) {
+            fileMapper.update(null, new LambdaUpdateWrapper<FileDO>()
+                    .set(FileDO::getStatus, FileDO.STATUS_PUBLISHED)
+                    .eq(FileDO::getId, id)
+                    .eq(FileDO::getStatus, FileDO.STATUS_DELETING));
+            throw exception(FILE_DELETE_REFERENCED);
+        }
+
+        // 4 从文件存储器中删除；失败保留 DELETING 可恢复记录并上抛——中段失败不假报成功
         FileClient client = fileConfigService.getFileClient(file.getConfigId());
         Assert.notNull(client, "客户端({}) 不能为空", file.getConfigId());
-        client.delete(file.getPath());
+        try {
+            client.delete(file.getPath());
+        } catch (Exception ex) {
+            log.error("[deleteFile][文件({}) 对象删除失败，保留 DELETING 记录待人工对账]", id, ex);
+            throw ex;
+        }
 
-        // 2.2 删除记录
+        // 5 对象已删除 → 删除记录
         fileMapper.deleteById(id);
     }
 
     @Override
     @SneakyThrows
-    public void deleteFileList(List<Long> ids) {
+    public FileDeleteBatchRespVO deleteFileList(List<Long> ids) {
         // ZS-FILE-001.A（codex r0 P2）：批量删除前显式校验「全部存在且全部属于当前技术租户」——
         // 混入他租户/不存在 id 整批拒绝（原先静默跳过，越权文件混入无感知）；不依赖租户拦截器装配
         Long currentTenantId = TenantContextHolder.getTenantId();
@@ -304,18 +340,73 @@ public class FileServiceImpl implements FileService {
                 || files.stream().anyMatch(f -> !Objects.equals(f.getTenantId(), currentTenantId))) {
             throw exception(FILE_NOT_EXISTS);
         }
-        // 删除文件
+        // ZS-FILE-005.A：逐项执行并逐项记录结果——中段失败不伪报全成功
+        FileDeleteBatchRespVO respVO = new FileDeleteBatchRespVO();
         for (FileDO file : files) {
-            FilePathUtils.validatePath(file.getPath());
-            // 获取客户端
-            FileClient client = fileConfigService.getFileClient(file.getConfigId());
-            Assert.notNull(client, "客户端({}) 不能为空", file.getPath());
-            // 删除文件
-            client.delete(file.getPath());
+            try {
+                deleteFile(file.getId());
+                respVO.getSuccessIds().add(file.getId());
+            } catch (Exception ex) {
+                FileDeleteBatchRespVO.Failure failure = new FileDeleteBatchRespVO.Failure();
+                failure.setId(file.getId());
+                failure.setErrorMessage(ex.getMessage());
+                respVO.getFailures().add(failure);
+            }
         }
+        return respVO;
+    }
 
-        // 删除记录
-        fileMapper.deleteByIds(ids);
+    @Override
+    public List<FileDO> getDeletingFileList() {
+        // 人工对账入口：列出删除中间态的可恢复记录
+        return fileMapper.selectListByStatus(FileDO.STATUS_DELETING);
+    }
+
+    @Override
+    public void reconcileCleanupFile(Long id) throws Exception {
+        // 引用保护同样适用于对账路径（codex r1 P2-1：对账回退不得绕过引用保护）
+        FileDO file = validateFileExists(id);
+        FilePathUtils.validatePath(file.getPath());
+        if (CollUtil.isNotEmpty(deliveryTicketMapper.selectActiveRedeemedByFileId(id, LocalDateTime.now()))) {
+            throw exception(FILE_DELETE_REFERENCED);
+        }
+        // 仅对 DELETING 记录做「存储失败 → 存在性探测 → 仅移除记录」的回退；
+        // PUBLISHED 记录（对账期间被引用回退/误对账）走正常删除守卫
+        if (!FileDO.STATUS_DELETING.equals(file.getStatus())) {
+            deleteFile(id);
+            return;
+        }
+        FileClient client = fileConfigService.getFileClient(file.getConfigId());
+        Assert.notNull(client, "客户端({}) 不能为空", file.getConfigId());
+        try {
+            client.delete(file.getPath());
+        } catch (Exception ex) {
+            // codex r0 P2：区分「对象已确认不存在」与其它存储失败——前者允许仅清理元数据
+            //（如 SFTP delete 对缺失对象抛 SSH_FX_NO_SUCH_FILE，会使对账路径永久卡死）
+            if (isObjectConfirmedAbsent(file)) {
+                log.warn("[reconcileCleanupFile][文件({}) 对象已确认不存在，仅移除 DELETING 记录]", id);
+                fileMapper.deleteById(id);
+                return;
+            }
+            throw ex;
+        }
+        fileMapper.deleteById(id);
+    }
+
+    /**
+     * 对象存在性确认（对账重试失败后的保守探测）：读不到即认定缺失；探测自身失败则保守保留记录。
+     */
+    private boolean isObjectConfirmedAbsent(FileDO file) {
+        FileClient client = fileConfigService.getFileClient(file.getConfigId());
+        if (client == null) {
+            return false;
+        }
+        try {
+            return client.getContentRange(file.getPath(), 0, 1) == null;
+        } catch (Exception probeEx) {
+            log.warn("[isObjectConfirmedAbsent][文件({}) 存在性探测失败，保守保留记录]", file.getId(), probeEx);
+            return false;
+        }
     }
 
     private FileDO validateFileExists(Long id) {

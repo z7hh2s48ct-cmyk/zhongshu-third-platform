@@ -12,3 +12,4 @@ DELETE FROM "infra_codegen_column";
 DELETE FROM "infra_config_history";
 DELETE FROM "outbox_event";
 DELETE FROM "dispatcher_lease";
+DELETE FROM "infra_file_delivery_ticket";
