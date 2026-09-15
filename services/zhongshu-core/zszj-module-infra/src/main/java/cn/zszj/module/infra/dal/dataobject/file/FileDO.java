@@ -21,6 +21,16 @@ import lombok.*;
 @AllArgsConstructor
 public class FileDO extends TenantBaseDO {
 
+    /**
+     * 资产状态（ZS-FILE-005.A）：已发布（正常可用；存量行迁移默认值）
+     */
+    public static final String STATUS_PUBLISHED = "PUBLISHED";
+
+    /**
+     * 资产状态（ZS-FILE-005.A）：删除中（对象删除尚未完成的可恢复中间态，供人工对账）
+     */
+    public static final String STATUS_DELETING = "DELETING";
+
 
     /**
      * 上传主体用户编号（ZS-FILE-001.A：服务端确认的所有者，匿名/系统上传为 0）
@@ -67,5 +77,11 @@ public class FileDO extends TenantBaseDO {
      * 内容 SHA-256 摘要（ZS-FILE-003：下载内容与入库散列一致的验收基准）
      */
     private String fileHash;
+
+    /**
+     * 资产状态（ZS-FILE-005.A）：{@link #STATUS_PUBLISHED} / {@link #STATUS_DELETING}；
+     * 上传发布即 PUBLISHED（存量行由迁移默认值回填）
+     */
+    private String status;
 
 }

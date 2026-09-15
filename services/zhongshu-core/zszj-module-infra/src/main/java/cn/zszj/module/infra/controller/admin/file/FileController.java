@@ -84,11 +84,26 @@ public class FileController {
     }
 
     @DeleteMapping("/delete-list")
-    @Operation(summary = "批量删除文件")
+    @Operation(summary = "批量删除文件", description = "ZS-FILE-005.A：逐项执行并逐项记录结果，中段失败不伪报全成功")
     @Parameter(name = "ids", description = "编号列表", required = true)
     @PreAuthorize("@ss.hasPermission('infra:file:delete')")
-    public CommonResult<Boolean> deleteFileList(@RequestParam("ids") List<Long> ids) throws Exception {
-        fileService.deleteFileList(ids);
+    public CommonResult<FileDeleteBatchRespVO> deleteFileList(@RequestParam("ids") List<Long> ids) throws Exception {
+        return success(fileService.deleteFileList(ids));
+    }
+
+    @GetMapping("/reconcile/deleting")
+    @Operation(summary = "人工对账：列出删除中的可恢复记录", description = "ZS-FILE-005.A：对象删除未完成的 DELETING 中间态")
+    @PreAuthorize("@ss.hasPermission('infra:file:query')")
+    public CommonResult<List<FileRespVO>> getDeletingFileList() {
+        return success(BeanUtils.toBean(fileService.getDeletingFileList(), FileRespVO.class));
+    }
+
+    @PostMapping("/reconcile/cleanup")
+    @Operation(summary = "人工对账：重试清理删除中间态记录", description = "ZS-FILE-005.A：对象仍在则重试删除，已不存在则仅移除记录")
+    @Parameter(name = "id", description = "编号", required = true)
+    @PreAuthorize("@ss.hasPermission('infra:file:delete')")
+    public CommonResult<Boolean> reconcileCleanupFile(@RequestParam("id") Long id) throws Exception {
+        fileService.reconcileCleanupFile(id);
         return success(true);
     }
 

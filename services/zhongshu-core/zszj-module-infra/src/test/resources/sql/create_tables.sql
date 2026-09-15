@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS "infra_file" (
     "type" varchar(63) DEFAULT NULL,
     "size" bigint NOT NULL,
     "file_hash" varchar(64) DEFAULT NULL,
+    "status" varchar(16) NOT NULL DEFAULT 'PUBLISHED',
     "owner_user_id" bigint NOT NULL DEFAULT 0,
     "scope" varchar(16) NOT NULL DEFAULT 'PRIVATE',
     "creator" varchar(64) DEFAULT '',

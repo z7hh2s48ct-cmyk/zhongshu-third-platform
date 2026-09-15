@@ -2,6 +2,7 @@ package cn.zszj.module.infra.service.file;
 
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
+import cn.zszj.module.infra.controller.admin.file.vo.file.FileDeleteBatchRespVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePageReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FilePresignedUrlRespVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCompleteReqVO;
@@ -67,18 +68,33 @@ public interface FileService {
     FileDO getFile(Long id);
 
     /**
-     * 删除文件
+     * 删除文件（ZS-FILE-005.A：引用保护 + DELETING 可恢复中间态）
      *
      * @param id 编号
      */
     void deleteFile(Long id) throws Exception;
 
     /**
-     * 批量删除文件
+     * 批量删除文件（ZS-FILE-005.A：逐项执行并逐项记录结果——中段失败不伪报全成功）
      *
      * @param ids 编号列表
+     * @return 逐项删除结果（成功列表 + 失败明细）
      */
-    void deleteFileList(List<Long> ids) throws Exception;
+    FileDeleteBatchRespVO deleteFileList(List<Long> ids) throws Exception;
+
+    /**
+     * 人工对账：列出删除中（DELETING）的可恢复记录（ZS-FILE-005.A）
+     *
+     * @return 处于删除中间态的文件列表
+     */
+    List<FileDO> getDeletingFileList();
+
+    /**
+     * 人工对账：对删除中间态的记录重试清理（对象已不存在则仅移除记录）（ZS-FILE-005.A）
+     *
+     * @param id 编号
+     */
+    void reconcileCleanupFile(Long id) throws Exception;
 
     /**
      * 获得文件内容

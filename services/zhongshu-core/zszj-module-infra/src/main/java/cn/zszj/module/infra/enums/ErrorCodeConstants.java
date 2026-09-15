@@ -63,6 +63,9 @@ public interface ErrorCodeConstants {
     ErrorCode FILE_DELIVERY_SESSION_INVALID = new ErrorCode(1_001_003_029, "下载会话不存在或登录会话标识不匹配");
     ErrorCode FILE_DELIVERY_TICKET_REVOKED = new ErrorCode(1_001_003_030, "交付已被撤权（或读权限已回收），拒绝继续交付");
     ErrorCode FILE_DELIVERY_TICKET_EXPIRED = new ErrorCode(1_001_003_031, "交付票据/下载会话已过期");
+    // ZS-FILE-005.A：删除中间态与人工对账
+    ErrorCode FILE_DELETE_REFERENCED = new ErrorCode(1_001_003_032, "文件存在进行中的交付会话（引用保护），暂不能删除");
+    ErrorCode FILE_DELETE_IN_PROGRESS = new ErrorCode(1_001_003_033, "文件删除正在进行中，请勿重复发起");
     ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");
