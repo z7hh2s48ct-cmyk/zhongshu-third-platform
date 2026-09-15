@@ -22,8 +22,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import jakarta.annotation.Resource;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -34,9 +36,9 @@ import java.util.stream.Collectors;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELIVERY_TICKET_FORBIDDEN;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELIVERY_TICKET_REVOKED;
-import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELIVERY_TICKET_REVOKED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -100,7 +102,8 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
         int threads = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch start = new CountDownLatch(1);
-        Set<String> sessionIds = ConcurrentHashMap.newKeySet();
+        // codex r0 P2：逐线程收集结果（会话 ID 或异常），不吞任何失败
+        List<RedeemOutcome> outcomes = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch done = new CountDownLatch(threads);
         for (int i = 0; i < threads; i++) {
             pool.submit(() -> {
@@ -108,10 +111,9 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
                     start.await();
                     FileDeliverySessionRespVO session = deliveryService.redeemDeliveryTicket(
                             issued.getTicketToken(), "download", owner, "sess-101");
-                    sessionIds.add(session.getDeliverySessionId());
-                } catch (Exception ignored) {
-                    // 同主体同会话并发兑换不应出现拒绝；即便调度异常导致个别失败，
-                    // 会话唯一性与票据行数守卫仍由下方断言保证
+                    outcomes.add(RedeemOutcome.ok(session.getDeliverySessionId()));
+                } catch (Exception ex) {
+                    outcomes.add(RedeemOutcome.fail(ex));
                 } finally {
                     done.countDown();
                 }
@@ -121,7 +123,13 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
         assertTrue(done.await(30, TimeUnit.SECONDS), "并发兑换应在时限内完成");
         pool.shutdown();
 
-        assertEquals(1, sessionIds.size(), "并发兑换必须收敛到唯一下载会话（CAS 恰好一次）");
+        assertEquals(threads, outcomes.size(), "8 个线程必须全部返回");
+        for (RedeemOutcome outcome : outcomes) {
+            assertNull(outcome.error(), "同主体同会话并发兑换不得出现拒绝/异常");
+            assertNotNull(outcome.sessionId());
+        }
+        assertEquals(1, outcomes.stream().map(RedeemOutcome::sessionId).distinct().count(),
+                "并发兑换必须收敛到唯一下载会话（CAS 恰好一次）");
         List<FileDeliveryTicketDO> tickets = ticketMapper.selectList();
         assertEquals(1, tickets.size(), "并发兑换不得新增票据行");
         assertEquals(FileDeliveryTicketDO.STATUS_REDEEMED, tickets.get(0).getStatus());
@@ -139,16 +147,17 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
         int impostors = 6;
         ExecutorService pool = Executors.newFixedThreadPool(1 + impostors);
         CountDownLatch start = new CountDownLatch(1);
-        Set<String> sessionIds = ConcurrentHashMap.newKeySet();
-        Set<Integer> rejected = ConcurrentHashMap.newKeySet();
+        // codex r0 P2：逐线程记录结果——每个冒名线程都必须以 FORBIDDEN 失败，任何冒名成功都判失败
+        List<RedeemOutcome> outcomes = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch done = new CountDownLatch(1 + impostors);
         // 1 个主体线程 + N 个冒名线程同时兑换
         pool.submit(() -> {
             try {
                 start.await();
-                sessionIds.add(deliveryService.redeemDeliveryTicket(
-                        issued.getTicketToken(), "download", owner, "sess-101").getDeliverySessionId());
-            } catch (Exception ignored) {
+                outcomes.add(RedeemOutcome.ok(deliveryService.redeemDeliveryTicket(
+                        issued.getTicketToken(), "download", owner, "sess-101").getDeliverySessionId()));
+            } catch (Exception ex) {
+                outcomes.add(RedeemOutcome.fail(ex));
             } finally {
                 done.countDown();
             }
@@ -158,11 +167,11 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
             pool.submit(() -> {
                 try {
                     start.await();
-                    deliveryService.redeemDeliveryTicket(issued.getTicketToken(), "download",
-                            user(200L + seq, 1L), "sess-impostor-" + seq);
-                } catch (ServiceException ex) {
-                    rejected.add(ex.getCode());
-                } catch (Exception ignored) {
+                    outcomes.add(RedeemOutcome.ok(deliveryService.redeemDeliveryTicket(
+                            issued.getTicketToken(), "download", user(200L + seq, 1L),
+                            "sess-impostor-" + seq).getDeliverySessionId()));
+                } catch (Exception ex) {
+                    outcomes.add(RedeemOutcome.fail(ex));
                 } finally {
                     done.countDown();
                 }
@@ -172,9 +181,20 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
         assertTrue(done.await(30, TimeUnit.SECONDS), "并发兑换应在时限内完成");
         pool.shutdown();
 
-        assertEquals(1, sessionIds.size(), "仅主体本人兑换成功");
-        assertEquals(1, rejected.size(), "冒名线程全部按同一 FORBIDDEN 码拒绝");
-        assertTrue(rejected.contains(FILE_DELIVERY_TICKET_FORBIDDEN.getCode()));
+        assertEquals(1 + impostors, outcomes.size(), "全部线程必须返回结果");
+        for (RedeemOutcome outcome : outcomes) {
+            if (outcome.ownerResult()) {
+                assertNull(outcome.error(), "主体本人兑换应成功");
+                assertNotNull(outcome.sessionId());
+            } else {
+                assertNotNull(outcome.error(), "冒名兑换必须失败");
+                assertTrue(outcome.error() instanceof ServiceException
+                                && ((ServiceException) outcome.error()).getCode() == FILE_DELIVERY_TICKET_FORBIDDEN.getCode(),
+                        "冒名兑换必须按 FORBIDDEN 拒绝");
+            }
+        }
+        assertEquals(1, outcomes.stream().filter(RedeemOutcome::ownerResult)
+                .map(RedeemOutcome::sessionId).distinct().count(), "仅主体本人兑换成功");
         FileDeliveryTicketDO ticket = ticketMapper.selectList().get(0);
         assertEquals(FileDeliveryTicketDO.STATUS_REDEEMED, ticket.getStatus());
         assertEquals(101L, ticket.getOwnerUserId(), "会话主体必须为票据绑定主体");
@@ -192,6 +212,25 @@ public class DeliveryTicketConcurrencyTest extends BaseDbUnitTest {
         ServiceException ex = assertThrowsServiceException(() -> deliveryService.readDeliveryChunk(
                 session.getDeliverySessionId(), 0L, 9L, owner, "sess-101"));
         assertEquals(FILE_DELIVERY_TICKET_REVOKED.getCode(), ex.getCode());
+    }
+
+    /**
+     * 并发兑换逐线程结果（codex r0 P2：不吞异常、按线程断言）。
+     */
+    private record RedeemOutcome(String sessionId, Exception error) {
+
+        static RedeemOutcome ok(String sessionId) {
+            return new RedeemOutcome(sessionId, null);
+        }
+
+        static RedeemOutcome fail(Exception error) {
+            return new RedeemOutcome(null, error);
+        }
+
+        boolean ownerResult() {
+            return error == null;
+        }
+
     }
 
     // ========== 造数辅助 ==========
