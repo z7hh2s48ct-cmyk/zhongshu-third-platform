@@ -184,6 +184,23 @@ describe('buildRouteAccessSnapshot：服务端菜单树 → 授权注册表（�
       'infra',
     ])
   })
+  it('r3-P2：leafPatterns 只含无 children 的叶子节点，容器节点被排除', () => {
+    const s = buildRouteAccessSnapshot([
+      { path: '/mall/promotion/diy-template', children: [{ path: 'diy-page' }] },
+      { path: '/system/user' },
+    ])
+    expect(s.leafPatterns).toContain('/system/user')
+    expect(s.leafPatterns).toContain('/mall/promotion/diy-template/diy-page')
+    expect(s.leafPatterns).not.toContain('/mall/promotion/diy-template')
+  })
+  it('r3-P2：同一路径兼有叶子与容器两形态时按容器剔除（安全侧收敛）', () => {
+    const s = buildRouteAccessSnapshot([
+      { path: '/a/b' },
+      { path: '/a/b', children: [{ path: 'c' }] },
+    ])
+    expect(s.menuPatterns).toContain('/a/b')
+    expect(s.leafPatterns).not.toContain('/a/b')
+  })
 })
 
 describe('isPublicRoute / isPreAuthRoute：应用外壳与登录前白名单', () => {
@@ -381,6 +398,40 @@ describe('验收②反向：未注册路由默认拒绝 ↔ 合法页不被误�
   it('锚点可通过「锚点目录内存在任一授权菜单」命中（activeMenu 与真实菜单层级不一致时不误伤）', () => {
     const s = buildRouteAccessSnapshot([{ path: '/mall/promotion/diy-template/diy-template' }])
     expect(hasRouteAccess('/diy/template/decorate/7', s)).toBe(true)
+  })
+  it('r3-P2 回归：容器态 517（带 children）不构成模板装修入口——{517,524} 模板拒绝、页面放行', () => {
+    // 种子形态：id=517「商城装修」带 children（此处 524 装修页面留存、518 被套餐过滤），
+    // routerHelper.ts:158 将其替换为 ParentLayout → 点击只会重定向到 524，无模板列表入口
+    const s = buildRouteAccessSnapshot([
+      { path: '/mall/promotion/diy-template', children: [{ path: 'diy-page' }] },
+    ])
+    expect(hasRouteAccess('/diy/template/decorate/7', s)).toBe(false)
+    expect(hasRouteAccess('/diy/page/decorate/7', s)).toBe(true)
+  })
+  it('r3-P2 回归：容器态 517（带 children）不构成页面装修入口——{517,518} 页面拒绝、模板放行', () => {
+    const s = buildRouteAccessSnapshot([
+      { path: '/mall/promotion/diy-template', children: [{ path: 'diy-template' }] },
+    ])
+    expect(hasRouteAccess('/diy/page/decorate/7', s)).toBe(false)
+    expect(hasRouteAccess('/diy/template/decorate/7', s)).toBe(true)
+  })
+  it('r3-P2 回归：叶子态 517（无 children）仍作为模板装修旧入口精确放行，且不扩散给页面装修', () => {
+    const s = buildRouteAccessSnapshot([{ path: '/mall/promotion/diy-template' }])
+    expect(s.leafPatterns).toContain('/mall/promotion/diy-template')
+    expect(hasRouteAccess('/diy/template/decorate/7', s)).toBe(true)
+    expect(hasRouteAccess('/diy/page/decorate/7', s)).toBe(false)
+  })
+  it('r3-P2 回归：真实种子双子形态下两页各由其自己入口放行，不因共享父节点互通', () => {
+    const both = buildRouteAccessSnapshot([
+      { path: '/mall/promotion/diy-template', children: [{ path: 'diy-template' }, { path: 'diy-page' }] },
+    ])
+    expect(hasRouteAccess('/diy/template/decorate/7', both)).toBe(true)
+    expect(hasRouteAccess('/diy/page/decorate/7', both)).toBe(true)
+    // 仅持 518 时不放行页面装修（容器 517 不扩散）
+    const onlyTemplate = buildRouteAccessSnapshot([
+      { path: '/mall/promotion/diy-template', children: [{ path: 'diy-template' }] },
+    ])
+    expect(hasRouteAccess('/diy/page/decorate/7', onlyTemplate)).toBe(false)
   })
 })
 

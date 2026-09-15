@@ -93,6 +93,13 @@ export interface MenuRouteNode {
 export interface RouteAccessSnapshot {
   /** 服务端下发菜单解析出的绝对路径模式（可含 `:param` 段） */
   menuPatterns: string[]
+  /**
+   * r3-P2：menuPatterns 中**无 children 的叶子节点**子集——当前菜单树中实际承载页面
+   * （可被导航、渲染组件）的节点。带 children 的节点会被 utils/routerHelper.ts:158
+   * 替换为 ParentLayout 容器（仅作 router-view 占位 / 重定向），不渲染页面组件。
+   * 用途：exactAnchors 精确锚点判定必须命中叶子节点，防止容器节点把授权扩散给兄弟菜单。
+   */
+  leafPatterns: string[]
   /** 由 menuPatterns 派生的祖先目录前缀，用于「锚点目录内存在任一授权菜单」判定 */
   menuPrefixes: string[]
   /** 是否下发了外链菜单（决定 `/external-link/**` 落点是否可达） */
@@ -111,16 +118,19 @@ export interface StaticRouteAccessEntry {
   pattern: string
   anchors: string[]
   /**
-   * r2-P2：页面节点精确锚点——仅当服务端菜单**精确等于**该路径时授权，
-   * 不参与「目录内存在任一授权菜单」的祖先前缀命中。
-   * 适用场景：某菜单节点自身即真实页面（携带组件、可导航），同时又是其它菜单的父路径；
-   * 它可作为所承载页面的入口，但不得以父路径身份向兄弟菜单扩散授权。
+   * r2-P2 / r3-P2：页面节点精确锚点——仅当服务端菜单中该路径为**叶子节点**
+   * （无 children，实际承载页面）时精确命中：
+   *   r2-P2：不参与「目录内存在任一授权菜单」的祖先前缀命中；
+   *   r3-P2：带 children 的节点会被 utils/routerHelper.ts:158 替换为 ParentLayout 容器，
+   *          不再承载页面，故容器节点（如种子 id=517 同持 524 的形态）一律不作为入口。
+   * 适用场景：某菜单节点自身即真实页面（携带组件、可导航），同时又是其它菜单的父路径。
    */
   exactAnchors?: string[]
 }
 
 const EMPTY_SNAPSHOT: RouteAccessSnapshot = {
   menuPatterns: [],
+  leafPatterns: [],
   menuPrefixes: [],
   hasExternalMenu: false,
   enabledModules: null
@@ -135,8 +145,10 @@ const EMPTY_SNAPSHOT: RouteAccessSnapshot = {
  * anchors 语义（多入口共享页须登记全部合法入口，不得压平为单一锚点，r0-P2 教训）：
  *   - 锚点精确命中服务端菜单，或
  *   - 锚点目录内存在任一服务端授权菜单（应对 activeMenu 与真实菜单层级不一致）
- * exactAnchors 语义（r2-P2）：**只做精确命中**，绝不启用目录前缀命中——
- *   用于「节点自身即页面、同时又是父路径」的场景（区分实际页面节点与容器节点）。
+ * exactAnchors 语义（r2-P2 / r3-P2）：**只做精确命中**且**只认叶子节点**——
+ *   r2-P2：绝不启用目录前缀命中，用于「节点自身即页面、同时又是父路径」的场景；
+ *   r3-P2：带 children 的节点被 routerHelper 替换为 ParentLayout 容器，不再承载页面，
+ *          故 exactAnchor 须命中 leafPatterns（无 children 节点）才放行，容器节点一律不认。
  */
 export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   // ---- 系统 / 基础设施（activeMenu 指向 system、infra 下的真实菜单）----
@@ -210,8 +222,11 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   {
     pattern: '/diy/template/decorate/:id',
     anchors: ['/mall/promotion/diy-template/diy-template'],
-    // id=517 是页面节点（type=2，component 即模板列表页 mall/promotion/diy/template/index），
-    // 直接点击即进入模板列表 → 作为模板装修的旧入口仅精确命中，不得经前缀向兄弟菜单扩散
+    // r3-P2：id=517 自身携带 component（模板列表页），但种子中它是 518/524 的父节点；
+    // 菜单树带 children 时 utils/routerHelper.ts:158 将其替换为 ParentLayout 容器
+    // （点击只会重定向到子菜单），不再有模板列表入口语义。
+    // 仅当 517 以**无 children 叶子形态**出现（旧部署 / 精简菜单树）才作为模板装修旧入口，
+    // 且只精确命中（leafPatterns），不得经前缀向兄弟菜单扩散
     exactAnchors: ['/mall/promotion/diy-template']
   },
   {
@@ -509,6 +524,10 @@ function matchAnyPattern(patterns: string[], path: string): boolean {
 
 interface CollectState {
   patterns: string[]
+  /** r3-P2：无 children 的叶子节点（实际承载页面） */
+  leafPatterns: string[]
+  /** r3-P2：带 children 的容器节点（被 routerHelper 替换为 ParentLayout，不渲染页面） */
+  containerPatterns: string[]
   hasExternalMenu: boolean
 }
 
@@ -522,6 +541,9 @@ function collectMenuNodes(nodes: unknown, parentPath: string, state: CollectStat
     }
     const record = node as MenuRouteNode
     const rawPath = typeof record.path === 'string' ? record.path.trim() : ''
+    // r3-P2：与 utils/routerHelper.ts:158 同款判定——带 children 的节点被替换为
+    // ParentLayout 容器，不渲染页面组件，因此只有无 children 的节点才实际承载页面。
+    const hasChildren = Array.isArray(record.children) && record.children.length > 0
     let currentParent = parentPath
     if (rawPath.length > 0) {
       if (isExternalUrl(rawPath)) {
@@ -531,6 +553,13 @@ function collectMenuNodes(nodes: unknown, parentPath: string, state: CollectStat
         const resolved = joinMenuPath(parentPath, rawPath)
         if (state.patterns.indexOf(resolved) === -1) {
           state.patterns.push(resolved)
+        }
+        if (hasChildren) {
+          if (state.containerPatterns.indexOf(resolved) === -1) {
+            state.containerPatterns.push(resolved)
+          }
+        } else if (state.leafPatterns.indexOf(resolved) === -1) {
+          state.leafPatterns.push(resolved)
         }
         currentParent = resolved
       }
@@ -559,7 +588,12 @@ export function buildRouteAccessSnapshot(
   menus: MenuRouteNode[] | null | undefined,
   enabledModules: string[] | null = null
 ): RouteAccessSnapshot {
-  const state: CollectState = { patterns: [], hasExternalMenu: false }
+  const state: CollectState = {
+    patterns: [],
+    leafPatterns: [],
+    containerPatterns: [],
+    hasExternalMenu: false
+  }
   collectMenuNodes(menus, ROOT_ROUTE, state)
 
   const menuPrefixes: string[] = []
@@ -571,8 +605,15 @@ export function buildRouteAccessSnapshot(
     })
   })
 
+  // r3-P2：同一路径若在任何位置以「带 children 容器」形态出现，即从叶子集合剔除——
+  // 路由表对该路径渲染的是容器而非页面，安全侧收敛（不放行 exactAnchor 不扩大授权面）。
+  const leafPatterns = state.leafPatterns.filter(
+    (pattern) => state.containerPatterns.indexOf(pattern) === -1
+  )
+
   return {
     menuPatterns: state.patterns,
+    leafPatterns,
     menuPrefixes,
     hasExternalMenu: state.hasExternalMenu,
     enabledModules: Array.isArray(enabledModules) ? enabledModules.slice() : null
@@ -583,6 +624,7 @@ export function buildRouteAccessSnapshot(
 export function emptyRouteAccessSnapshot(): RouteAccessSnapshot {
   return {
     menuPatterns: [],
+    leafPatterns: [],
     menuPrefixes: [],
     hasExternalMenu: false,
     enabledModules: null
@@ -604,11 +646,16 @@ function isAnchorAuthorized(anchor: string, snapshot: RouteAccessSnapshot): bool
 }
 
 /**
- * r2-P2：页面节点精确锚点判定——仅①精确命中，不启用②目录前缀命中。
- * 防止「节点自身是页面、同时又是父路径」的菜单把授权扩散给兄弟菜单。
+ * r2-P2 / r3-P2：页面节点精确锚点判定——仅①精确命中，不启用②目录前缀命中，
+ * 且只认 leafPatterns（当前菜单树中无 children、实际承载页面的节点）。
+ *
+ * r3-P2 教训：种子 id=517「商城装修」自身携带 component，但又是 518/524 的父节点；
+ * 菜单树带 children 时 utils/routerHelper.ts:158 将其替换为 ParentLayout 容器
+ * （点击仅重定向到子菜单，无页面入口语义）。若仍按 menuPatterns 扁平命中放行，
+ * 「仅持 {517,524}」的用户即可越权打开模板装修。
  */
 function isExactAnchorAuthorized(anchor: string, snapshot: RouteAccessSnapshot): boolean {
-  return matchAnyPattern(snapshot.menuPatterns, normalizeRoutePath(anchor))
+  return matchAnyPattern(snapshot.leafPatterns, normalizeRoutePath(anchor))
 }
 
 function matchStaticEntries(path: string): StaticRouteAccessEntry[] {
