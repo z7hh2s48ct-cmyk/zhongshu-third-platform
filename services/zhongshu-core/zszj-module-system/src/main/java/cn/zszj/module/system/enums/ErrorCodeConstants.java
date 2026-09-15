@@ -216,4 +216,13 @@ public interface ErrorCodeConstants {
     // 没有「本人会话」语义，拒绝其列出 / 撤销同为 userId=0 的其它客户端会话（跨客户端越权）
     ErrorCode OAUTH2_TOKEN_SESSION_SELF_REQUIRES_USER = new ErrorCode(1_002_029_001, "自助会话管理要求真实用户登录态");
 
+
+    // ========== 业务待办 1-002-030-000（ZS-MSG-002） ==========
+    ErrorCode NOTIFY_TODO_KEY_REQUIRED = new ErrorCode(1_002_030_001, "业务待办缺少稳定任务 ID（todoKey），拒绝写入");
+    ErrorCode NOTIFY_TODO_RECIPIENT_REQUIRED = new ErrorCode(1_002_030_002, "业务待办缺少收件人，拒绝写入");
+    ErrorCode NOTIFY_TODO_EVENT_ID_REQUIRED = new ErrorCode(1_002_030_003, "业务待办流转缺少 eventId（幂等键），拒绝处理");
+    ErrorCode NOTIFY_TODO_NOT_FOUND = new ErrorCode(1_002_030_004, "业务待办不存在");
+    ErrorCode NOTIFY_TODO_WRITE_FAILED = new ErrorCode(1_002_030_005, "业务待办写入失败");
+    ErrorCode NOTIFY_TODO_TENANT_REQUIRED = new ErrorCode(1_002_030_006, "业务待办缺少租户上下文，拒绝写入");
+    ErrorCode NOTIFY_TODO_FIELD_REQUIRED = new ErrorCode(1_002_030_007, "业务待办缺少必填字段：{}");
 }
