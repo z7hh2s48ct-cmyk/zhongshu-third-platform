@@ -91,7 +91,8 @@ function isApostropheWord(text, i) {
  * 构建 SQL 词法上下文图：map[k] = 词法器「到达」字符 k 时所处状态。
  * 跟踪 PostgreSQL 全部引用上下文并跨行保持状态：
  *   -- 行注释、/* 块注释（可嵌套）、'单引号串'（'' 转义）、"双引号标识符"（"" 转义）、
- *   $tag$美元引用$tag$、E'反斜杠转义串'（codex r6 P2-5）。
+ *   $tag$美元引用$tag$、E'反斜杠转义串'（codex r6 P2-5）；美元体内注释以缓存的闭合
+ *   定界符为消费上限（r12 P2-8：原每个体内注释都先扫到全文 EOF 再截回，O(n²)）。
  * 片段级配对（codex r6 P2-3）：注释内 / 美元引用内的 SQL 文本按「独立片段」配对单引号——
  * 闭合引号 map 记 CTX_SINGLE_QUOTE，片段边界（行尾 / 块注释闭合 / 美元定界符）强制复位，
  * 片段内撇号不跨边界污染；自然语言撇号（字母夹引号，如 application's）不参与配对（r7 P2-3）。由此：注释里被注释掉的拼接表达式引号角色判定正确（不误报），
@@ -107,6 +108,7 @@ function sqlContextMap(text) {
   let blockDepth = 0;
   let dollarTag = '';
   let fragSq = false; // 注释 / 美元引用片段内的单引号配对（片段边界强制复位）
+  let dollarClose = -1; // r12 P2-8：美元引用体闭合定界符位置（进入体内时一次定位，注释 / 闭合检测复用）
   let i = 0;
   while (i < n) {
     map[i] = state; // 记录「到达」状态（字面量起始引号在此记为外层状态）
@@ -133,7 +135,12 @@ function sqlContextMap(text) {
         state = CTX_ESCAPE_STRING; i += 2; continue;
       }
       const tag = matchDollarTag(text, i);
-      if (tag) { state = CTX_DOLLAR_QUOTE; dollarTag = tag; fragSq = false; i += tag.length; continue; }
+      if (tag) {
+        state = CTX_DOLLAR_QUOTE; dollarTag = tag; fragSq = false;
+        const dc = text.indexOf(tag, i + tag.length); // r12 P2-8：一次定位闭合定界符
+        dollarClose = dc < 0 ? n : dc;
+        i += tag.length; continue;
+      }
       i += 1; continue;
     }
     if (state === CTX_LINE_COMMENT) {
@@ -178,9 +185,10 @@ function sqlContextMap(text) {
       i += 1; continue;
     }
     // CTX_DOLLAR_QUOTE：扫描至匹配的美元定界符；片段内配对单引号（定界符处复位）
-    if (text.startsWith(dollarTag, i)) {
+    // r12 P2-8：以进入时缓存的闭合位置判闭合（注释 / 字符串跳过不越过该位置）
+    if (i === dollarClose) {
       for (let k = i; k < i + dollarTag.length && k < n; k++) map[k] = CTX_DOLLAR_QUOTE;
-      state = CTX_NORMAL; fragSq = false; i += dollarTag.length; continue;
+      state = CTX_NORMAL; fragSq = false; dollarClose = -1; i += dollarTag.length; continue;
     }
     // 体内注释（r10 P2-7；r11 P2-6/7 加固）：
     //   - 注释消费以美元闭合定界符为上限（r11 P2-7）——-- / /* */ 不得跨过 $$，
@@ -191,15 +199,13 @@ function sqlContextMap(text) {
     if (!fragSq && c === '-' && nx === '-') {
       let nl = text.indexOf('\n', i);
       if (nl < 0) nl = n;
-      const closeAt = text.indexOf(dollarTag, i);
-      if (closeAt >= 0 && closeAt < nl) nl = closeAt;
+      if (dollarClose >= 0 && dollarClose < nl) nl = dollarClose; // r12 P2-8：复用闭合位置
       markFragmentQuotePairs(map, text, i, nl, CTX_DOLLAR_QUOTE);
       i = nl; continue;
     }
     if (!fragSq && c === '/' && nx === '*') {
-      let end = skipBlockComment(text, i, 0);
-      const closeAt = text.indexOf(dollarTag, i);
-      if (closeAt >= 0 && closeAt < end) end = closeAt;
+      let end = skipBlockComment(text, i, 0, dollarClose); // r12 P2-8：以闭合定界符为实际扫描上限
+      if (dollarClose >= 0 && dollarClose < end) end = dollarClose;
       markFragmentQuotePairs(map, text, i, end, CTX_DOLLAR_QUOTE);
       i = end; continue;
     }
@@ -215,19 +221,22 @@ function sqlContextMap(text) {
 }
 
 /**
- * 按嵌套深度消费块注释（codex r8 P2-1）。
+ * 按嵌套深度消费块注释（codex r8 P2-1；r12 P2-8 加扫描上限）。
  * PostgreSQL 块注释支持嵌套（内层注释可开启于外层注释内部），
  * 用 indexOf 搜索首个结束符会在内层闭合处提前退出，使嵌套后的
  * 文本被误判为注释外，导致漏检。
+ * r12 P2-8：`limit` 给出片段级扫描上限（如美元引用体的闭合定界符位置）——
+ * 注释消费不得越过片段边界，否则体内 `/*` 会先扫到全文 EOF 再截回（O(n²)）。
  * @param {string} text
  * @param {number} from 起点；initialDepth=0 时指向注释开端 `/*` 的 `/`
  * @param {number} initialDepth 0=from 为注释开端；1=from 已在注释内
- * @returns {number} 注释结束后的索引（未闭合则文本长度）
+ * @param {number} [limit] 扫描上限（不含）；默认文本长度
+ * @returns {number} 注释结束后的索引（未闭合则 limit）
  */
-function skipBlockComment(text, from, initialDepth) {
+function skipBlockComment(text, from, initialDepth, limit = text.length) {
   let depth = initialDepth;
   let i = from;
-  const n = text.length;
+  const n = Math.min(limit, text.length);
   while (i < n) {
     if (text[i] === '/' && text[i + 1] === '*') { depth += 1; i += 2; continue; }
     if (text[i] === '*' && text[i + 1] === '/') { depth -= 1; i += 2; if (depth <= 0) return i; continue; }
@@ -344,6 +353,25 @@ function decodeYamlDouble(raw) {
 }
 
 /**
+ * YAML 属性名（anchor / tag）消费终点（r12 P2-1）：按 ns-char 词法消费至空白或
+ * 流指示符（`,` `[` `]` `{` `}`）；`:` 后跟空白 / 流指示符为映射分隔符同样终止。
+ * 原 `/[A-Za-z0-9_-]/` 字符集在 `&a.b` 的点号处截断属性——随后的 `.` 关闭
+ * scalarStart，引用键（如 "k # x"）内的 `#` 被误判为行尾注释起点，块标量头漏识别
+ * （YAML 规范允许 anchor 名包含点号等 ns-char）。
+ * @param {string} line
+ * @param {number} from 属性名起点
+ * @returns {number} 属性名终点（其后首个非属性字符位置）
+ */
+function yamlAttrNameEnd(line, from) {
+  let j = from;
+  while (j < line.length && !/[\s\[\]{},]/.test(line[j])) {
+    if (line[j] === ':' && (j + 1 >= line.length || /[\s\[\]{},]/.test(line[j + 1]))) break;
+    j += 1;
+  }
+  return j;
+}
+
+/**
  * YAML 块标量头识别（codex r9 P2-2；r10 P2-1/2/3 词法边界加固）：仅在实际节点内容
  * 起点识别 | / > 指示符——先按 YAML 规则剥行尾注释（引号外的 `#`，位于行首或空白
  * 之后），再匹配 `|`/`>` + 缩进指示数字 + chomping 符号（`|2-` 与 `|-2` 两种顺序均合法）。
@@ -380,12 +408,12 @@ function matchYamlBlockHeader(line) {
     if (scalarStart && (c === '&' || c === '!')) { // 节点属性后仍是标量起始（r11 P2-2）
       let j = k + 1;
       if (c === '&') {
-        while (j < line.length && /[A-Za-z0-9_-]/.test(line[j])) j += 1;
+        j = yamlAttrNameEnd(line, j); // r12 P2-1：anchor 名按 YAML 词法完整消费（含点号 / 非 ASCII）
       } else if (line[j] === '<') {
         const gt = line.indexOf('>', j + 1);
         j = gt < 0 ? line.length : gt + 1;
       } else {
-        while (j < line.length && /[A-Za-z0-9_!-]/.test(line[j])) j += 1;
+        j = yamlAttrNameEnd(line, j); // r12 P2-1：tag 名同样完整消费
       }
       k = j - 1;
       continue;
@@ -587,7 +615,7 @@ function scanSqlText(text) {
   const n = text.length;
   if (!n) return found;
   const ctxMap = sqlContextMap(text);
-  const parenDepth = buildParenDepthMap(text, ctxMap); // r11 P2-10：深度缓存（原逐候选重扫 O(n²)）
+  const { depthAt: parenDepth, openAt } = buildParenDepthMap(text, ctxMap); // r11 P2-10 深度缓存；r12 P2-6 括号层开括号索引
   const lineStarts = [0];
   for (let k = 0; k < n; k++) if (text[k] === '\n') lineStarts.push(k + 1);
   const lineNo = (idx) => {
@@ -601,7 +629,7 @@ function scanSqlText(text) {
   for (const m of text.matchAll(SQL_SETPASS_KEYWORD_RE)) cands.push({ pos: m.index, end: m.index + m[0].length, kind: 'setpass' });
   cands.sort((a, b) => a.pos - b.pos);
   for (const cand of cands) {
-    const hit = scanCandidate(text, ctxMap, cand, parenDepth);
+    const hit = scanCandidate(text, ctxMap, cand, parenDepth, openAt);
     if (hit) {
       const stmtLabel = cand.kind === 'setpass' ? 'psql \\set ' : 'SQL ';
       found.push({ line: lineNo(hit.at), at: hit.at, message: stmtLabel + hit.message + hit.value.slice(0, 20) });
@@ -787,20 +815,54 @@ function splitCallArgs(text, ctxMap, from, maxArgCount) {
 }
 
 /**
- * 括号深度缓存（r11 P2-4/P2-10）：一次线性扫描生成「每个位置左侧未闭合括号数」，
- * 供候选的表达式窗口深度 O(1) 读取（替代原逐候选全文重扫的 O(n²) 开放括号计数）。
- * 语义：字符串字面量 / 引用标识符整体跳过（串内括号不参与）；注释区间（行 / 块）整体
- * 跳过（r11 P2-4：注释内括号属注释词法层，不抵消外层深度）；`;`（NORMAL 上下文）重置
- * 计数、深度不为负；美元引用体内括号照常计入（被引用代码的括号结构有效）。
+ * 括号深度缓存（r11 P2-4/P2-10；r12 P2-2/P2-3/P2-6 扩展）：一次线性扫描生成
+ * 「每个位置左侧未闭合括号数」与「每个位置所在括号层的开括号索引」，
+ * 供候选的表达式窗口深度与 CAST 判定 O(1) 读取（替代原逐候选全文重扫的 O(n²)）。
+ * 语义：字符串字面量 / 引用标识符整体跳过（串内括号不参与）；注释区间（行 / 块）
+ * 按独立片段编制深度（r12 P2-2：从 0 起、( +1 / ) -1——注释不影响外层计数，
+ * 但注释内候选的 exprDepth 必须读取片段自身的包装括号）；`;`（NORMAL 上下文）
+ * 重置计数与括号栈、深度不为负；美元引用体做局部重扫（r12 P2-3）：体内注释 /
+ * 字符串跳过，体内代码括号照常计入外层深度（被引用代码的括号结构有效）。
  * @param {string} text
  * @param {Uint8Array} ctxMap
- * @returns {Int32Array} 长度 text.length+1；depthAt[pos] = pos 左侧未闭合括号数
+ * @returns {{depthAt: Int32Array, openAt: Int32Array}} depthAt[pos] = pos 左侧未闭合
+ *   括号数；openAt[pos] = pos 所在括号层的开括号索引（顶层 / 片段内为 -1）
  */
 function buildParenDepthMap(text, ctxMap) {
   const n = text.length;
   const depthAt = new Int32Array(n + 1);
+  const openAt = new Int32Array(n).fill(-1);
+  const openStack = []; // r12 P2-6：未闭合左括号位置栈（与 count 同步，`;` 清空）
   let count = 0;
   let i = 0;
+  const topOpen = () => (openStack.length ? openStack[openStack.length - 1] : -1);
+  // 注释文本的片段深度编制（r12 P2-2/P2-3）：从 0 起逐位置填 ( +1 / ) -1；
+  // 片段内字符串整体跳过（'' / \' 转义；串内括号不参与片段深度）
+  const fillFragment = (from, to) => {
+    const end = Math.min(to, n);
+    let d = 0;
+    let k = from;
+    while (k < end) {
+      const cc = text[k];
+      depthAt[k] = d;
+      if (cc === "'") {
+        k += 1;
+        while (k < end) {
+          if (text[k] === "'") {
+            if (text[k + 1] === "'") { depthAt[k] = d; depthAt[k + 1] = d; k += 2; continue; }
+            depthAt[k] = d; k += 1; break;
+          }
+          if (text[k] === '\\' && text[k + 1] === "'") { depthAt[k] = d; depthAt[k + 1] = d; k += 2; continue; }
+          depthAt[k] = d;
+          k += 1;
+        }
+        continue;
+      }
+      if (cc === '(') d += 1;
+      else if (cc === ')') d = d > 0 ? d - 1 : 0;
+      k += 1;
+    }
+  };
   while (i < n) {
     const c = text[i];
     const ctx = ctxMap[i];
@@ -809,16 +871,69 @@ function buildParenDepthMap(text, ctxMap) {
       let nl = text.indexOf('\n', i);
       if (nl < 0) nl = n;
       if (nl === i) nl += 1; // 行尾换行符本身带注释尾标记：推进防零步进
+      fillFragment(start, nl);
       i = nl;
-      depthAt.fill(count, start, i);
       continue;
     }
     if (ctx === CTX_BLOCK_COMMENT) {
       i = skipBlockComment(text, i, 1);
-      depthAt.fill(count, start, i);
+      fillFragment(start, i);
       continue;
     }
-    // 开引号（NORMAL / 片段内配对开形态）整段跳过：串内括号与转义引号不参与
+    if (ctx === CTX_NORMAL && c === '$') { // r12 P2-3：美元引用体局部重扫
+      const tag = matchDollarTag(text, i);
+      if (tag) {
+        const dc = text.indexOf(tag, i + tag.length);
+        const bodyEnd = dc < 0 ? n : dc;
+        depthAt.fill(count, i, i + tag.length); // 开定界符
+        openAt.fill(topOpen(), i, i + tag.length);
+        i += tag.length;
+        while (i < bodyEnd) {
+          const bc = text[i];
+          if (bc === '-' && text[i + 1] === '-') { // 体内行注释：片段深度，不影响外层计数
+            let nl = text.indexOf('\n', i);
+            if (nl < 0 || nl > bodyEnd) nl = bodyEnd;
+            fillFragment(i, nl);
+            i = nl; continue;
+          }
+          if (bc === '/' && text[i + 1] === '*') { // 体内块注释：同上
+            const end = skipBlockComment(text, i, 0, bodyEnd);
+            fillFragment(i, end);
+            i = end; continue;
+          }
+          if (bc === "'") { // 体内字符串整体跳过（'' 转义）：串内括号不参与
+            const strFrom = i;
+            i += 1;
+            while (i < bodyEnd) {
+              if (text[i] === "'") {
+                if (text[i + 1] === "'") { i += 2; continue; }
+                i += 1; break;
+              }
+              if (text[i] === '\\' && text[i + 1] === "'") { i += 2; continue; }
+              i += 1;
+            }
+            depthAt.fill(count, strFrom, i);
+            openAt.fill(topOpen(), strFrom, i);
+            continue;
+          }
+          if (bc === '(') { count += 1; openStack.push(i); depthAt[i] = count; openAt[i] = topOpen(); i += 1; continue; }
+          if (bc === ')') { if (openStack.length) { openStack.pop(); count -= 1; } depthAt[i] = count; openAt[i] = topOpen(); i += 1; continue; }
+          depthAt[i] = count;
+          openAt[i] = topOpen();
+          i += 1;
+        }
+        if (bodyEnd < n) {
+          const end = Math.min(n, bodyEnd + tag.length);
+          depthAt.fill(count, bodyEnd, end); // 闭定界符
+          openAt.fill(topOpen(), bodyEnd, end);
+          i = end;
+        } else {
+          i = n;
+        }
+        continue;
+      }
+    }
+    // 开引号（NORMAL 及片段配对开形态）整段跳过：串内括号与转义引号不参与
     if (c === "'" && (ctx === CTX_NORMAL || ctx === CTX_DOLLAR_QUOTE || ctx === CTX_LINE_COMMENT || ctx === CTX_BLOCK_COMMENT)) {
       i += 1;
       while (i < n) {
@@ -830,6 +945,7 @@ function buildParenDepthMap(text, ctxMap) {
         i += 1;
       }
       depthAt.fill(count, start, i);
+      openAt.fill(topOpen(), start, i);
       continue;
     }
     if (c === '"' && ctx === CTX_NORMAL) {
@@ -842,50 +958,88 @@ function buildParenDepthMap(text, ctxMap) {
         i += 1;
       }
       depthAt.fill(count, start, i);
+      openAt.fill(topOpen(), start, i);
       continue;
     }
-    if (ctx === CTX_NORMAL && c === ';') { count = 0; depthAt[start] = count; i += 1; continue; }
-    if (c === '(') { count += 1; depthAt[start] = count; i += 1; continue; }
-    if (c === ')') { if (count > 0) count -= 1; depthAt[start] = count; i += 1; continue; }
+    if (ctx === CTX_NORMAL && c === ';') { count = 0; openStack.length = 0; depthAt[start] = count; openAt[start] = -1; i += 1; continue; }
+    if (c === '(') { count += 1; openStack.push(start); depthAt[start] = count; openAt[start] = topOpen(); i += 1; continue; }
+    if (c === ')') { if (openStack.length) { openStack.pop(); count -= 1; } depthAt[start] = count; openAt[start] = topOpen(); i += 1; continue; }
     depthAt[start] = count;
+    openAt[start] = topOpen();
     i += 1;
   }
   depthAt[n] = count;
-  return depthAt;
+  return { depthAt, openAt };
 }
 
 /**
- * CAST 类型短语消费（r11 P2-3）：从 AS 之后消费完整类型说明——
+ * CAST 类型短语消费（r11 P2-3；r12 P2-4/P2-5 词法化）：从 AS 之后消费完整类型说明——
  * 多词类型（character varying / double precision）、引用标识符（"text"）、
  * 类型参数（numeric(10,2)）、数组修饰（int[]）、限定名（pg_catalog.text）。
+ * r12 P2-5：引用类型独立解析（"" 转义），不依赖仅由外层 SQL 生成的 ctxMap 标记——
+ * 美元体内双引号带 CTX_DOLLAR_QUOTE 时仍能消费；限定名（pg_catalog."text"）同理。
+ * r12 P2-4：类型参数按局部词法配对——注释 / 字符串 / 双引号整体跳过（类型参数内
+ * 注释中的闭括号不参与配对）；类型词之间的注释按空白消费。
  * 仅消费类型成分，遇其它字符（`)` `,` `||` 等）即交还主状态机。
  * @param {string} text
- * @param {Uint8Array} ctxMap
  * @param {number} from AS 词末尾
  * @param {number} n
  * @returns {number} 类型短语末尾（其后首个非类型字符位置）
  */
-function consumeCastType(text, ctxMap, from, n) {
+function consumeCastType(text, from, n) {
   let k = from;
   for (;;) {
-    while (k < n && /\s/.test(text[k])) k += 1;
+    // 类型词之间的注释按空白消费（r12 P2-4）
+    for (;;) {
+      if (k < n && /\s/.test(text[k])) { k += 1; continue; }
+      if (k < n && text[k] === '-' && text[k + 1] === '-') { const nl = text.indexOf('\n', k); k = nl < 0 ? n : nl; continue; }
+      if (k < n && text[k] === '/' && text[k + 1] === '*') { k = skipBlockComment(text, k, 0); continue; }
+      break;
+    }
     const ch = text[k];
-    if (ch === '"' && ctxMap[k] === CTX_NORMAL) {
+    if (ch === '"') { // 引用标识符独立解析（r12 P2-5）："" 转义对
       k += 1;
       while (k < n) {
-        if (text[k] === '"' && ctxMap[k] === CTX_DOUBLE_QUOTE) {
-          if (text[k + 1] === '"' && ctxMap[k + 1] === CTX_DOUBLE_QUOTE) { k += 2; continue; } // "" 转义对
+        if (text[k] === '"') {
+          if (text[k + 1] === '"') { k += 2; continue; }
           k += 1; break;
         }
         k += 1;
       }
       continue;
     }
-    if (ch === '(') { // 类型参数（varchar(255) / numeric(10,2)）按括号深度整体消费
-      let d = 1; k += 1;
+    if (ch === '(') { // 类型参数按局部词法配对（r12 P2-4）：注释 / 字符串 / 双引号内括号不参与
+      let d = 1;
+      k += 1;
       while (k < n && d > 0) {
-        if (text[k] === '(') d += 1;
-        else if (text[k] === ')') d -= 1;
+        const cc = text[k];
+        if (cc === '-' && text[k + 1] === '-') { const nl = text.indexOf('\n', k); k = nl < 0 ? n : nl; continue; }
+        if (cc === '/' && text[k + 1] === '*') { k = skipBlockComment(text, k, 0); continue; }
+        if (cc === "'") {
+          k += 1;
+          while (k < n) {
+            if (text[k] === "'") {
+              if (text[k + 1] === "'") { k += 2; continue; }
+              k += 1; break;
+            }
+            if (text[k] === '\\' && text[k + 1] === "'") { k += 2; continue; }
+            k += 1;
+          }
+          continue;
+        }
+        if (cc === '"') {
+          k += 1;
+          while (k < n) {
+            if (text[k] === '"') {
+              if (text[k + 1] === '"') { k += 2; continue; }
+              k += 1; break;
+            }
+            k += 1;
+          }
+          continue;
+        }
+        if (cc === '(') d += 1;
+        else if (cc === ')') d -= 1;
         k += 1;
       }
       continue;
@@ -897,21 +1051,50 @@ function consumeCastType(text, ctxMap, from, n) {
 }
 
 /**
- * 跳到当前括号层的右括号（r11 P2-5）：子查询 WHERE 的筛选条件整体跳过——
- * 跟踪相对深度（`(` +1 / `)` 归零即本层闭括号）、字符串 / 注释 / 美元引用
+ * 跳到当前括号层的右括号（r11 P2-5；r12 P2-7 片段模式）：子查询 WHERE 的筛选条件
+ * 整体跳过——跟踪相对深度（`(` +1 / `)` 归零即本层闭括号）、字符串 / 注释 / 美元引用
  * 区间不参与；NORMAL 上下文分号即语句边界（返回 -1）。
+ * r12 P2-7：`fragCtx >= 0` 时进入片段模式（候选位于注释 / 美元引用体内）——按片段
+ * 局部词法配对括号：ctx 复位（片段结束）即边界，片段内注释 / 字符串 / 分号不参与
+ * 配对；不得整体跳过整个片段上下文（否则找不到片段内的真实右括号）。
  * @param {string} text
  * @param {Uint8Array} ctxMap
  * @param {number} from 起点（WHERE 词末尾）
  * @param {number} n
+ * @param {number} [fragCtx] 候选所在片段 ctx（-1=普通 SQL 上下文）
  * @returns {number} 本层右括号位置；未找到 / 语句边界返回 -1
  */
-function skipToClosingParen(text, ctxMap, from, n) {
+function skipToClosingParen(text, ctxMap, from, n, fragCtx = -1) {
   let d = 0;
   let i = from;
   while (i < n) {
     const c = text[i];
     const ctx = ctxMap[i];
+    if (fragCtx >= 0) { // r12 P2-7：片段模式——按候选所在片段的局部词法配对
+      if (ctx === CTX_NORMAL) return -1; // 片段边界即语句边界（未找到右括号）
+      if (ctx === fragCtx) {
+        if (c === '-' && text[i + 1] === '-') { let nl = text.indexOf('\n', i); if (nl < 0) nl = n; if (nl === i) nl += 1; i = nl; continue; }
+        if (c === '/' && text[i + 1] === '*') { i = skipBlockComment(text, i, 0); continue; }
+        if (c === ';') return -1; // 片段内语句终止（与 NORMAL 分号语义对齐）
+        if (c === '(') { d += 1; i += 1; continue; }
+        if (c === ')') { if (d === 0) return i; d -= 1; i += 1; continue; }
+      }
+      if (c === "'" && ctx !== CTX_SINGLE_QUOTE) {
+        if (isApostropheWord(text, i)) { i += 1; continue; } // 自然语言撇号不参与
+        // 片段内开引号（配对开形态）：局部扫至闭引号标记（'' 转义对保留片段 ctx）
+        i += 1;
+        while (i < n) {
+          if (text[i] === "'") {
+            if (ctxMap[i] === CTX_SINGLE_QUOTE) { i += 1; break; }
+            if (ctxMap[i] === fragCtx && text[i + 1] === "'" && ctxMap[i + 1] === fragCtx) { i += 2; continue; }
+          }
+          i += 1;
+        }
+        continue;
+      }
+      i += 1;
+      continue;
+    }
     if (ctx === CTX_LINE_COMMENT) { let nl = text.indexOf('\n', i); if (nl < 0) nl = n; if (nl === i) nl += 1; i = nl; continue; }
     if (ctx === CTX_BLOCK_COMMENT) { i = skipBlockComment(text, i, 1); continue; }
     if (ctx === CTX_DOLLAR_QUOTE) { i += 1; continue; }
@@ -956,7 +1139,7 @@ function skipToClosingParen(text, ctxMap, from, n) {
  * @param {{pos:number,end:number,kind:string}} cand 关键字候选（pos=起始，end=末尾后一位）
  * @returns {null|{at:number,value:string,message:string}} 命中位置 / 值 / 消息主体
  */
-function scanCandidate(text, ctxMap, cand, parenDepth) {
+function scanCandidate(text, ctxMap, cand, parenDepth, openAt) {
   const n = text.length;
   const candCtx = ctxMap[cand.pos];
   if (candCtx === CTX_DOUBLE_QUOTE) return null; // 双引号标识符内的 PASSWORD 字样非口令语句
@@ -1080,10 +1263,14 @@ function scanCandidate(text, ctxMap, cand, parenDepth) {
           while (w < n && IDENT_CHAR_RE.test(text[w])) w += 1;
           if (/^AS$/i.test(text.slice(i, w))) {
             i = w;
-            if (exprDepth > 0) {
+            // r12 P2-6：仅实际 CAST( 括号内的 AS 才是类型转换语法（按候选所在括号层的
+            // 开括号判定）；其余 AS（SELECT 别名等）只消费别名 token——防止把 WHERE
+            // 等语法词吞作类型、绕过筛选条件隔离（'...' AS cmd WHERE x = 'app' 误报）
+            const openPos = openAt[cand.pos];
+            if (openPos >= 0 && /(?:^|[^\w$])CAST\s*$/i.test(text.slice(Math.max(0, openPos - 8), openPos))) {
               // r11 P2-3：CAST 括号带内 AS 为类型转换语法——消费完整类型短语
               // （多词类型 / 引用标识符 / 类型参数 / 数组修饰），不让类型后继词终结表达式
-              i = consumeCastType(text, ctxMap, i, n);
+              i = consumeCastType(text, i, n);
               continue;
             }
             while (i < n && /\s/.test(text[i])) i += 1;
@@ -1092,8 +1279,9 @@ function scanCandidate(text, ctxMap, cand, parenDepth) {
           }
           if (/^WHERE$/i.test(text.slice(i, w))) {
             // r11 P2-5：子查询 WHERE——跳过该查询的筛选条件至本层右括号，恢复外层表达式扫描；
-            // 无本层右括号（普通 SELECT 的 WHERE）则在语句边界终止，保留 r10 不误报语义
-            const close = skipToClosingParen(text, ctxMap, w, n);
+            // 无本层右括号（普通 SELECT 的 WHERE）则在语句边界终止，保留 r10 不误报语义；
+            // r12 P2-7：候选在片段（注释 / 美元体）内时按片段局部词法配对（fragCtx）
+            const close = skipToClosingParen(text, ctxMap, w, n, candInFragment ? candCtx : -1);
             if (close < 0) return null;
             i = close;
             continue;
