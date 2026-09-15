@@ -1,0 +1,155 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+/**
+ * ZS-CLIENT-004：移动端「上传完成态」编排单测。
+ *
+ * 覆盖验收：
+ * - 等待服务端完成确认（upload-complete）后才返回资产 ID，阶段序列 uploading→processing→complete；
+ * - 对象已直传但完成确认失败时不显示完整成功（整体 reject、phase=failed）；
+ * - 重试复用同一凭证 → 只创建一个凭证（只生成一个资产）；
+ * - cancel 中止直传 → phase=cancelled 且 reject；
+ * - 不打印预签名 URL / 凭证（credentialToken、uploadUrl）。
+ *
+ * 依赖通过 vi.mock 切断：@/api/infra/file（契约层）、uni.request（直传 PUT）、uni.getFileSystemManager（读字节）。
+ */
+const h = vi.hoisted(() => ({
+  createUploadCredential: vi.fn(),
+  completeUpload: vi.fn(),
+}))
+
+vi.mock('@/api/infra/file', () => ({
+  createUploadCredential: h.createUploadCredential,
+  completeUpload: h.completeUpload,
+}))
+// uploadFile.ts 顶层 import useToast（wd-toast），node 环境无需真实组件
+vi.mock('@wot-ui/ui/components/wd-toast', () => ({ useToast: () => ({ show: vi.fn() }) }))
+
+const uni = (globalThis as any).uni
+
+let uploadFileWithCompletion: any
+
+beforeEach(async () => {
+  vi.resetModules()
+  h.createUploadCredential.mockReset()
+  h.completeUpload.mockReset()
+  // 读字节桩：返回 3 字节，走 getFileSystemManager 分支（避免 H5 fetch）
+  uni.getFileSystemManager = () => ({ readFileSync: () => new Uint8Array([1, 2, 3]).buffer })
+  uni.request = vi.fn()
+  const mod = await import('@/utils/uploadFile')
+  uploadFileWithCompletion = mod.uploadFileWithCompletion
+})
+
+/** 让 uni.request PUT 立即成功，并返回可 abort 的 task */
+function putSuccess() {
+  const abort = vi.fn()
+  uni.request = vi.fn((cfg: any) => {
+    cfg.success({ statusCode: 200 })
+    return { abort }
+  })
+  return abort
+}
+
+const CRED = {
+  credentialToken: 'CT-SECRET-abc123',
+  uploadUrl: 'https://s3.private.test/put?sig=SECRET',
+  tempPath: 'tmp/xyz',
+  expiresTime: '2026-09-15T23:59:59',
+}
+
+describe('uploadFileWithCompletion：等待完成确认后返回资产 ID', () => {
+  it('成功流：uploading→processing→complete，completeUpload 以凭证 token 调用，返回资产 ID', async () => {
+    h.createUploadCredential.mockResolvedValue(CRED)
+    h.completeUpload.mockResolvedValue(4242)
+    putSuccess()
+    const phases: string[] = []
+    const handle = uploadFileWithCompletion({
+      filePath: '/tmp/a.png',
+      purpose: 'avatar',
+      onPhase: (p: string) => phases.push(p),
+    })
+    const result = await handle.start()
+    expect(result).toEqual({ assetId: 4242 })
+    expect(phases).toEqual(['uploading', 'processing', 'complete'])
+    expect(handle.phase).toBe('complete')
+    expect(h.completeUpload).toHaveBeenCalledWith('CT-SECRET-abc123')
+    // 直传 PUT 发往凭证返回的 uploadUrl
+    expect(uni.request).toHaveBeenCalledWith(expect.objectContaining({ method: 'PUT', url: CRED.uploadUrl }))
+  })
+
+  it('对象已直传但完成确认失败 → 整体 reject，不报成功，phase=failed', async () => {
+    h.createUploadCredential.mockResolvedValue(CRED)
+    h.completeUpload.mockRejectedValue({ code: 1001003024, msg: '临时对象不存在或为空上传' })
+    putSuccess()
+    const phases: string[] = []
+    const handle = uploadFileWithCompletion({
+      filePath: '/tmp/a.png',
+      purpose: 'avatar',
+      onPhase: (p: string) => phases.push(p),
+    })
+    await expect(handle.start()).rejects.toMatchObject({ code: 1001003024 })
+    expect(handle.phase).toBe('failed')
+    expect(phases).toContain('failed')
+    expect(phases).not.toContain('complete')
+  })
+
+  it('重试复用同一凭证 → 只创建一个凭证（只生成一个资产）', async () => {
+    h.createUploadCredential.mockResolvedValue(CRED)
+    putSuccess()
+    // 首次确认失败，重试后成功
+    h.completeUpload
+      .mockRejectedValueOnce({ code: 1001003025, msg: '大小不一致' })
+      .mockResolvedValueOnce(4242)
+    const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+    await expect(handle.start()).rejects.toBeTruthy()
+    const retried = await handle.retry()
+    expect(retried).toEqual({ assetId: 4242 })
+    // 关键：凭证只创建一次（重试复用 credentialToken，服务端幂等 → 只生成一个资产）
+    expect(h.createUploadCredential).toHaveBeenCalledTimes(1)
+    expect(h.completeUpload).toHaveBeenCalledTimes(2)
+    expect(h.completeUpload).toHaveBeenLastCalledWith('CT-SECRET-abc123')
+    expect(handle.phase).toBe('complete')
+  })
+
+  it('cancel 中止直传 → phase=cancelled 且 start() reject', async () => {
+    h.createUploadCredential.mockResolvedValue(CRED)
+    const abort = vi.fn()
+    // PUT 挂起：既不 success 也不 fail，直到 abort 触发 fail
+    uni.request = vi.fn((cfg: any) => {
+      abort.mockImplementation(() => cfg.fail({ errMsg: 'request:fail abort' }))
+      return { abort }
+    })
+    const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+    const p = handle.start()
+    // 让 readFile/createUploadCredential 的微任务先跑完，进入 PUT 挂起
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    handle.cancel()
+    await expect(p).rejects.toBeTruthy()
+    expect(handle.phase).toBe('cancelled')
+    expect(abort).toHaveBeenCalled()
+    // 取消后不得触发完成确认
+    expect(h.completeUpload).not.toHaveBeenCalled()
+  })
+
+  it('不打印预签名 URL / 凭证（安全）', async () => {
+    h.createUploadCredential.mockResolvedValue(CRED)
+    h.completeUpload.mockResolvedValue(4242)
+    putSuccess()
+    const logs: string[] = []
+    const spy = () => (...args: any[]) => logs.push(args.map(a => String(a)).join(' '))
+    const l = vi.spyOn(console, 'log').mockImplementation(spy())
+    const e = vi.spyOn(console, 'error').mockImplementation(spy())
+    const w = vi.spyOn(console, 'warn').mockImplementation(spy())
+    try {
+      const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+      await handle.start()
+    } finally {
+      l.mockRestore(); e.mockRestore(); w.mockRestore()
+    }
+    const all = logs.join('\n')
+    expect(all).not.toContain('CT-SECRET-abc123')
+    expect(all).not.toContain('https://s3.private.test/put')
+    expect(all).not.toContain('sig=SECRET')
+  })
+})

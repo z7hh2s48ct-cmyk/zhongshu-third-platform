@@ -423,3 +423,157 @@ function uploadFile<T>({
     onError?.(new Error('创建上传任务失败'))
   }
 }
+
+/* ==================== ZS-CLIENT-004：统一上传完成态（等待服务端确认 → 资产 ID） ==================== */
+
+/** 上传阶段状态机：上传中 / 处理中 / 失败 / 完成 / 取消 */
+export type UploadPhase = 'idle' | 'uploading' | 'processing' | 'complete' | 'failed' | 'cancelled'
+
+export interface UploadCompletionOptions {
+  /** 本地文件路径 / blob URL */
+  filePath: string
+  /** 上传用途（绑定凭证，服务端据此校验主体/用途） */
+  purpose: string
+  /** 原始文件名（可选，缺省从路径推断） */
+  name?: string
+  /** 可见范围：PRIVATE（默认，私有附件）/ PUBLIC（公开素材） */
+  scope?: 'PUBLIC' | 'PRIVATE'
+  /** 显式 MIME（可选，缺省按 H5 探测 / 后缀推断） */
+  contentType?: string
+  /** 声明大小（可选，缺省用读到的字节长度） */
+  size?: number
+  /** 阶段变化回调 */
+  onPhase?: (phase: UploadPhase) => void
+  /** 直传进度回调（0-100，尽力而为，取决于平台能力） */
+  onProgress?: (progress: number) => void
+}
+
+export interface UploadCompletionResult {
+  /** 服务端完成确认后发布的正式资产 ID（不可用于认证的资产标识；不返回可用 URL） */
+  assetId: number
+}
+
+export interface UploadCompletionHandle {
+  /** 启动上传：直传 → 等待服务端完成确认 → 返回资产 ID */
+  start(): Promise<UploadCompletionResult>
+  /** 幂等重试：复用同一凭证重跑（未直传则重传），只生成一个资产 */
+  retry(): Promise<UploadCompletionResult>
+  /** 取消：中止在途直传，phase→cancelled */
+  cancel(): void
+  /** 当前阶段 */
+  readonly phase: UploadPhase
+}
+
+/**
+ * ZS-CLIENT-004：统一「上传完成态」编排——Web/移动一致等待服务端完成确认后返回资产 ID。
+ *
+ * 相较旧直传（getFilePresignedUrl → PUT → 异步 createFileRecord 仅 catch 日志 → 立即 resolve URL），
+ * 本编排改用 ZS-FILE-003 的 upload-credential → PUT → upload-complete：
+ * - 不伪报成功：对象已直传但 upload-complete 失败时整体 reject（phase=failed），绝不因对象已上传就报完成；
+ * - 只生成一个资产：retry 复用同一 credentialToken，服务端一次性确认幂等；
+ * - 状态可见：uploading（直传）→ processing（等待确认）→ complete / failed / cancelled；
+ * - 不泄密：credentialToken / uploadUrl 全程不打印。
+ */
+export function uploadFileWithCompletion(options: UploadCompletionOptions): UploadCompletionHandle {
+  let phase: UploadPhase = 'idle'
+  let cred: FileApi.FileUploadCredentialCreateRespVO | null = null
+  let putDone = false
+  let cancelled = false
+  let putTask: { abort?: () => void, onProgressUpdate?: (cb: (res: any) => void) => void } | null = null
+
+  const name = options.name
+    || (options.filePath.includes('/') ? options.filePath.substring(options.filePath.lastIndexOf('/') + 1) : options.filePath)
+
+  const setPhase = (p: UploadPhase) => {
+    phase = p
+    options.onPhase?.(p)
+  }
+
+  /** 直传字节到凭证返回的 uploadUrl（捕获 task 以支持 cancel 中止）；不打印 uploadUrl / 凭证 */
+  function putToUploadUrl(uploadUrl: string, buffer: ArrayBuffer, contentType: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      putTask = uni.request({
+        url: uploadUrl,
+        method: 'PUT',
+        header: { 'Content-Type': contentType },
+        data: buffer,
+        success: (res: any) => {
+          // uni.request 对 4xx/5xx 也进 success，须显式判定状态码，否则会误判直传成功
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            putDone = true
+            resolve()
+          } else {
+            reject(new Error(`直传失败（HTTP ${res.statusCode}）`))
+          }
+        },
+        fail: (err: any) => reject(err),
+      }) as any
+      // 尽力而为的进度（部分平台 request 任务支持 onProgressUpdate）
+      putTask?.onProgressUpdate?.((res: any) => options.onProgress?.(res.progress))
+    })
+  }
+
+  /** 等待服务端完成确认，返回资产 ID（processing → complete） */
+  async function confirm(): Promise<UploadCompletionResult> {
+    setPhase('processing')
+    const assetId = await FileApi.completeUpload(cred!.credentialToken)
+    setPhase('complete')
+    return { assetId }
+  }
+
+  async function start(): Promise<UploadCompletionResult> {
+    cancelled = false
+    try {
+      setPhase('uploading')
+      const { buffer, mime } = await readFile(options.filePath)
+      const contentType = options.contentType || mime || getMimeType(name)
+      const size = options.size ?? buffer.byteLength
+      cred = await FileApi.createUploadCredential({
+        name,
+        purpose: options.purpose,
+        size,
+        contentType,
+        scope: options.scope,
+      })
+      await putToUploadUrl(cred.uploadUrl, buffer, contentType)
+      return await confirm()
+    } catch (err) {
+      // 取消优先于失败：cancel 已置 phase=cancelled，不被覆盖为 failed
+      if (!cancelled) setPhase('failed')
+      throw err
+    }
+  }
+
+  async function retry(): Promise<UploadCompletionResult> {
+    // 尚无凭证（首次失败于凭证签发前）→ 全量重启
+    if (!cred) return start()
+    cancelled = false
+    try {
+      setPhase('uploading')
+      // 直传未完成才重传（复用同一凭证的 uploadUrl）；已完成则直接重确认
+      if (!putDone) {
+        const { buffer, mime } = await readFile(options.filePath)
+        const contentType = options.contentType || mime || getMimeType(name)
+        await putToUploadUrl(cred.uploadUrl, buffer, contentType)
+      }
+      // 复用同一 credentialToken → 服务端一次性确认幂等 → 只生成一个资产
+      return await confirm()
+    } catch (err) {
+      if (!cancelled) setPhase('failed')
+      throw err
+    }
+  }
+
+  function cancel(): void {
+    cancelled = true
+    putTask?.abort?.()
+    setPhase('cancelled')
+  }
+
+  return {
+    start,
+    retry,
+    cancel,
+    get phase(): UploadPhase { return phase },
+  }
+}
