@@ -91,7 +91,7 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { useIcon } from '@/hooks/web/useIcon'
 
 import { setTenantId, setToken } from '@/utils/auth'
-import { usePermissionStore } from '@/store/modules/permission'
+import { HOME_ROUTE, resolvePostAuthRedirect, sanitizeLoginRedirect } from '@/router/access'
 import { getTenantIdByName, sendSmsCode, smsLogin } from '@/api/login'
 import LoginFormTitle from './LoginFormTitle.vue'
 import { LoginStateEnum, useFormValid, useLoginState } from './useLogin'
@@ -101,7 +101,6 @@ defineOptions({ name: 'MobileForm' })
 
 const { t } = useI18n()
 const message = useMessage()
-const permissionStore = usePermissionStore()
 const { currentRoute, push } = useRouter()
 const formSmsLogin = ref()
 const loginLoading = ref(false)
@@ -161,7 +160,7 @@ const getSmsCode = async () => {
 watch(
   () => currentRoute.value,
   (route: RouteLocationNormalizedLoaded) => {
-    redirect.value = route?.query?.redirect as string
+    redirect.value = sanitizeLoginRedirect(route?.query?.redirect, HOME_ROUTE)
   },
   {
     immediate: true
@@ -190,10 +189,8 @@ const signIn = async () => {
   await smsLogin(smsVO.loginSms)
     .then(async (res) => {
       setToken(res)
-      if (!redirect.value) {
-        redirect.value = '/'
-      }
-      push({ path: redirect.value || permissionStore.addRouters[0].path })
+      const postAuth = resolvePostAuthRedirect(redirect.value, import.meta.env.VITE_BASE_PATH)
+      await push({ path: postAuth.target })
     })
     .catch(() => {})
     .finally(() => {

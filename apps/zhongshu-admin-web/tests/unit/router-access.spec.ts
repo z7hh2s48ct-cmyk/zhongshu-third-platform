@@ -82,7 +82,9 @@ function fullModuleMenus(): MenuRouteNode[] {
     { path: '/hrm/recruit/post' },
     { path: '/ai/knowledge' },
     { path: '/ai/image' },
-    { path: '/ai/console/workflow' },
+    // 种子菜单真实路径为 /ai/workflow（system_menu id=911/5000，parent=/ai），
+    // remaining.ts 里 activeMenu 写作 /ai/console/workflow 属历史遗留，不得当作授权锚点唯一来源。
+    { path: '/ai/workflow' },
     { path: '/iot/device/device' },
     { path: '/iot/device/product' },
     { path: '/iot/operation/ota/firmware' },
@@ -374,6 +376,175 @@ describe('验收②反向：未注册路由默认拒绝 ↔ 合法页不被误�
   it('锚点可通过「锚点目录内存在任一授权菜单」命中（activeMenu 与真实菜单层级不一致时不误伤）', () => {
     const s = buildRouteAccessSnapshot([{ path: '/mall/promotion/diy-template/diy-template' }])
     expect(hasRouteAccess('/diy/template/decorate/7', s)).toBe(true)
+  })
+})
+
+/**
+ * 静态补登页「真实入口菜单」完备性表（codex r0-P2 处置）。
+ *
+ * 数据来源可复算、非人工臆测：
+ *   ① 扫描 src/**\/*.{vue,ts,tsx} 中全部 `push|replace({ name: '<RouteName>' })` 调用点；
+ *   ② 由 router/modules/remaining.ts 解析 <RouteName> → 完整静态路径，与 STATIC_ROUTE_ACCESS.pattern 对齐；
+ *   ③ 由调用点所在文件逐级上溯到最近的 system_menu.component，得到该入口对应的**服务端菜单完整路径**
+ *      （种子：services/zhongshu-core/zszj-server/src/main/resources/db/migration/
+ *        V20260909.001__system_infra_baseline.sql 与 services/zhongshu-core/sql/mysql/ruoyi-vue-pro.sql）。
+ *   审计脚本与输出：沙箱 `_zs_a_entry_audit.mjs` → `_zs_a_entry_audit.txt`（首轮 41 处缺口）。
+ *
+ * 语义：共享 / 多入口页面必须登记**全部**合法入口锚点，不得压平（CLIENT-002.A codex r0-P2 教训）；
+ * 缺任一入口即把合法导航锁死在 403（r1-P1 教训）。补登不等于放行——数据仍由服务端 @PreAuthorize 兜底。
+ */
+const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string[] }[] = [
+  {
+    page: '/bpm/process-instance/detail',
+    sample: '/bpm/process-instance/detail?id=1&taskId=2',
+    entries: [
+      '/bpm/task',
+      '/bpm/task/my',
+      '/bpm/task/todo',
+      '/bpm/task/done',
+      '/bpm/task/copy',
+      '/bpm/manager/model',
+      '/bpm/manager/process-instance/manager',
+      '/bpm/manager/process-tasnk',
+      '/bpm/oa/leave',
+      '/crm/backlog',
+      '/crm/contract',
+      '/crm/receivable',
+      '/hrm/attendance/leave',
+      '/hrm/portal/attendance/report'
+    ]
+  },
+  { page: '/crm/clue/detail/:id', sample: '/crm/clue/detail/1', entries: ['/crm/clue', '/crm/backlog'] },
+  {
+    page: '/crm/customer/detail/:id',
+    sample: '/crm/customer/detail/1',
+    entries: [
+      '/crm/customer',
+      '/crm/backlog',
+      '/crm/business',
+      '/crm/contact',
+      '/crm/contract',
+      '/crm/receivable',
+      '/crm/receivable-plan',
+      '/crm/statistics/funnel',
+      '/crm/statistics/product'
+    ]
+  },
+  {
+    page: '/crm/business/detail/:id',
+    sample: '/crm/business/detail/1',
+    entries: ['/crm/business', '/crm/backlog', '/crm/contract', '/crm/statistics/funnel']
+  },
+  {
+    page: '/crm/contract/detail/:id',
+    sample: '/crm/contract/detail/1',
+    entries: ['/crm/contract', '/crm/backlog', '/crm/receivable', '/crm/statistics/product']
+  },
+  {
+    page: '/crm/receivable-plan/detail/:id',
+    sample: '/crm/receivable-plan/detail/1',
+    entries: ['/crm/receivable-plan', '/crm/backlog', '/crm/receivable']
+  },
+  {
+    page: '/crm/receivable/detail/:id',
+    sample: '/crm/receivable/detail/1',
+    entries: ['/crm/receivable', '/crm/backlog']
+  },
+  {
+    page: '/crm/contact/detail/:id',
+    sample: '/crm/contact/detail/1',
+    entries: ['/crm/contact', '/crm/backlog', '/crm/contract']
+  },
+  {
+    page: '/crm/product/detail/:id',
+    sample: '/crm/product/detail/1',
+    entries: ['/crm/product', '/crm/statistics/product']
+  },
+  {
+    page: '/hrm/recruit/candidate/detail/:id',
+    sample: '/hrm/recruit/candidate/detail/1',
+    entries: ['/hrm/recruit/candidate', '/hrm/home']
+  },
+  {
+    page: '/hrm/employee/detail/:id',
+    sample: '/hrm/employee/detail/1',
+    entries: ['/hrm/employee/list', '/hrm/employee', '/hrm/dept', '/hrm/home', '/hrm/team-home']
+  },
+  {
+    page: '/hrm/performance/plan/detail/:id',
+    sample: '/hrm/performance/plan/detail/1',
+    entries: ['/hrm/performance/plan', '/hrm/performance/assessment']
+  },
+  {
+    page: '/hrm/performance/assessment/detail/:id',
+    sample: '/hrm/performance/assessment/detail/1',
+    entries: ['/hrm/performance/assessment', '/hrm/performance/plan']
+  },
+  {
+    page: '/hrm/salary/history/detail/:id',
+    sample: '/hrm/salary/history/detail/1',
+    entries: ['/hrm/salary/history', '/hrm/salary/month-record']
+  },
+  { page: '/ai/console/workflow/create', sample: '/ai/console/workflow/create', entries: ['/ai/workflow'] },
+  {
+    page: '/ai/console/workflow/:type/:id',
+    sample: '/ai/console/workflow/simple/6',
+    entries: ['/ai/workflow']
+  },
+  {
+    page: '/iot/product/product/detail/:id',
+    sample: '/iot/product/product/detail/4',
+    entries: ['/iot/device/product', '/iot/device/device', '/iot/operation/ota/firmware']
+  },
+  {
+    page: '/iot/device/detail/:id',
+    sample: '/iot/device/detail/4',
+    entries: ['/iot/device/device', '/iot/device', '/iot/home']
+  }
+]
+
+describe('静态补登表入口锚点完备性（codex r0-P2 处置：共享页不得漏登合法入口）', () => {
+  it('每个共享页在其**任一**真实入口菜单被单独授权时都可达（逐入口断言）', () => {
+    SHARED_PAGE_ENTRY_ANCHORS.forEach(({ page, sample, entries }) => {
+      entries.forEach((entry) => {
+        const s = buildRouteAccessSnapshot([{ path: entry }])
+        expect(hasRouteAccess(sample, s), `合法页被误伤: ${page} 应可由入口 ${entry} 到达`).toBe(true)
+      })
+    })
+  })
+  it('反向对照：与入口无关的菜单被授权时仍拒绝（补登 ≠ 放行，命中即返回不回退模块并集）', () => {
+    const unrelated = buildRouteAccessSnapshot([{ path: '/mes/pro/task' }])
+    SHARED_PAGE_ENTRY_ANCHORS.forEach(({ page, sample }) => {
+      expect(hasRouteAccess(sample, unrelated), `不应由 /mes/pro/task 放行: ${page}`).toBe(false)
+    })
+    // AI 工作流编辑器只认 /ai/workflow 入口，其它 ai 菜单不得放行
+    const aiKnowledge = buildRouteAccessSnapshot([{ path: '/ai/knowledge' }])
+    expect(hasRouteAccess('/ai/console/workflow/create', aiKnowledge)).toBe(false)
+    expect(hasRouteAccess('/ai/console/workflow/simple/6', aiKnowledge)).toBe(false)
+  })
+  it('codex r0-P2 #1 回归：后端种子把工作流菜单注册在 /ai/workflow（非 remaining.ts 的 activeMenu /ai/console/workflow）', () => {
+    const s = buildRouteAccessSnapshot([{ path: '/ai/workflow' }])
+    expect(hasRouteAccess('/ai/console/workflow/create', s)).toBe(true)
+    expect(hasRouteAccess('/ai/console/workflow/simple/6', s)).toBe(true)
+    // activeMenu 写法若真被某部署注册为菜单，同样不得误伤（双锚点并存）
+    const legacy = buildRouteAccessSnapshot([{ path: '/ai/console/workflow' }])
+    expect(hasRouteAccess('/ai/console/workflow/create', legacy)).toBe(true)
+  })
+  it('codex r0-P2 #2 回归：考勤报表门户与流程实例管理页都能打开流程详情', () => {
+    // 种子 system_menu id=1628「我的流程查询」把 bpm:process-instance:query 挂在
+    // id=1618「考勤报表」(/hrm/portal/attendance/report) 之下 —— 该门户用户没有 BPM 菜单，
+    // 但 AttendanceLeaveList.vue::openProcessDetail 会跳 BpmProcessInstanceDetail。
+    const portal = buildRouteAccessSnapshot([{ path: '/hrm/portal/attendance/report' }])
+    expect(hasRouteAccess('/bpm/process-instance/detail?id=9', portal)).toBe(true)
+    // system_menu id=754「流程实例」→ /bpm/manager/process-instance/manager
+    const manager = buildRouteAccessSnapshot([{ path: '/bpm/manager/process-instance/manager' }])
+    expect(hasRouteAccess('/bpm/process-instance/detail?id=9', manager)).toBe(true)
+    // system_menu id=757「流程任务」→ /bpm/manager/process-tasnk（种子中的拼写）
+    const managerTask = buildRouteAccessSnapshot([{ path: '/bpm/manager/process-tasnk' }])
+    expect(hasRouteAccess('/bpm/process-instance/detail?id=9', managerTask)).toBe(true)
+    // HRM 请假记录页同样是合法入口
+    const hrmLeave = buildRouteAccessSnapshot([{ path: '/hrm/attendance/leave' }])
+    expect(hasRouteAccess('/bpm/process-instance/detail?id=9', hrmLeave)).toBe(true)
   })
 })
 

@@ -137,12 +137,28 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   { pattern: '/codegen/edit', anchors: ['/infra/codegen', '/infra/codegen/index'] },
   { pattern: '/job/job-log', anchors: ['/infra/job', '/infra/job/index'] },
 
-  // ---- BPM：多入口共享页登记全部合法入口 ----
+  // ---- BPM：多入口共享页登记全部合法入口（r0-P2：任务待办/已办/抄送、流程实例管理、考勤报表门户等）----
   { pattern: '/bpm/manager/form/edit', anchors: ['/bpm/manager/form'] },
   { pattern: '/bpm/manager/definition', anchors: ['/bpm/manager/model'] },
   {
     pattern: '/bpm/process-instance/detail',
-    anchors: ['/bpm/task/my', '/bpm/task', '/bpm/process-instance', '/bpm/manager/model']
+    anchors: [
+      '/bpm/task/my',
+      '/bpm/task',
+      '/bpm/task/todo',
+      '/bpm/task/done',
+      '/bpm/task/copy',
+      '/bpm/process-instance',
+      '/bpm/manager/model',
+      '/bpm/manager/process-instance/manager',
+      '/bpm/manager/process-tasnk',
+      '/bpm/oa/leave',
+      '/crm/backlog',
+      '/crm/contract',
+      '/crm/receivable',
+      '/hrm/attendance/leave',
+      '/hrm/portal/attendance/report'
+    ]
   },
   {
     pattern: '/bpm/process-instance/report',
@@ -180,48 +196,94 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
     anchors: ['/mall/promotion/diy-template/diy-page', '/mall/promotion/diy-template', '/diy/page']
   },
 
-  // ---- CRM：8 个详情子页 ----
-  { pattern: '/crm/clue/detail/:id', anchors: ['/crm/clue'] },
-  { pattern: '/crm/customer/detail/:id', anchors: ['/crm/customer'] },
-  { pattern: '/crm/business/detail/:id', anchors: ['/crm/business'] },
-  { pattern: '/crm/contract/detail/:id', anchors: ['/crm/contract'] },
-  { pattern: '/crm/receivable-plan/detail/:id', anchors: ['/crm/receivable-plan'] },
-  { pattern: '/crm/receivable/detail/:id', anchors: ['/crm/receivable'] },
-  { pattern: '/crm/contact/detail/:id', anchors: ['/crm/contact'] },
-  { pattern: '/crm/product/detail/:id', anchors: ['/crm/product'] },
+  // ---- CRM：8 个详情子页（r0-P2：详情页可由商机/合同/回款/联系人/统计等任一入口到达）----
+  { pattern: '/crm/clue/detail/:id', anchors: ['/crm/clue', '/crm/backlog'] },
+  {
+    pattern: '/crm/customer/detail/:id',
+    anchors: [
+      '/crm/customer',
+      '/crm/backlog',
+      '/crm/business',
+      '/crm/contact',
+      '/crm/contract',
+      '/crm/receivable',
+      '/crm/receivable-plan',
+      '/crm/statistics/funnel',
+      '/crm/statistics/product'
+    ]
+  },
+  {
+    pattern: '/crm/business/detail/:id',
+    anchors: ['/crm/business', '/crm/backlog', '/crm/contract', '/crm/statistics/funnel']
+  },
+  {
+    pattern: '/crm/contract/detail/:id',
+    anchors: ['/crm/contract', '/crm/backlog', '/crm/receivable', '/crm/statistics/product']
+  },
+  {
+    pattern: '/crm/receivable-plan/detail/:id',
+    anchors: ['/crm/receivable-plan', '/crm/backlog', '/crm/receivable']
+  },
+  { pattern: '/crm/receivable/detail/:id', anchors: ['/crm/receivable', '/crm/backlog'] },
+  { pattern: '/crm/contact/detail/:id', anchors: ['/crm/contact', '/crm/backlog', '/crm/contract'] },
+  { pattern: '/crm/product/detail/:id', anchors: ['/crm/product', '/crm/statistics/product'] },
 
-  // ---- HRM：14 个详情 / 表单子页 ----
+  // ---- HRM：14 个详情 / 表单子页（r0-P2：人才/员工/绩效等详情可由门户与关联页到达）----
   { pattern: '/hrm/portal/opening-guide', anchors: ['/hrm/portal/home', '/hrm/portal'] },
   { pattern: '/hrm/recruit/post/detail/:id', anchors: ['/hrm/recruit/post'] },
-  { pattern: '/hrm/recruit/candidate/detail/:id', anchors: ['/hrm/recruit/candidate'] },
-  { pattern: '/hrm/employee/detail/:id', anchors: ['/hrm/employee/list', '/hrm/employee'] },
+  { pattern: '/hrm/recruit/candidate/detail/:id', anchors: ['/hrm/recruit/candidate', '/hrm/home'] },
+  {
+    pattern: '/hrm/employee/detail/:id',
+    anchors: ['/hrm/employee/list', '/hrm/employee', '/hrm/dept', '/hrm/home', '/hrm/team-home']
+  },
   { pattern: '/hrm/dept/detail/:id', anchors: ['/hrm/dept'] },
   { pattern: '/hrm/attendance/month/detail/:employeeId', anchors: ['/hrm/attendance/month'] },
-  { pattern: '/hrm/performance/plan/detail/:id', anchors: ['/hrm/performance/plan'] },
+  {
+    pattern: '/hrm/performance/plan/detail/:id',
+    anchors: ['/hrm/performance/plan', '/hrm/performance/assessment']
+  },
   { pattern: '/hrm/performance/plan/form', anchors: ['/hrm/performance/plan'] },
   {
     pattern: '/hrm/performance/assessment/employee/:employeeId',
     anchors: ['/hrm/performance/assessment']
   },
-  { pattern: '/hrm/performance/assessment/detail/:id', anchors: ['/hrm/performance/assessment'] },
+  {
+    pattern: '/hrm/performance/assessment/detail/:id',
+    anchors: ['/hrm/performance/assessment', '/hrm/performance/plan']
+  },
   { pattern: '/hrm/insurance/month-record/detail/:id', anchors: ['/hrm/insurance/month-record'] },
   { pattern: '/hrm/salary/employee-info/detail/:id', anchors: ['/hrm/salary/employee-info'] },
-  { pattern: '/hrm/salary/history/detail/:id', anchors: ['/hrm/salary/history'] },
+  {
+    pattern: '/hrm/salary/history/detail/:id',
+    anchors: ['/hrm/salary/history', '/hrm/salary/month-record']
+  },
   { pattern: '/hrm/salary/slip/detail/:id', anchors: ['/hrm/salary/slip'] },
 
-  // ---- AI：绘图广场 / 知识库 / 工作流 ----
+  // ---- AI：绘图广场 / 知识库 / 工作流（r0-P2：种子菜单真实路径 /ai/workflow 与
+  //      remaining.ts 的 activeMenu /ai/console/workflow 双锚点并存，不得压平）----
   { pattern: '/ai/image/square', anchors: ['/ai/image'] },
   { pattern: '/ai/knowledge/document', anchors: ['/ai/knowledge'] },
   { pattern: '/ai/knowledge/document/create', anchors: ['/ai/knowledge'] },
   { pattern: '/ai/knowledge/document/update', anchors: ['/ai/knowledge'] },
   { pattern: '/ai/knowledge/retrieval', anchors: ['/ai/knowledge'] },
   { pattern: '/ai/knowledge/segment', anchors: ['/ai/knowledge'] },
-  { pattern: '/ai/console/workflow/create', anchors: ['/ai/console/workflow'] },
-  { pattern: '/ai/console/workflow/:type/:id', anchors: ['/ai/console/workflow'] },
+  { pattern: '/ai/console/workflow/create', anchors: ['/ai/workflow', '/ai/console/workflow'] },
+  { pattern: '/ai/console/workflow/:type/:id', anchors: ['/ai/workflow', '/ai/console/workflow'] },
 
-  // ---- IoT：路径段与 activeMenu 段序不一致，双锚点登记 ----
-  { pattern: '/iot/product/product/detail/:id', anchors: ['/iot/device/product', '/iot/product'] },
-  { pattern: '/iot/device/detail/:id', anchors: ['/iot/device/device', '/iot/device'] },
+  // ---- IoT：路径段与 activeMenu 段序不一致，多锚点登记（r0-P2）----
+  {
+    pattern: '/iot/product/product/detail/:id',
+    anchors: [
+      '/iot/device/product',
+      '/iot/product',
+      '/iot/device/device',
+      '/iot/operation/ota/firmware'
+    ]
+  },
+  {
+    pattern: '/iot/device/detail/:id',
+    anchors: ['/iot/device/device', '/iot/device', '/iot/home']
+  },
   {
     pattern: '/iot/ota/operation/firmware/detail/:id',
     anchors: ['/iot/operation/ota/firmware', '/iot/ota']

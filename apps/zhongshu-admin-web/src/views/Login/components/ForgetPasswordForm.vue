@@ -122,6 +122,7 @@ import LoginFormTitle from './LoginFormTitle.vue'
 import { LoginStateEnum, useFormValid, useLoginState } from './useLogin'
 import { ElLoading } from 'element-plus'
 import * as authUtil from '@/utils/auth'
+import { HOME_ROUTE, sanitizeLoginRedirect } from '@/router/access'
 import * as LoginApi from '@/api/login'
 defineOptions({ name: 'ForgetPasswordForm' })
 const verify = ref()
@@ -219,7 +220,7 @@ const getSmsCode = async (params) => {
 watch(
   () => currentRoute.value,
   (route: RouteLocationNormalizedLoaded) => {
-    redirect.value = route?.query?.redirect as string
+    redirect.value = sanitizeLoginRedirect(route?.query?.redirect, HOME_ROUTE)
   },
   {
     immediate: true
