@@ -1,0 +1,129 @@
+# ZS-OPS-002.A 部署模板——独立测试环境编排
+# 前置：ZS-ENG-002（JDK17 基线）、ZS-ENG-003（环境配置分离）、ZS-ENG-005（actuator 收紧）
+#
+# 使用方式：
+#   cp .env.example .env   # 填入真实值（.env 已在 .gitignore）
+#   docker compose -f docker-compose.deploy.yml up -d
+#   docker compose -f docker-compose.deploy.yml down  # 撤回
+#
+# 边界：本文件是脱敏模板，不含任何真实秘密。
+# 所有敏感配置通过 ${ZSZJ_*} 环境变量注入（见 .env.example 合同表）。
+# 禁止在此文件中出现硬编码口令、真实数据库地址或 TLS 私钥。
+
+version: "3.9"
+
+networks:
+  zszj-internal:
+    driver: bridge
+    internal: false   # 需要外网拉镜像；生产可改为 internal: true
+
+services:
+  # ---- PostgreSQL（D-08：仅 PG，禁 MySQL）----
+  postgres:
+    image: postgres:16-alpine
+    container_name: zszj-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zhongshu
+      POSTGRES_USER: ${ZSZJ_DATASOURCE_USERNAME}
+      POSTGRES_PASSWORD: ${ZSZJ_DATASOURCE_PASSWORD}
+    volumes:
+      - zszj-pgdata:/var/lib/postgresql/data
+    networks:
+      - zszj-internal
+    # 不暴露公开端口；仅 127.0.0.1 供本地调试（移除后仅容器内网可达）
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ZSZJ_DATASOURCE_USERNAME} -d zhongshu"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis ----
+  redis:
+    image: redis:7-alpine
+    container_name: zszj-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${ZSZJ_REDIS_PASSWORD}
+    volumes:
+      - zszj-redisdata:/data
+    networks:
+      - zszj-internal
+    # 不暴露公开端口
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${ZSZJ_REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- zszj-server（Spring Boot，JDK17）----
+  zszj-server:
+    image: zszj-server:latest   # 由 CI 构建，禁止在模板中硬编码真实 registry 地址
+    container_name: zszj-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${ZSZJ_PROFILE}
+      SERVER_PORT: ${ZSZJ_SERVER_PORT}
+      SPRING_DATASOURCE_URL: ${ZSZJ_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${ZSZJ_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${ZSZJ_DATASOURCE_PASSWORD}
+      SPRING_REDIS_HOST: ${ZSZJ_REDIS_HOST}
+      SPRING_REDIS_PORT: ${ZSZJ_REDIS_PORT}
+      SPRING_REDIS_PASSWORD: ${ZSZJ_REDIS_PASSWORD}
+      # actuator 探针：ZS-ENG-005 已将 exposure.include 收紧为 health
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      # Spring Boot Admin 客户端禁用（ZS-ENG-005）
+      SPRING_BOOT_ADMIN_CLIENT_ENABLED: "false"
+    networks:
+      - zszj-internal
+    # 仅暴露给 nginx（内部网络），不绑定宿主机公开端口
+    expose:
+      - "${ZSZJ_SERVER_PORT}"
+    # 探针边界：liveness/readiness 由 actuator health 提供
+    # ZS-ENG-005 已配置 management.endpoints.web.exposure.include: health
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${ZSZJ_SERVER_PORT}/actuator/health/liveness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s   # JVM 冷启动宽限期
+
+  # ---- Nginx（TLS 终结 + 反向代理）----
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: zszj-nginx
+    restart: unless-stopped
+    depends_on:
+      zszj-server:
+        condition: service_healthy
+    ports:
+      # 仅暴露 HTTPS 到宿主机；HTTP 80 用于 Let's Encrypt 验证，按需开放
+      - "443:443"
+      # - "80:80"   # TLS 证书申请时临时开启，获得证书后注释掉
+    volumes:
+      - ./nginx/zszj-server.conf:/etc/nginx/conf.d/default.conf:ro
+      # TLS 证书挂载（路径为容器内路径，宿主机路径在 .env 中配置）
+      # 证书文件禁止入镜像；通过 volume mount 注入
+      - ${ZSZJ_TLS_CERT_PATH:-./tls/fullchain.pem}:/etc/nginx/tls/fullchain.pem:ro
+      - ${ZSZJ_TLS_KEY_PATH:-./tls/privkey.pem}:/etc/nginx/tls/privkey.pem:ro
+    networks:
+      - zszj-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  zszj-pgdata:
+    driver: local
+  zszj-redisdata:
+    driver: local

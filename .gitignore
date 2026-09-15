@@ -26,6 +26,7 @@ dist-prod/
 !apps/zhongshu-miniapp/env/.env.development
 !apps/zhongshu-miniapp/env/.env.production
 !apps/zhongshu-miniapp/env/.env.test
+!services/zhongshu-core/deploy/.env.example
 
 # Keep versioned editor recommendations from the complete source snapshots.
 !apps/zhongshu-admin-web/.vscode/
