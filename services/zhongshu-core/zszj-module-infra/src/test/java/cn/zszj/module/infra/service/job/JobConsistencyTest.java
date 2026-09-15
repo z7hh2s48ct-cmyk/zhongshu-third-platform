@@ -1179,6 +1179,48 @@ public class JobConsistencyTest extends BaseDbUnitTest {
         assertTrue(s3.contains("authorization=***"));
     }
 
+    @Test
+    public void testScenario25_adjacentQuotedKeyIsNotConsumedAsValue() {
+        // codex r5 [P1] regression:
+        // r4 的 quote-after-whitespace 分支在已消费值内容后仍触发，
+        // 导致相邻引号包裹的敏感键被当作值消费，其凭证暴露。
+        // 修复：lastNonWs==start 守卫 + NEXT_KEY_PATTERN 前导 ["']?
+        String spaceBeforeQuotedKey = "password=alpha \"token\"=\"bravo\"";
+        String commaBeforeQuotedKey = "password=alpha,\"secret\":\"charlie\"";
+        String semicolonBeforeQuotedKey = "pwd=x;'api_key'='delta'";
+
+        jobTenantResultService.saveTenantResultsAsync(9019L, TenantJobExecutionResult.builder()
+                .totalTenants(3).successCount(0).failureCount(3)
+                .perTenantResults(Map.of(
+                        871L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(spaceBeforeQuotedKey).build(),
+                        872L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(commaBeforeQuotedKey).build(),
+                        873L, TenantJobExecutionResult.TenantItem.builder()
+                                .success(false).durationMs(1L).error(semicolonBeforeQuotedKey).build()))
+                .build());
+
+        List<JobTenantResultDO> details = jobTenantResultService.getJobTenantResultList(9019L);
+        assertEquals(3, details.size());
+
+        // 空格分隔的引号键：两个都必须独立 mask
+        String s1 = findByTenantId(details, 871L).getErrorSummary();
+        assertFalse(s1.contains("alpha"), "First value leaked: " + s1);
+        assertFalse(s1.contains("bravo"), "Quoted key's value leaked: " + s1);
+        assertTrue(s1.contains("password=***"));
+        assertTrue(s1.contains("\"token\"=\"***\""), "Quoted key not masked: " + s1);
+
+        // 逗号分隔 + 引号键 + 冒号分隔符
+        String s2 = findByTenantId(details, 872L).getErrorSummary();
+        assertFalse(s2.contains("alpha"), "First value leaked: " + s2);
+        assertFalse(s2.contains("charlie"), "Quoted key's value leaked: " + s2);
+
+        // 分号 + 单引号包裹的键
+        String s3 = findByTenantId(details, 873L).getErrorSummary();
+        assertFalse(s3.contains("=x"), "First value leaked: " + s3);
+        assertFalse(s3.contains("delta"), "Quoted key's value leaked: " + s3);
+    }
+
     // ==================== 测试辅助 ====================
 
     /**

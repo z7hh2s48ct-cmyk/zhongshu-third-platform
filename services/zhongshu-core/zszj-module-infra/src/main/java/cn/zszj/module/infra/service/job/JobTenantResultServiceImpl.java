@@ -59,7 +59,7 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
      * 用于非引号值扫描时判断"下一个词是否是新的敏感键"，避免吃穿到后续键值对
      */
     private static final Pattern NEXT_KEY_PATTERN = Pattern.compile(
-            "(?i)(?:" + SENSITIVE_KEYS + ")[\"']?\\s*[=:]");
+            "(?i)[\"']?(?:" + SENSITIVE_KEYS + ")[\"']?\\s*[=:]");
     /**
      * 单独出现的凭证前缀（没有敏感键名时也要脱敏），例如异常栈里直接打印的 {@code Bearer eyJhbGciOi...}
      */
@@ -209,7 +209,10 @@ public class JobTenantResultServiceImpl implements JobTenantResultService {
                 // codex r4 [P1] fix: if whitespace leads to a quote, consume the quoted value
                 // (SENSITIVE_KEY_PATTERN\'s \s* does not match Unicode whitespace like EM SPACE,
                 //  so openQuote is empty and we enter unquoted path despite a quoted value following)
-                if (j < text.length() && (text.charAt(j) == '"' || text.charAt(j) == '\'')) {
+                // codex r5 [P1] guard: only consume quote as value when no content scanned yet
+                // (prevents eating adjacent quoted KEY like "token"="bravo")
+                if (lastNonWs == start && j < text.length()
+                        && (text.charAt(j) == '"' || text.charAt(j) == '\'')) {
                     return scanQuotedValueEnd(text, j + 1, text.charAt(j));
                 }
                 i = j;
