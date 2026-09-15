@@ -75,8 +75,10 @@ function fullModuleMenus(): MenuRouteNode[] {
     { path: '/mall/trade/order' },
     { path: '/mall/trade/after-sale' },
     { path: '/mall/promotion/diy-template/diy-template' },
+    { path: '/mall/promotion/diy-template/diy-page' },
     { path: '/member/user' },
     { path: '/pay/cashier-order' },
+    { path: '/pay/demo/order' },
     { path: '/hrm/portal/home' },
     { path: '/hrm/employee/list' },
     { path: '/hrm/recruit/post' },
@@ -365,6 +367,9 @@ describe('验收②反向：未注册路由默认拒绝 ↔ 合法页不被误�
       for (const a of entry.anchors) {
         expect(a.startsWith('/'), `anchor 必须以 / 开头: ${a}`).toBe(true)
       }
+      for (const a of entry.exactAnchors ?? []) {
+        expect(a.startsWith('/'), `exactAnchor 必须以 / 开头: ${a}`).toBe(true)
+      }
     }
   })
   it('锚点未授权时静态子页拒绝，且不因同模块其它菜单被授权而放行（r2-P2 回归）', () => {
@@ -440,7 +445,6 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
       '/crm/statistics/funnel',
       '/crm/customer',
       '/crm/contact',
-      '/crm/clue',
       '/crm/receivable',
       '/crm/receivable-plan',
       '/crm/statistics/product'
@@ -457,7 +461,6 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
       '/crm/customer',
       '/crm/business',
       '/crm/contact',
-      '/crm/clue',
       '/crm/receivable-plan',
       '/crm/statistics/funnel'
     ]
@@ -481,7 +484,6 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
       '/crm/contract',
       '/crm/customer',
       '/crm/business',
-      '/crm/clue',
       '/crm/receivable',
       '/crm/receivable-plan',
       '/crm/statistics/funnel',
@@ -551,6 +553,19 @@ const SHARED_PAGE_ENTRY_ANCHORS: { page: string; sample: string; entries: string
     page: '/mall/trade/after-sale/detail/:id',
     sample: '/mall/trade/after-sale/detail/99',
     entries: ['/mall/trade/after-sale', '/member/user']
+  },
+  // r2-P2：收银台与装修模板/页面同为静态补登页，真实入口逐项登记
+  { page: '/pay/cashier', sample: '/pay/cashier', entries: ['/pay/demo/order'] },
+  {
+    page: '/diy/template/decorate/:id',
+    sample: '/diy/template/decorate/7',
+    // id=517「商城装修」为页面节点（component 即模板列表页），走 exactAnchors 精确命中
+    entries: ['/mall/promotion/diy-template/diy-template', '/mall/promotion/diy-template']
+  },
+  {
+    page: '/diy/page/decorate/:id',
+    sample: '/diy/page/decorate/7',
+    entries: ['/mall/promotion/diy-template/diy-page']
   }
 ]
 
@@ -629,10 +644,14 @@ describe('codex r1 处置回归：目录锚点收窄 + 组件宿主链补登 + �
     expect(hasRouteAccess('/crm/contact/detail/1', customer)).toBe(true)
     expect(hasRouteAccess('/crm/business/detail/1', customer)).toBe(true)
     expect(hasRouteAccess('/crm/contract/detail/1', customer)).toBe(true)
-    // 线索详情内嵌 FollowUpList（clue/detail:58），followup/index:191/196 push contact/business
+    // r2-P2 反转：clue 宿主传入 CRM_CLUE；该业务类型下 followup/index:70/89 与
+    // FollowUpRecordForm:49/58 的联系人/商机入口都被 v-if 限制为 CRM_CUSTOMER，
+    // 共享组件不产生 contact/business/contract 跳转 → /crm/clue 不是三页的入口锚点
     const clue = buildRouteAccessSnapshot([{ path: '/crm/clue' }])
-    expect(hasRouteAccess('/crm/contact/detail/1', clue)).toBe(true)
-    expect(hasRouteAccess('/crm/business/detail/1', clue)).toBe(true)
+    expect(hasRouteAccess('/crm/clue/detail/1', clue)).toBe(true)
+    expect(hasRouteAccess('/crm/contact/detail/1', clue)).toBe(false)
+    expect(hasRouteAccess('/crm/business/detail/1', clue)).toBe(false)
+    expect(hasRouteAccess('/crm/contract/detail/1', clue)).toBe(false)
     // 补登不得反向扩散：/crm/product 与共享组件无宿主链，客户域详情仍拒绝
     const product = buildRouteAccessSnapshot([{ path: '/crm/product' }])
     expect(hasRouteAccess('/crm/contact/detail/1', product)).toBe(false)
@@ -649,6 +668,46 @@ describe('codex r1 处置回归：目录锚点收窄 + 组件宿主链补登 + �
     expect(hasRouteAccess('/mall/product/spu/detail/1', kefu)).toBe(true)
     // 反向：客服菜单不得打开客户域详情
     expect(hasRouteAccess('/crm/customer/detail/1', kefu)).toBe(false)
+  })
+})
+
+describe('codex r2 处置回归：页面节点锚点分离 + 兄弟菜单隔离', () => {
+  it('P2-1 线索域：仅持 /crm/clue 可进线索详情，contact/business/contract 三页拒绝（宿主链误锚移除）', () => {
+    const clue = buildRouteAccessSnapshot([{ path: '/crm/clue' }])
+    expect(hasRouteAccess('/crm/clue/detail/1', clue)).toBe(true)
+    expect(hasRouteAccess('/crm/contact/detail/1', clue)).toBe(false)
+    expect(hasRouteAccess('/crm/business/detail/1', clue)).toBe(false)
+    expect(hasRouteAccess('/crm/contract/detail/1', clue)).toBe(false)
+    // 对偶：backlog 锚点保留有据（ContractRemindList:36/46/57/96 无业务类型限制，可直跳四类详情）
+    const backlog = buildRouteAccessSnapshot([{ path: '/crm/backlog' }])
+    expect(hasRouteAccess('/crm/contact/detail/1', backlog)).toBe(true)
+    expect(hasRouteAccess('/crm/business/detail/1', backlog)).toBe(true)
+    expect(hasRouteAccess('/crm/contract/detail/1', backlog)).toBe(true)
+  })
+  it('P2-2 收银台：仅「支付&退款案例」示例订单页放行；应用信息 / 退款 / 示例兄弟 / 父目录均拒绝', () => {
+    // 唯一真实跳转：pay/demo/order/index.vue:145-152 handlePay → name 'PayCashier'
+    const demo = buildRouteAccessSnapshot([{ path: '/pay/demo/order' }])
+    expect(hasRouteAccess('/pay/cashier', demo)).toBe(true)
+    // 种子 /pay 下菜单：应用信息（id=118）/ 退款订单（id=136）/ 提现转账案例（id=584）
+    // 与父目录「支付管理」（id=114）均无收银台跳转 → 拒绝
+    for (const entry of ['/pay/app', '/pay/refund', '/pay/demo/transfer', '/pay']) {
+      const s = buildRouteAccessSnapshot([{ path: entry }])
+      expect(hasRouteAccess('/pay/cashier', s), `不应由 ${entry} 放行收银台`).toBe(false)
+    }
+  })
+  it('P2-3 装修模板/页面：兄弟菜单互斥；页面节点「商城装修」仅精确命中模板装修、不向兄弟扩散', () => {
+    // 种子 id=518 装修模板 / id=524 装修页面，各自列表页 handleDecorate 是唯一入口
+    const tpl = buildRouteAccessSnapshot([{ path: '/mall/promotion/diy-template/diy-template' }])
+    expect(hasRouteAccess('/diy/template/decorate/7', tpl)).toBe(true)
+    expect(hasRouteAccess('/diy/page/decorate/7', tpl), '模板菜单不得进入页面装修').toBe(false)
+    const page = buildRouteAccessSnapshot([{ path: '/mall/promotion/diy-template/diy-page' }])
+    expect(hasRouteAccess('/diy/page/decorate/7', page)).toBe(true)
+    expect(hasRouteAccess('/diy/template/decorate/7', page), '页面菜单不得进入模板装修').toBe(false)
+    // id=517「商城装修」：type=2 页面节点（component=mall/promotion/diy/template/index），
+    // 直接点击即模板列表页 → 仅以 exactAnchors 精确命中；作为父路径不得前缀扩散
+    const legacy = buildRouteAccessSnapshot([{ path: '/mall/promotion/diy-template' }])
+    expect(hasRouteAccess('/diy/template/decorate/7', legacy)).toBe(true)
+    expect(hasRouteAccess('/diy/page/decorate/7', legacy), '页面节点锚点不得向兄弟菜单扩散').toBe(false)
   })
 })
 

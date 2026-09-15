@@ -110,6 +110,13 @@ export interface RouteAccessSnapshot {
 export interface StaticRouteAccessEntry {
   pattern: string
   anchors: string[]
+  /**
+   * r2-P2：页面节点精确锚点——仅当服务端菜单**精确等于**该路径时授权，
+   * 不参与「目录内存在任一授权菜单」的祖先前缀命中。
+   * 适用场景：某菜单节点自身即真实页面（携带组件、可导航），同时又是其它菜单的父路径；
+   * 它可作为所承载页面的入口，但不得以父路径身份向兄弟菜单扩散授权。
+   */
+  exactAnchors?: string[]
 }
 
 const EMPTY_SNAPSHOT: RouteAccessSnapshot = {
@@ -128,6 +135,8 @@ const EMPTY_SNAPSHOT: RouteAccessSnapshot = {
  * anchors 语义（多入口共享页须登记全部合法入口，不得压平为单一锚点，r0-P2 教训）：
  *   - 锚点精确命中服务端菜单，或
  *   - 锚点目录内存在任一服务端授权菜单（应对 activeMenu 与真实菜单层级不一致）
+ * exactAnchors 语义（r2-P2）：**只做精确命中**，绝不启用目录前缀命中——
+ *   用于「节点自身即页面、同时又是父路径」的场景（区分实际页面节点与容器节点）。
  */
 export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   // ---- 系统 / 基础设施（activeMenu 指向 system、infra 下的真实菜单）----
@@ -192,19 +201,22 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
     anchors: ['/mall/trade/after-sale', '/member/user']
   },
   { pattern: '/member/user/detail/:id', anchors: ['/member/user'] },
-  // 收银台无 activeMenu；由任意已授权 /pay/** 菜单授权（支付流程由订单页跳入）
-  { pattern: '/pay/cashier', anchors: ['/pay'] },
+  // 收银台无 activeMenu；唯一真实跳转入口为「支付&退款案例」示例订单页
+  // （pay/demo/order/index.vue:145-152 handlePay → name: 'PayCashier'；种子菜单 /pay/demo/order）
+  { pattern: '/pay/cashier', anchors: ['/pay/demo/order'] },
+  // r2-P2：装修模板（种子 id=518）/ 装修页面（种子 id=524）共用父节点 id=517「商城装修」，
+  // 父目录锚会让兄弟菜单互相授权（仅持页面装修即可进模板装修，反向亦然）；
+  // 分别绑定各自真实入口（列表页 handleDecorate：template/index:213、page/index:184）
   {
     pattern: '/diy/template/decorate/:id',
-    anchors: [
-      '/mall/promotion/diy-template/diy-template',
-      '/mall/promotion/diy-template',
-      '/diy/template'
-    ]
+    anchors: ['/mall/promotion/diy-template/diy-template'],
+    // id=517 是页面节点（type=2，component 即模板列表页 mall/promotion/diy/template/index），
+    // 直接点击即进入模板列表 → 作为模板装修的旧入口仅精确命中，不得经前缀向兄弟菜单扩散
+    exactAnchors: ['/mall/promotion/diy-template']
   },
   {
     pattern: '/diy/page/decorate/:id',
-    anchors: ['/mall/promotion/diy-template/diy-page', '/mall/promotion/diy-template', '/diy/page']
+    anchors: ['/mall/promotion/diy-template/diy-page']
   },
 
   // ---- CRM：8 个详情子页（r0-P2：详情页可由商机/合同/回款/联系人/统计等任一入口到达）----
@@ -212,6 +224,9 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
   // FollowUpList），锚点按「组件宿主链」补全——宿主详情页的可进入菜单集合即下游详情页的合法入口集合。
   // 组件侧证据：customer/detail:95-97、business/detail:71-74、contact/detail:49/56、clue/detail:58、
   // contract/detail:65 的 import；ContactList:139、ContractList:127、BusinessList:140、followup/index:191/196 的 push。
+  // r2-P2：移除三页的 /crm/clue 锚点——clue 宿主下共享组件的联系人/商机链接仅在 CRM_CUSTOMER
+  // 业务类型下渲染（followup/index:70/89、FollowUpRecordForm:49/58 的 v-if），clue 宿主链不成立。
+  // /crm/backlog 仍是合法入口（backlog 组件无业务类型限制：ContractRemindList:36/46/57/96 直跳四类详情）。
   { pattern: '/crm/clue/detail/:id', anchors: ['/crm/clue', '/crm/backlog'] },
   {
     pattern: '/crm/customer/detail/:id',
@@ -236,7 +251,6 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
       '/crm/statistics/funnel',
       '/crm/customer',
       '/crm/contact',
-      '/crm/clue',
       '/crm/receivable',
       '/crm/receivable-plan',
       '/crm/statistics/product'
@@ -252,7 +266,6 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
       '/crm/customer',
       '/crm/business',
       '/crm/contact',
-      '/crm/clue',
       '/crm/receivable-plan',
       '/crm/statistics/funnel'
     ]
@@ -270,7 +283,6 @@ export const STATIC_ROUTE_ACCESS: StaticRouteAccessEntry[] = [
       '/crm/contract',
       '/crm/customer',
       '/crm/business',
-      '/crm/clue',
       '/crm/receivable',
       '/crm/receivable-plan',
       '/crm/statistics/funnel',
@@ -591,6 +603,14 @@ function isAnchorAuthorized(anchor: string, snapshot: RouteAccessSnapshot): bool
   return snapshot.menuPrefixes.indexOf(normalizedAnchor) !== -1
 }
 
+/**
+ * r2-P2：页面节点精确锚点判定——仅①精确命中，不启用②目录前缀命中。
+ * 防止「节点自身是页面、同时又是父路径」的菜单把授权扩散给兄弟菜单。
+ */
+function isExactAnchorAuthorized(anchor: string, snapshot: RouteAccessSnapshot): boolean {
+  return matchAnyPattern(snapshot.menuPatterns, normalizeRoutePath(anchor))
+}
+
 function matchStaticEntries(path: string): StaticRouteAccessEntry[] {
   const matched: StaticRouteAccessEntry[] = []
   STATIC_ROUTE_ACCESS.forEach((entry) => {
@@ -641,8 +661,10 @@ export function hasRouteAccess(route: string, snapshot?: RouteAccessSnapshot | n
 
   const staticEntries = matchStaticEntries(path)
   if (staticEntries.length > 0) {
-    return staticEntries.some((entry) =>
-      entry.anchors.some((anchor) => isAnchorAuthorized(anchor, current))
+    return staticEntries.some(
+      (entry) =>
+        entry.anchors.some((anchor) => isAnchorAuthorized(anchor, current)) ||
+        (entry.exactAnchors ?? []).some((anchor) => isExactAnchorAuthorized(anchor, current))
     )
   }
 
