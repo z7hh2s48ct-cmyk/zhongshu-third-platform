@@ -189,4 +189,42 @@ describe('uploadFileWithCompletion：等待完成确认后返回资产 ID', () =
     // 关键：迟到的成功不得把 phase 翻成 complete
     expect(handle.phase).toBe('cancelled')
   })
+
+  it('cancel 后立即 retry，旧签发迟到不得污染共享凭证 → 完成确认使用新操作凭证（codex r1 P1）', async () => {
+    const CRED_A = { ...CRED, credentialToken: 'CT-A-SECRET', uploadUrl: 'https://s3.private.test/a?sig=SECRET_A' }
+    const CRED_B = { ...CRED, credentialToken: 'CT-B-SECRET', uploadUrl: 'https://s3.private.test/b?sig=SECRET_B' }
+    let resolveA!: (v: any) => void
+    let resolveB!: (v: any) => void
+    let credCall = 0
+    h.createUploadCredential.mockImplementation(() => {
+      credCall++
+      return credCall === 1 ? new Promise((r) => { resolveA = r }) : new Promise((r) => { resolveB = r })
+    })
+    // PUT 挂起：捕获 success，稍后手动完成（让 A 在 B 的 PUT 在途时迟到）
+    let putOk!: () => void
+    uni.request = vi.fn((cfg: any) => {
+      putOk = () => cfg.success({ statusCode: 200 })
+      return { abort: vi.fn() }
+    })
+    h.completeUpload.mockResolvedValue(999)
+    const handle = uploadFileWithCompletion({ filePath: '/tmp/a.png', purpose: 'avatar' })
+    const pA = handle.start() // op A：读文件→签发挂起
+    await waitFor(() => h.createUploadCredential.mock.calls.length === 1)
+    handle.cancel() // 取消 A
+    const pB = handle.retry() // retry：cred 仍 null → 全量 start（op B）：签发挂起
+    await waitFor(() => h.createUploadCredential.mock.calls.length === 2)
+    resolveB(CRED_B) // B 先返回 → op B 提交 cred=B 并进入 PUT 挂起
+    await waitFor(() => uni.request.mock.calls.length === 1)
+    resolveA(CRED_A) // A 迟到返回 → 不得覆盖 op B 已提交的凭证
+    const errA: any = await pA.catch((e: any) => e)
+    expect(errA.code).toBe('UPLOAD_CANCELLED')
+    putOk() // B 的 PUT 完成 → op B 进入完成确认，读取凭证
+    await waitFor(() => h.completeUpload.mock.calls.length === 1)
+    const resB = await pB
+    expect(resB).toEqual({ assetId: 999 })
+    // 区分力：完成确认必须用 B 的 token；旧 A 迟到不得污染共享凭证 → 绝不使用 A 的 token
+    expect(h.completeUpload).toHaveBeenCalledWith('CT-B-SECRET')
+    expect(h.completeUpload).not.toHaveBeenCalledWith('CT-A-SECRET')
+    expect(handle.phase).toBe('complete')
+  })
 })

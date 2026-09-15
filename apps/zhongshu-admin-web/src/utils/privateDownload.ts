@@ -92,6 +92,9 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
   let phase: DownloadPhase = 'idle'
   let cancelled = false
   let deliverySessionId: string | null = null
+  // codex r1 P2：操作版本标识——每次 start/cancel 递增，隔离「取消后旧兑换/取流迟到」与「同 handle 再次 start 的新操作」：
+  // 被取代的旧操作只对自身会话补撤权、绝不写共享 deliverySessionId / 继续取流 / 改写 phase
+  let opId = 0
 
   const setPhase = (p: DownloadPhase) => {
     phase = p
@@ -100,6 +103,10 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
 
   async function start(): Promise<PrivateDownloadResult> {
     cancelled = false
+    const myOp = ++opId
+    // codex r1 P2：本操作私有的下载会话——仅获胜操作提交共享 deliverySessionId，
+    // 被取消/被取代的旧操作只对自身会话补撤权，绝不写共享状态或继续取流（否则会污染新操作）
+    let mySessionId: string | null = null
     try {
       // 1. 签发一次性交付票据（主体绑定）——ticketToken 不打印
       setPhase('issuing')
@@ -107,23 +114,25 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
         fileId: options.fileId,
         purpose: options.purpose
       })
-      // 签票挂起期间被取消：尚无会话，无需撤权，直接以 cancelled 拒绝
-      if (cancelled) {
+      // 签票挂起期间被取消 / 被更新操作取代：尚无会话，无需撤权，直接以 cancelled 拒绝
+      if (cancelled || myOp !== opId) {
         throw new Error('下载已取消')
       }
       // 2. 原子兑换建立下载会话
       setPhase('redeeming')
       const session = await FileApi.redeemDeliveryTicket(ticketToken, options.purpose)
-      deliverySessionId = session.deliverySessionId
+      mySessionId = session.deliverySessionId
       const declaredTotal = session.totalSize ?? 0
-      // codex r0 P2：兑换挂起期间被取消时 cancel() 因 deliverySessionId 尚为空而跳过撤权；
-      // 兑换返回后若已取消，立即对刚建立的会话 best-effort 撤权，杜绝活跃会话泄漏，再以 cancelled 拒绝
-      if (cancelled) {
-        FileApi.revokeDelivery(deliverySessionId).catch(() => {
+      // codex r0/r1 P2：兑换挂起期间被取消或被更新操作取代时 cancel() 因共享 deliverySessionId 尚为空而跳过撤权；
+      // 兑换返回后若已取消/已被取代，立即对刚建立的「本操作」会话 best-effort 撤权，杜绝活跃会话泄漏，再以 cancelled 拒绝
+      if (cancelled || myOp !== opId) {
+        FileApi.revokeDelivery(mySessionId).catch(() => {
           /* 撤权失败不掩盖取消语义 */
         })
         throw new Error('下载已取消')
       }
+      // 仅获胜操作提交共享会话（供 cancel() 撤权）
+      deliverySessionId = mySessionId
       // 3. 逐块鉴权取流（Range [start, endInclusive]），业务错误由请求层 reject → 映射明确提示
       setPhase('downloading')
       const chunkSize = options.chunkSize && options.chunkSize > 0 ? options.chunkSize : 1024 * 1024
@@ -131,10 +140,12 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
       let loaded = 0
       let cursor = 0
       for (;;) {
-        if (cancelled) break
+        if (cancelled || myOp !== opId) break
         const end =
           declaredTotal > 0 ? Math.min(cursor + chunkSize - 1, declaredTotal - 1) : cursor + chunkSize - 1
-        const chunk = await FileApi.readDeliveryChunk(deliverySessionId, cursor, end)
+        const chunk = await FileApi.readDeliveryChunk(mySessionId, cursor, end)
+        // codex r1 P2：取流期间被取消/被取代 → 立即停止（不得据迟到块推进游标 / 伪报成功）
+        if (cancelled || myOp !== opId) break
         const bytes = base64ToBytes(chunk.content ?? '')
         parts.push(bytes)
         loaded += bytes.length
@@ -148,7 +159,7 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
         cursor += bytes.length
         if (declaredTotal > 0 && loaded >= declaredTotal) break
       }
-      if (cancelled) {
+      if (cancelled || myOp !== opId) {
         throw new Error('下载已取消')
       }
       // codex r0 P2：进入 complete 前校验累计长度与声明总长一致（缺失 / 提前结束 / 超长均判不完整）
@@ -165,6 +176,10 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
       setPhase('complete')
       return { content, totalSize: loaded }
     } catch (err) {
+      // codex r1 P2：被更新操作取代的旧操作不得改写共享 phase（新操作拥有 phase），仅以自身取消语义透传
+      if (myOp !== opId) {
+        throw err instanceof Error ? err : new Error('下载已取消')
+      }
       if (cancelled) {
         if (phase !== 'cancelled') setPhase('cancelled')
         throw err instanceof Error ? err : new Error('下载已取消')
@@ -181,6 +196,7 @@ export function downloadPrivateFile(options: PrivateDownloadOptions): PrivateDow
 
   function cancel(): void {
     cancelled = true
+    opId++ // codex r1 P2：作废在途操作——其迟到兑换/取流经 myOp !== opId 判定后只撤权自身会话、不写共享状态、不改 phase
     setPhase('cancelled')
     // 撤权在途下载会话（best-effort，不阻塞取消、不打印会话/票据）
     if (deliverySessionId) {

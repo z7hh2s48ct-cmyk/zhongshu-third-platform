@@ -186,4 +186,40 @@ describe('admin-web downloadPrivateFile：主体绑定下载会话鉴权取流',
     // 未继续取流
     expect(h.readDeliveryChunk).not.toHaveBeenCalled()
   })
+
+  it('cancel 后同 handle 再次 start，旧兑换迟到不得跳过撤权/继续取流（会话不泄漏）（codex r1 P2）', async () => {
+    h.issueDeliveryTicket
+      .mockResolvedValueOnce({ ticketToken: 'TT-1' }) // S1
+      .mockResolvedValueOnce({ ticketToken: 'TT-2' }) // S2
+    let resolveRedeem1!: (v: any) => void
+    let redeemCall = 0
+    h.redeemDeliveryTicket.mockImplementation(() => {
+      redeemCall++
+      // S1 兑换挂起；S2 兑换立即返回
+      return redeemCall === 1
+        ? new Promise((r) => { resolveRedeem1 = r })
+        : Promise.resolve({ deliverySessionId: 'DS-2', totalSize: 2 })
+    })
+    h.readDeliveryChunk.mockImplementation(async () => ({ content: 'AQI=', totalSize: 2, last: true }))
+    const handle = downloadPrivateFile({ fileId: 1001, purpose: 'preview', chunkSize: 2 })
+    const p1 = handle.start() // S1：签票→兑换挂起
+    await waitFor(() => h.redeemDeliveryTicket.mock.calls.length === 1)
+    handle.cancel() // 取消 S1（deliverySessionId 尚 null → 无撤权）
+    expect(h.revokeDelivery).not.toHaveBeenCalled()
+    const p2 = handle.start() // 同 handle 再次 start（S2）
+    await waitFor(() => h.redeemDeliveryTicket.mock.calls.length === 2)
+    resolveRedeem1({ deliverySessionId: 'DS-1', totalSize: 2 }) // S1 兑换迟到返回，建立 DS-1
+    const err1: any = await p1.catch((e: any) => e)
+    const res2 = await p2
+    expect(Array.from(res2.content)).toEqual([1, 2])
+    expect(handle.phase).toBe('complete')
+    // 区分力：S1 为被取消/被取代的旧操作——
+    // 1) 绝不继续取流读 DS-1
+    expect(h.readDeliveryChunk).not.toHaveBeenCalledWith('DS-1', expect.anything(), expect.anything())
+    // 2) 必须对自己刚建立的会话 DS-1 补撤权（杜绝活跃会话泄漏）
+    expect(h.revokeDelivery).toHaveBeenCalledWith('DS-1')
+    // 3) S1 以取消语义 reject（不得伪报成功）
+    expect(err1).toBeInstanceOf(Error)
+    expect(err1.message).toContain('取消')
+  })
 })

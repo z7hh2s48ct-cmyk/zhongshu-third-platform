@@ -82,10 +82,14 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
     options.onPhase?.(p)
   }
 
-  /** 直传文件到凭证返回的 uploadUrl（AbortController 支持 cancel 中止）；不打印 uploadUrl / 凭证 */
-  function putToUploadUrl(uploadUrl: string, contentType: string): Promise<void> {
+  /**
+   * 直传文件到凭证返回的 uploadUrl（AbortController 支持 cancel 中止）；不打印 uploadUrl / 凭证。
+   * codex r1 P1：绑定到具体操作（myOp）——仅当前获胜操作登记 abort / 置 putDone，
+   * 被取代的旧操作即便迟到完成也不得改写共享直传状态（否则会污染新操作的重试判定）。
+   */
+  function putToUploadUrl(myOp: number, uploadUrl: string, contentType: string): Promise<void> {
     const controller = new AbortController()
-    abort = () => controller.abort()
+    if (myOp === opId) abort = () => controller.abort()
     return axios
       .put(uploadUrl, options.file, {
         headers: { 'Content-Type': contentType },
@@ -94,15 +98,21 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
           options.onProgress?.(evt && evt.progress ? Math.round(evt.progress * 100) : 0)
       })
       .then(() => {
-        putDone = true
-        abort = null
+        if (myOp === opId) {
+          putDone = true
+          abort = null
+        }
       })
   }
 
-  /** 等待服务端完成确认，返回资产 ID（processing → complete） */
-  async function confirm(myOp: number): Promise<UploadCompletionResult> {
+  /**
+   * 等待服务端完成确认，返回资产 ID（processing → complete）。
+   * codex r1 P1：显式绑定本操作的 credentialToken（而非读共享 cred），杜绝旧操作迟到污染共享 cred 后
+   * 新操作误用旧凭证确认（旧凭证对应对象未直传 → 确认失败且 putDone 已真 → 重试持续确认旧凭证不可恢复）。
+   */
+  async function confirm(myOp: number, credentialToken: string): Promise<UploadCompletionResult> {
     setPhase('processing')
-    const assetId = await FileApi.completeUpload(cred!.credentialToken)
+    const assetId = await FileApi.completeUpload(credentialToken)
     // codex r0 P1：completeUpload 挂起期间 cancel 后，其成功响应不得覆盖 cancelled / 伪报 complete
     if (cancelled || myOp !== opId) {
       throw cancelledError()
@@ -118,23 +128,26 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
       setPhase('uploading')
       const contentType = options.contentType || fileLike.type || 'application/octet-stream'
       const size = options.size ?? fileLike.size ?? 0
-      cred = await FileApi.createUploadCredential({
+      // codex r1 P1：先存局部变量，通过操作版本校验后才提交共享 cred——
+      // 杜绝「取消后旧签发迟到」覆盖新操作已提交的凭证（旧请求与新 retry 隔离）
+      const myCred = await FileApi.createUploadCredential({
         name,
         purpose: options.purpose,
         size,
         contentType,
         scope: options.scope
       })
-      // codex r0 P1：签发凭证挂起期间被取消 → 不得继续 PUT / 完成确认
+      // codex r0 P1：签发凭证挂起期间被取消 / 被更新操作取代 → 不得继续 PUT / 完成确认，也不提交共享 cred
       if (cancelled || myOp !== opId) {
         throw cancelledError()
       }
-      await putToUploadUrl(cred.uploadUrl, contentType)
+      cred = myCred
+      await putToUploadUrl(myOp, myCred.uploadUrl, contentType)
       // 直传挂起期间被取消（abort 会 reject，此处再兜底）→ 不得继续完成确认
       if (cancelled || myOp !== opId) {
         throw cancelledError()
       }
-      return await confirm(myOp)
+      return await confirm(myOp, myCred.credentialToken)
     } catch (err) {
       // 取消优先于失败：cancel 已置 phase=cancelled，不被覆盖为 failed；被更新操作取代的旧操作也不得改 phase
       if (!cancelled && myOp === opId) setPhase('failed')
@@ -147,12 +160,15 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
     if (!cred) return start()
     cancelled = false
     const myOp = ++opId
+    // codex r1 P1：快照本操作复用的凭证与直传状态，全程绑定 myCred，不读可能被并发操作改写的共享 cred/putDone
+    const myCred = cred
+    const myPutDone = putDone
     try {
       setPhase('uploading')
       // 直传未完成才重传（复用同一凭证的 uploadUrl）；已完成则直接重确认
-      if (!putDone) {
+      if (!myPutDone) {
         const contentType = options.contentType || fileLike.type || 'application/octet-stream'
-        await putToUploadUrl(cred.uploadUrl, contentType)
+        await putToUploadUrl(myOp, myCred.uploadUrl, contentType)
         if (cancelled || myOp !== opId) {
           throw cancelledError()
         }
@@ -161,7 +177,7 @@ export function uploadFileWithCompletion(options: UploadCompletionOptions): Uplo
       // codex r0 P2 落地依赖（登记）：首次确认「已提交但响应丢失」后，重试需后端 FILE-003 对「已完成凭证 token」
       // 返回既有资产 ID（幂等成功）方能取回；当前后端对已完成凭证返回 FILE_UPLOAD_CREDENTIAL_ALREADY_USED(1001003022)，
       // 此「同 token → 既有资产 ID」恢复语义待后端批次落地或对接确认结果查询接口（客户端重试逻辑本身已复用同一 token）。
-      return await confirm(myOp)
+      return await confirm(myOp, myCred.credentialToken)
     } catch (err) {
       if (!cancelled && myOp === opId) setPhase('failed')
       throw err
