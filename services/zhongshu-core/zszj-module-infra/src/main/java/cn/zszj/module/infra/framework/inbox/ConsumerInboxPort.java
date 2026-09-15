@@ -22,19 +22,21 @@ public interface ConsumerInboxPort {
 
     /**
      * 在当前事务内抢位：新登记 PROCESSING（CLAIMED）、可重放既有结果、并发抢占识别、参数冲突与
-     * 版本护栏判定（见 {@link InboxTryBegin} 各 Outcome 合同）。FAILED 记录重入即重领（retry_count+1）。
+     * 版本护栏判定（见 {@link InboxTryBegin} 各 Outcome 合同）。FAILED 记录重入即重领
+     * （retry_count 为已记录失败次数，由 fail 递增，重领不重复递增）。
      */
     InboxTryBegin tryBegin(InboxCommand command);
 
     /**
      * 处理成功：标记 COMPLETED 并写入可重放业务结果（JSON 串，重复消费时原样返回）；
-     * 仅 PROCESSING 可推进，返回 false 表示状态已被并发改变。
+     * 仅 PROCESSING 可推进，返回 false 表示状态已被并发改变。须在当前租户上下文内调用（跨租户拒绝）。
      */
     boolean complete(long inboxId, String resultJson);
 
     /**
      * 处理失败：标记 FAILED 并留受控失败描述（异常类别/长度，不落原文——自由文本无可靠值级脱敏，
-     * 循 ZS-JOB-002 last_error 惯例）；FAILED 可经 tryBegin 重领重试。
+     * 循 ZS-JOB-002 last_error 惯例）；失败使 retry_count（已记录失败次数）+1，可经 tryBegin 重领重试。
+     * 须在当前租户上下文内调用（跨租户拒绝）。
      */
     boolean fail(long inboxId, Throwable error);
 
@@ -51,10 +53,10 @@ public interface ConsumerInboxPort {
      */
     boolean markResultUnknown(long inboxId, String reason);
 
-    /** 按处理键查单条记录（回查入口；无租户上下文要求，读取不受事务约束）。 */
+    /** 按处理键查单条记录（回查入口）。须在当前租户上下文内调用（只查当前租户）；读取不受事务约束。 */
     Optional<InboxRecord> find(String consumer, String eventKey);
 
-    /** 按消费者+状态列回查清单（如 RESULT_UNKNOWN/FAILED 台账，id 升序有界）。 */
+    /** 按消费者+状态列回查清单（如 RESULT_UNKNOWN/FAILED 台账，id 升序有界）。须在当前租户上下文内调用。 */
     List<InboxRecord> listByStatus(String consumer, String status, int limit);
 
 }

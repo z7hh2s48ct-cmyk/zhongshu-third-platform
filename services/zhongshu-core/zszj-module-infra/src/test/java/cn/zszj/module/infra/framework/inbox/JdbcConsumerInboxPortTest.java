@@ -325,6 +325,43 @@ public class JdbcConsumerInboxPortTest extends BaseDbUnitTest {
         assertThrows(IllegalArgumentException.class, () -> new JdbcConsumerInboxPort(dataSource, otherTxManager));
     }
 
+    /**
+     * 用例 16（codex r1 P1 版本水位）：水位按版本大小单调维护，与登记 id 序无关，且采用<b>占坑语义</b>——
+     * tryBegin 通过护栏即抬水位（新版本已尝试即封锁更旧版本，防「旧版本后提交覆盖」乱序窗口；业务整体回滚
+     * 则水位一并回落）。v10 先登记失败（占坑至 10），v2 被拒；v10 重领（10==10 非旧版本）完成；
+     * 其后 v3 重放判旧版本、v11 可处理。失败占坑后的旧版本处置归人工/补偿（D-07 登记语义）。
+     */
+    @Test
+    public void testTryBegin_watermarkMonotonicByVersionNotById() {
+        // v10 登记（占坑水位=10）→失败：更旧版本自此被拒，等 v10 自身重试或人工处置
+        transactionTemplate.executeWithoutResult(status -> {
+            InboxTryBegin v10 = inboxPort.tryBegin(command().eventKey("evt-w10").bizVersion("10")
+                    .checkVersionStale(true).build());
+            inboxPort.fail(v10.getRecord().getInboxId(), new IllegalStateException("第一次失败"));
+        });
+        transactionTemplate.executeWithoutResult(status -> {
+            assertEquals(InboxTryBegin.Outcome.STALE_VERSION, inboxPort.tryBegin(
+                    command().eventKey("evt-w2").bizVersion("2").checkVersionStale(true).build())
+                    .getOutcome());
+        });
+        // v10 重领（incoming=10 == 水位，非旧版本）→ 完成
+        transactionTemplate.executeWithoutResult(status -> {
+            InboxTryBegin v10retry = inboxPort.tryBegin(command().eventKey("evt-w10").bizVersion("10")
+                    .checkVersionStale(true).build());
+            assertEquals(InboxTryBegin.Outcome.RETRIED_CLAIMED, v10retry.getOutcome());
+            inboxPort.complete(v10retry.getRecord().getInboxId(), "{\"v\":10}");
+        });
+        // 水位 10：v3 后续重放 → STALE；v11 → 可处理
+        transactionTemplate.executeWithoutResult(status -> {
+            assertEquals(InboxTryBegin.Outcome.STALE_VERSION, inboxPort.tryBegin(
+                    command().eventKey("evt-w3-replay").bizVersion("3").checkVersionStale(true).build())
+                    .getOutcome());
+            assertEquals(InboxTryBegin.Outcome.CLAIMED, inboxPort.tryBegin(
+                    command().eventKey("evt-w11").bizVersion("11").checkVersionStale(true).build())
+                    .getOutcome());
+        });
+    }
+
     /** 用例 14（codex r0 P1 确认出口）：RESULT_UNKNOWN 经 resolveAfterVerification 按回查依据推进——
      *  核实已执行 → COMPLETED（携核实结果）；核实未执行 → FAILED（可重试）。 */
     @Test

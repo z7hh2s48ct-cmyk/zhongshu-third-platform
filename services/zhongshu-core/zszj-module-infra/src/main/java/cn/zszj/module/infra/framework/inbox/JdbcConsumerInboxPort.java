@@ -75,10 +75,17 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
     private static final String SELECT_BY_KEY_SQL = "SELECT " + RECORD_COLUMNS + " FROM inbox_event "
             + "WHERE tenant_id = ? AND consumer = ? AND event_key = ?";
 
-    /** 同对象最新已完成记录（版本乱序护栏的串行化点）：FOR UPDATE 行锁使新旧版本事件互斥到提交。 */
-    private static final String SELECT_LATEST_COMPLETED_FOR_UPDATE_SQL = "SELECT " + RECORD_COLUMNS
-            + " FROM inbox_event WHERE tenant_id = ? AND consumer = ? AND biz_type = ? AND biz_id = ? "
-            + "AND status = 'COMPLETED' AND biz_version IS NOT NULL ORDER BY id DESC LIMIT 1 FOR UPDATE";
+    /** 对象版本水位行（codex r1：稳定串行化点）——唯一键 INSERT-or-LOCK，行锁持至业务事务提交。 */
+    private static final String WATERMARK_INSERT_SQL = "INSERT INTO inbox_object_watermark "
+            + "(tenant_id, consumer, biz_type, biz_id, version_watermark) VALUES (?, ?, ?, ?, 0)";
+
+    private static final String WATERMARK_SELECT_FOR_UPDATE_SQL = "SELECT version_watermark "
+            + "FROM inbox_object_watermark WHERE tenant_id = ? AND consumer = ? AND biz_type = ? AND biz_id = ? "
+            + "FOR UPDATE";
+
+    private static final String WATERMARK_RAISE_SQL = "UPDATE inbox_object_watermark "
+            + "SET version_watermark = ?, update_time = ? "
+            + "WHERE tenant_id = ? AND consumer = ? AND biz_type = ? AND biz_id = ?";
 
     private static final String INSERT_SQL = "INSERT INTO inbox_event "
             + "(consumer, event_key, payload_hash, status, biz_type, biz_id, biz_version, tenant_id, trace_id) "
@@ -154,6 +161,11 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         if (existing == null) {
             return claimNew(command, tenantId);
         }
+        return handleExisting(command, tenantId, existing, 0);
+    }
+
+    /** 既有记录完整判定：指纹检查 → 状态复判（可重放/回查/并发）；FAILED 重领前过版本护栏并条件推进。 */
+    private InboxTryBegin handleExisting(InboxCommand command, Long tenantId, InboxRecord existing, int depth) {
         if (!StringUtils.hasText(existing.getPayloadHash())
                 || !existing.getPayloadHash().equals(command.getPayloadHash())) {
             return new InboxTryBegin(InboxTryBegin.Outcome.PARAM_CONFLICT, existing);
@@ -167,7 +179,7 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
                 return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_RESULT_UNKNOWN, existing);
             case "FAILED":
                 // 失败重入即重领（将重新执行副作用，先过版本护栏）；retry_count 已由 fail 递增（已记录失败
-                // 次数），重领不重复递增；条件更新防并发抢领竞争，竞争后按实际状态复判（codex r0 P2）
+                // 次数），重领不重复递增；条件更新防并发抢领竞争，竞争后按实际状态有界复判（codex r0/r1）
                 if (staleVersion(command, tenantId)) {
                     return new InboxTryBegin(InboxTryBegin.Outcome.STALE_VERSION, existing);
                 }
@@ -176,7 +188,11 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
                     return new InboxTryBegin(InboxTryBegin.Outcome.RETRIED_CLAIMED,
                             withStatusAndRetry(existing, "PROCESSING", existing.getRetryCount()));
                 }
-                return classify(findByKey(tenantId, command.getConsumer(), command.getEventKey()));
+                if (depth < 1) {
+                    return handleExisting(command, tenantId,
+                            findByKey(tenantId, command.getConsumer(), command.getEventKey()), depth + 1);
+                }
+                throw new IllegalStateException("Inbox 并发复判后仍处竞争状态: " + existing.getStatus());
             default:
                 throw new IllegalStateException("Inbox 未知状态: " + existing.getStatus());
         }
@@ -191,13 +207,14 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         try {
             return insertClaimed(command, tenantId);
         } catch (DuplicateKeyException e) {
-            // 并发首抢撞 uk_inbox_event_key：PG 事务已因 23505 中止，须回滚到插入前保存点才能继续复判查询
+            // 并发首抢撞 uk_inbox_event_key：PG 事务已因 23505 中止，须回滚到插入前保存点才能继续复判查询；
+            // 复判走完整判定入口（指纹检查优先——同键不同指纹并发首抢同样 PARAM_CONFLICT，codex r1 P1）
             rollbackClaimSavepoint(savepoint);
             InboxRecord concurrent = findByKey(tenantId, command.getConsumer(), command.getEventKey());
             if (concurrent == null) {
                 throw e;
             }
-            return classify(concurrent);
+            return handleExisting(command, tenantId, concurrent, 1);
         }
     }
 
@@ -214,7 +231,7 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
             case "RESULT_UNKNOWN":
                 return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_RESULT_UNKNOWN, record);
             default:
-                return new InboxTryBegin(InboxTryBegin.Outcome.DUPLICATE_IN_FLIGHT, record);
+                throw new IllegalStateException("Inbox 未知状态: " + record.getStatus());
         }
     }
 
@@ -232,8 +249,10 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
     }
 
     /**
-     * 版本乱序护栏：对同对象最新已完成记录 FOR UPDATE 行锁（对象级串行化——新旧版本事件在此行上互斥到
-     * 提交，后到者持锁后读到已提交最新版本，杜绝无锁快照的并发反超），仅与该单行比较（不随历史放大）。
+     * 版本乱序护栏（codex r1：稳定水位行串行化）——以 (tenant, consumer, biz_type, biz_id) 唯一水位行为
+     * 对象级互斥点：INSERT-or-撞键（撞键经保存点回滚）后 SELECT ... FOR UPDATE 持有该行直至业务事务提交，
+     * 同一行等待者持锁后读到最新已提交水位（同行等待无快照旧值问题），首次处理亦有稳定互斥点；
+     * incoming &lt; 水位 → STALE；通过则同事务抬水位（水位与副作用同生共死，业务回滚即回落，不虚高）。
      * 版本为可解析整数才比较；非数值语义由事件类型解释（D-07 登记）。
      */
     private boolean staleVersion(InboxCommand command, Long tenantId) {
@@ -246,13 +265,30 @@ public class JdbcConsumerInboxPort implements ConsumerInboxPort {
         if (incoming == null) {
             return false;
         }
-        List<InboxRecord> latest = jdbcTemplate.query(SELECT_LATEST_COMPLETED_FOR_UPDATE_SQL, this::mapRow,
-                tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
-        if (latest.isEmpty()) {
-            return false;
+        Savepoint savepoint = createClaimSavepoint();
+        try {
+            jdbcTemplate.update(WATERMARK_INSERT_SQL, tenantId, command.getConsumer(),
+                    command.getBizType(), command.getBizId());
+        } catch (DuplicateKeyException e) {
+            // 水位行已存在：回滚保存点恢复事务可用性（PG 撞 23505 后事务中止），转入持锁读取
+            rollbackClaimSavepoint(savepoint);
         }
-        Long committed = parseVersion(latest.get(0).getBizVersion());
-        return committed != null && committed > incoming;
+        Long watermark = jdbcTemplate.queryForObject(WATERMARK_SELECT_FOR_UPDATE_SQL, Long.class,
+                tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
+        if (watermark == null) {
+            // 撞键的竞争者已整体回滚（水位行随之消失）：重建水位行并锁定（有界一次）
+            jdbcTemplate.update(WATERMARK_INSERT_SQL, tenantId, command.getConsumer(),
+                    command.getBizType(), command.getBizId());
+            watermark = jdbcTemplate.queryForObject(WATERMARK_SELECT_FOR_UPDATE_SQL, Long.class,
+                    tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
+        }
+        boolean stale = watermark != null && incoming < watermark;
+        if (!stale) {
+            // 通过护栏：同事务抬水位（持行锁中），副作用提交则水位生效、回滚则一并回落
+            jdbcTemplate.update(WATERMARK_RAISE_SQL, incoming, new Timestamp(System.currentTimeMillis()),
+                    tenantId, command.getConsumer(), command.getBizType(), command.getBizId());
+        }
+        return stale;
     }
 
     private static Long parseVersion(String version) {
