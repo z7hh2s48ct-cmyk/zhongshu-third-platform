@@ -109,6 +109,41 @@ test('C1：块注释内撇号不干扰——PASSWORD 字面量仍检出（codex 
   assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
 });
 
+test('C1：注释掉的 SQL 硬编码凭据仍检出（codex r5 P2-1：注释不消除版本库秘密）', () => {
+  // 去注释后匹配会漏检——注释掉的凭据仍留在版本库模板中，必须检出
+  const text = "-- CREATE ROLE app LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
+test('C1：双引号标识符内 -- 不当注释——PASSWORD 字面量仍检出（codex r5 P2-2）', () => {
+  // "app--readonly" 内的 -- 属标识符内容，不得截断，后续真口令须检出
+  const text = 'CREATE ROLE "app--readonly" LOGIN PASSWORD \'RealSecret123\';';
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
+test('C1：美元引用 $$/*$$ 内 /* 不当块注释——后续 PASSWORD 仍检出（codex r5 P2-2）', () => {
+  // $$ ... $$ 内的 /* 是字符串内容而非块注释起始，不得吞掉后续语句
+  const text = "SELECT $$/*$$; CREATE ROLE x LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
+test('C1：跨行字符串含 /* 不破坏状态——后续 PASSWORD 仍检出（codex r5 P2-2）', () => {
+  // 词法状态须跨行保持：第一行开启的字符串未在行尾重置，第二行 PASSWORD 在 NORMAL 上下文
+  const text = "SELECT '/*\nstill string'; CREATE ROLE x LOGIN PASSWORD 'RealSecret123';";
+  const issues = checkSecrets('deploy/postgres-init/01-create-app-role.sql', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
+test('C1：compose 内嵌 psql -c 的 PASSWORD 字面量仍检出（codex r5 P2-3）', () => {
+  // 非 .sql 文件也须做 SQL 凭据检测：compose command 里内嵌的 SQL 不得因扩展名 gate 漏检
+  const text = 'command: ["psql", "-c", "CREATE ROLE app LOGIN PASSWORD \'RealSecret123\';"]';
+  const issues = checkSecrets('deploy/docker-compose.deploy.yml', text);
+  assert.ok(issues.some((i) => i.rule === 'C1-secret' && /SQL/.test(i.message)));
+});
+
 // ---- C2 探针一致性 ----
 
 test('C2：compose healthcheck 路径与 actuator include 一致→通过', () => {

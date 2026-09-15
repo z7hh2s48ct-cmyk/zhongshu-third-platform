@@ -51,64 +51,99 @@ const SAFE_LITERALS_RE = /^(redacted.*|xx|''|""|)$/i;
 // 支持：空格分隔（--requirepass RealPass）与 YAML exec-list（"--requirepass", "RealPass"）
 // flag 后可紧跟闭合引号，再跟分隔符（逗号/空格），再跟值的开引号
 const CMD_CREDENTIAL_RE = /(--requirepass|--password|-a)["']?[\s,]+["']?([^\s"',\]]+)/i;
-// SQL/psql 原生凭据语法（codex r2 P2 修复）：
+// SQL/psql 原生凭据语法（codex r2 P2 引入；r5 改用词法上下文判定，全文件生效）：
 //   PASSWORD '<字面量>'（CREATE/ALTER ROLE ... PASSWORD '...'）
 //   \set <口令类变量> '<字面量>'（psql 客户端变量赋值）
 // 排除安全形式：PASSWORD %L（format 占位符，非引号字面量）、`shell`（命令替换）、${VAR}
-const SQL_PASSWORD_RE = /\bPASSWORD\s+'([^']+)'/i;
-const SQL_SETPASS_RE = /\\set\s+\w*(?:pass|pwd|secret)\w*\s+'([^']+)'/i;
+// 加 g 标志以逐行 matchAll 遍历多个匹配（防同一行「安全拼接 + 真口令」只检首个）
+const SQL_PASSWORD_RE = /\bPASSWORD\s+'([^']+)'/gi;
+const SQL_SETPASS_RE = /\\set\s+\w*(?:pass|pwd|secret)\w*\s+'([^']+)'/gi;
 
-/**
- * 判断 line 中 quoteIdx 处的单引号是否为 SQL 字面量的「起始」引号。
- * 前导单引号为偶数个 → 当前引号开启新字面量；奇数个 → 它是字符串闭合引号。
- * 用于区分 `PASSWORD '真口令'`（起始）与 `'xx PASSWORD ' || quote_literal(:'v')`（闭合，安全）。
- */
-function isQuoteOpener(line, quoteIdx) {
-  const before = line.slice(0, quoteIdx);
-  const n = (before.match(/'/g) || []).length;
-  return n % 2 === 0;
+// SQL 词法上下文状态（codex r5 P2 修复：以完整词法器替代「裸引号奇偶 + 去注释」）
+const CTX_NORMAL = 0;
+const CTX_LINE_COMMENT = 1;
+const CTX_BLOCK_COMMENT = 2;
+const CTX_SINGLE_QUOTE = 3;
+const CTX_DOUBLE_QUOTE = 4;
+const CTX_DOLLAR_QUOTE = 5;
+
+// PostgreSQL 美元引用定界符：$$ 或 $tag$（sticky 定位）
+const DOLLAR_TAG_RE = /\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$/y;
+function matchDollarTag(text, i) {
+  DOLLAR_TAG_RE.lastIndex = i;
+  const m = DOLLAR_TAG_RE.exec(text);
+  return m ? m[0] : null;
 }
 
 /**
- * 去除 SQL 注释（块注释与 -- 行注释），保留行结构与字符位置（注释字符替换为空格）。
- * 跟踪字符串字面量状态（含两个连续单引号的转义），避免把字符串内的注释起始符误当注释。
- * 用于在判定 PASSWORD 字面量前消除注释内撇号对引号奇偶的干扰（codex r4 P2）。
- * @returns {string[]} 与原文行数一致的「去注释」行数组
+ * 构建 SQL 词法上下文图：map[k] = 词法器「到达」字符 k 时所处状态。
+ * 跟踪 PostgreSQL 全部引用上下文并跨行保持状态：
+ *   -- 行注释、/* 块注释（可嵌套）、'单引号串'（'' 转义）、"双引号标识符"（"" 转义）、$tag$美元引用$tag$。
+ * 用于判定 PASSWORD/\set 后的引号究竟是「字面量起始」（NORMAL/注释/双引号/美元上下文）
+ * 还是「拼接字符串的闭合引号」（SINGLE_QUOTE 上下文，如 'xx PASSWORD ' || quote_literal(:'v')）。
+ * 相比 r3 裸奇偶：注释内撇号、双引号内 --、美元引用内 /*、跨行字符串均不再误判（codex r4/r5 P2）。
+ * @returns {Uint8Array} 长度与 text 一致的状态码数组
  */
-function stripSqlComments(text) {
-  const out = [];
-  let inBlock = false;
-  for (const rawLine of text.split(/\r?\n/)) {
-    let res = '';
-    let inStr = false;
-    let i = 0;
-    while (i < rawLine.length) {
-      const two = rawLine.slice(i, i + 2);
-      if (inBlock) {
-        if (two === '*/') { inBlock = false; res += '  '; i += 2; } else { res += ' '; i += 1; }
-        continue;
-      }
-      if (inStr) {
-        if (two === "''") { res += "''"; i += 2; continue; }
-        if (rawLine[i] === "'") { inStr = false; res += "'"; i += 1; continue; }
-        res += rawLine[i]; i += 1; continue;
-      }
-      if (two === '/*') { inBlock = true; res += '  '; i += 2; continue; }
-      if (two === '--') { res += ' '.repeat(rawLine.length - i); break; }
-      if (rawLine[i] === "'") { inStr = true; res += "'"; i += 1; continue; }
-      res += rawLine[i]; i += 1;
+function sqlContextMap(text) {
+  const n = text.length;
+  const map = new Uint8Array(n); // 默认 0 = CTX_NORMAL
+  let state = CTX_NORMAL;
+  let blockDepth = 0;
+  let dollarTag = '';
+  let i = 0;
+  while (i < n) {
+    map[i] = state; // 记录「到达」状态（字面量起始引号在此记为外层状态）
+    const c = text[i];
+    const nx = text[i + 1];
+    if (state === CTX_NORMAL) {
+      if (c === '-' && nx === '-') { state = CTX_LINE_COMMENT; i += 2; continue; }
+      if (c === '/' && nx === '*') { state = CTX_BLOCK_COMMENT; blockDepth = 1; i += 2; continue; }
+      if (c === "'") { state = CTX_SINGLE_QUOTE; i += 1; continue; }
+      if (c === '"') { state = CTX_DOUBLE_QUOTE; i += 1; continue; }
+      const tag = matchDollarTag(text, i);
+      if (tag) { state = CTX_DOLLAR_QUOTE; dollarTag = tag; i += tag.length; continue; }
+      i += 1; continue;
     }
-    out.push(res);
+    if (state === CTX_LINE_COMMENT) {
+      if (c === '\n') state = CTX_NORMAL;
+      i += 1; continue;
+    }
+    if (state === CTX_BLOCK_COMMENT) {
+      if (c === '/' && nx === '*') { blockDepth += 1; i += 2; continue; }
+      if (c === '*' && nx === '/') { blockDepth -= 1; if (blockDepth === 0) state = CTX_NORMAL; i += 2; continue; }
+      i += 1; continue;
+    }
+    if (state === CTX_SINGLE_QUOTE) {
+      if (c === "'" && nx === "'") { map[i + 1] = CTX_SINGLE_QUOTE; i += 2; continue; }
+      if (c === "'") { state = CTX_NORMAL; i += 1; continue; }
+      i += 1; continue;
+    }
+    if (state === CTX_DOUBLE_QUOTE) {
+      if (c === '"' && nx === '"') { map[i + 1] = CTX_DOUBLE_QUOTE; i += 2; continue; }
+      if (c === '"') { state = CTX_NORMAL; i += 1; continue; }
+      i += 1; continue;
+    }
+    // CTX_DOLLAR_QUOTE：扫描至匹配的美元定界符
+    if (text.startsWith(dollarTag, i)) {
+      for (let k = i; k < i + dollarTag.length && k < n; k++) map[k] = CTX_DOLLAR_QUOTE;
+      state = CTX_NORMAL; i += dollarTag.length; continue;
+    }
+    i += 1;
   }
-  return out;
+  return map;
 }
 
 export function checkSecrets(relPath, text) {
   const issues = [];
-  const lines = text.split(/\r?\n/);
-  // SQL 原生凭据语法仅在 .sql 文件判定，且在「去注释」后的行上做引号奇偶（codex r4 P2）
-  const isSql = /\.sql$/i.test(relPath);
-  const sqlLines = isSql ? stripSqlComments(text) : null;
+  // 归一化换行（CRLF→LF），使行偏移与词法图索引对齐
+  const norm = text.replace(/\r\n/g, '\n');
+  const lines = norm.split('\n');
+  // SQL 词法上下文图：跨行保持引用/注释状态（codex r5 P2）
+  const ctxMap = sqlContextMap(norm);
+  // 预计算每行在 norm 中的起始偏移，用于把行内匹配索引换算为全局索引
+  const lineStarts = [];
+  let off = 0;
+  for (const ln of lines) { lineStarts.push(off); off += ln.length + 1; }
   lines.forEach((line, i) => {
     const lineNo = i + 1;
     if (/BEGIN (RSA |EC |DSA )?PRIVATE KEY|BEGIN CERTIFICATE/.test(line)) {
@@ -136,23 +171,22 @@ export function checkSecrets(relPath, text) {
         issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: '命令行参数含硬编码凭据: ' + cmdMatch[1] + ' ' + credValue.slice(0, 20) });
       }
     }
-    // SQL/psql 原生硬编码凭据（仅 .sql；在去注释行上判定，避免注释内撇号干扰奇偶，codex r4 P2）
-    // 引号奇偶校验：仅当 PASSWORD/\set 后的引号是字面量「起始」时才判定（codex r3 P2）
-    if (isSql) {
-      const sline = sqlLines[i];
-      const sqlPwMatch = sline.match(SQL_PASSWORD_RE);
-      if (sqlPwMatch && isQuoteOpener(sline, sqlPwMatch.index + sqlPwMatch[0].indexOf("'"))) {
-        const v = sqlPwMatch[1];
-        if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
-          issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'SQL 中出现硬编码 PASSWORD 字面量: ' + v.slice(0, 20) });
-        }
+    // SQL/psql 原生硬编码凭据：全文件生效（含 compose 内嵌 SQL），在「原文」上匹配（含注释内容），
+    // 用词法上下文图判定 PASSWORD/\set 后的引号——仅当处于 SINGLE_QUOTE（拼接字符串的闭合引号）时跳过。
+    // 由此：注释掉的凭据、双引号标识符内 --、美元引用内 /*、跨行字符串、compose 内嵌 SQL 均不漏检（codex r5 P2）。
+    const base = lineStarts[i];
+    for (const m of line.matchAll(SQL_PASSWORD_RE)) {
+      if (ctxMap[base + m.index + m[0].indexOf("'")] === CTX_SINGLE_QUOTE) continue;
+      const v = m[1];
+      if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
+        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'SQL 中出现硬编码 PASSWORD 字面量: ' + v.slice(0, 20) });
       }
-      const sqlSetMatch = sline.match(SQL_SETPASS_RE);
-      if (sqlSetMatch && isQuoteOpener(sline, sqlSetMatch.index + sqlSetMatch[0].indexOf("'"))) {
-        const v = sqlSetMatch[1];
-        if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
-          issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'psql \\set 出现硬编码口令字面量: ' + v.slice(0, 20) });
-        }
+    }
+    for (const m of line.matchAll(SQL_SETPASS_RE)) {
+      if (ctxMap[base + m.index + m[0].indexOf("'")] === CTX_SINGLE_QUOTE) continue;
+      const v = m[1];
+      if (v && !PLACEHOLDER_RE.test(v) && !v.startsWith('${') && !SAFE_LITERALS_RE.test(v)) {
+        issues.push({ rule: 'C1-secret', path: relPath, line: lineNo, message: 'psql \\set 出现硬编码口令字面量: ' + v.slice(0, 20) });
       }
     }
   });
@@ -446,6 +480,15 @@ function selfTest() {
 
   const sqlCommentApostrophe = checkSecrets('init.sql', "/* application's role */ CREATE ROLE app LOGIN PASSWORD 'RealSecret123';");
   results.push(['C1 负向（块注释内撇号不干扰，硬编码口令仍检出）', sqlCommentApostrophe.length > 0]);
+
+  const sqlCommentedOut = checkSecrets('init.sql', "-- CREATE ROLE app LOGIN PASSWORD 'RealSecret123';");
+  results.push(['C1 负向（注释掉的 SQL 凭据仍检出）', sqlCommentedOut.length > 0]);
+
+  const sqlDqIdentifier = checkSecrets('init.sql', 'CREATE ROLE "app--readonly" LOGIN PASSWORD \'RealSecret123\';');
+  results.push(['C1 负向（双引号标识符内 -- 不当注释，口令仍检出）', sqlDqIdentifier.length > 0]);
+
+  const composeEmbeddedSql = checkSecrets('compose.yml', 'command: ["psql", "-c", "CREATE ROLE app LOGIN PASSWORD \'RealSecret123\';"]');
+  results.push(['C1 负向（compose 内嵌 SQL 凭据仍检出）', composeEmbeddedSql.length > 0]);
 
   const noProbe = checkProbeConsistency('services:\n  x:\n    image: y', 'health');
   results.push(['C2 负向（无 healthcheck）', noProbe.length > 0]);
