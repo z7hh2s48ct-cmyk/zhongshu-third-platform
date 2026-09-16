@@ -134,4 +134,13 @@ public class NotifyChannelSendDO extends BaseDO {
     /** 链路追踪 ID */
     private String traceId;
 
+    /**
+     * 逻辑删除（r2 P2 本卡自愈：覆写字面量为 FALSE/TRUE）——全局 {@code @TableLogic} 配置为 0/1 数值字面量
+     * （application.yaml logic-delete-value），而本表 deleted 列为 boolean（对齐 V20260915.003/004 MSG 域惯例），
+     * MyBatis-Plus 注入方法在 PG 拼 {@code deleted = 0} 将报 42883；字段级覆写优先于全局配置，
+     * PG/H2 双方言可移植。MSG 域系统性处置（含 MSG-001/002 同款表 + DB-018 ORM 级真实 PG 回归）单独立卡跟踪。
+     */
+    @com.baomidou.mybatisplus.annotation.TableLogic(value = "FALSE", delval = "TRUE")
+    private Boolean deleted;
+
 }
