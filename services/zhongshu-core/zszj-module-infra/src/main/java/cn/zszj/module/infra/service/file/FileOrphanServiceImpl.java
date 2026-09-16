@@ -13,6 +13,7 @@ import cn.zszj.module.infra.dal.mysql.file.FileMapper;
 import cn.zszj.module.infra.dal.mysql.file.FileUploadCredentialMapper;
 import cn.zszj.module.infra.framework.file.config.FileCompensationProperties;
 import cn.zszj.module.infra.framework.file.core.client.FileClient;
+import cn.zszj.module.infra.framework.file.core.client.FileListing;
 import cn.zszj.module.infra.framework.file.core.client.FileObjectEntry;
 import cn.zszj.module.infra.framework.file.core.client.local.LocalFileClientConfig;
 import cn.zszj.module.infra.framework.file.core.enums.FileStorageEnum;
@@ -31,6 +32,7 @@ import java.util.Objects;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_ORPHAN_CLEANUP_BATCH_EXCEED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_ORPHAN_LISTING_NOT_SUPPORTED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_ORPHAN_PATH_UNVERIFIABLE;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_ORPHAN_SHARED_STORAGE_REFUSED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PATH_INVALID;
 
@@ -58,6 +60,10 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PATH_INVALID;
  *   <li>两步授权：预览只读，前缀参数使截断扫描可推进（codex r0 P2-2——首段全被引用时
  *       后部孤儿经逐段前缀续扫可见）；清理按显式 path 批次（有界），执行前逐 path 重新清点+重核验
  *       （闭合预览→清理窗口内被引用/被认领的竞态），逐项记录成败，不伪报全成功；</li>
+ *   <li>「确认不存在」与「不可验证」分开（codex r3 P2）：执行前清点经 {@code listObjectsDetailed}
+ *       取回被跳过（符号链接/别名/解析失败）目录前缀与被跳过文件路径——条目缺失但命中不可验证
+ *       盲区（或清点被截断）的 path 按失败拒绝（037 ORPHAN_PATH_UNVERIFIABLE），
+ *       绝不计入成功（防止被跳过目录下真实存在的对象收到假成功）；</li>
  *   <li>失败留痕仅受控描述（异常类名），不落异常原文（循 JOB-002/004 脱敏红线）。</li>
  * </ul>
  */
@@ -124,13 +130,22 @@ public class FileOrphanServiceImpl implements FileOrphanService {
             try {
                 // 执行前重清点 + 重核验（预览→清理窗口内的引用/认领竞态防御）
                 FilePathUtils.validatePath(path);
-                FileObjectEntry entry = findExactEntry(client, path);
-                if (entry == null) {
+                ExactEntryLookup lookup = findExactEntry(client, path);
+                if (lookup.entry == null) {
+                    if (lookup.unverifiable) {
+                        // codex r3 P2：「未出现在清点」≠「已不存在」——路径位于被跳过（符号链接/
+                        // 别名/解析失败）目录下、与其被跳过对象同名或清点被截断时存在性不可证明，
+                        // 按失败处理，绝不计入 successPaths（「确认不存在」与「不可验证」分开）
+                        addFailure(respVO, path, "ORPHAN_PATH_UNVERIFIABLE("
+                                + FILE_ORPHAN_PATH_UNVERIFIABLE.getCode() + ")："
+                                + FILE_ORPHAN_PATH_UNVERIFIABLE.getMsg());
+                        continue;
+                    }
                     // 对象已不存在（重复清理/已被补偿等收敛）：幂等视为成功，不重复调用删除
                     respVO.getSuccessPaths().add(path);
                     continue;
                 }
-                if (!isOrphanCandidate(configId, entry, retentionBefore, now)) {
+                if (!isOrphanCandidate(configId, lookup.entry, retentionBefore, now)) {
                     addFailure(respVO, path, "ORPHAN_CONDITION_NOT_HOLD（引用/保留期/在途凭证核验未通过，跳过）");
                     continue;
                 }
@@ -340,12 +355,63 @@ public class FileOrphanServiceImpl implements FileOrphanService {
     }
 
     /**
-     * 精确 path 清点（执行前重核验用）：以 path 为前缀清点后取完全匹配项；
-     * 未在清点结果中出现视为对象已不存在（幂等成功路径）。
+     * 精确 path 清点 + 可验证性判定（执行前重核验用；codex r3 P2 把「条目缺失」的两种语义分开）：
+     * <ul>
+     *   <li>{@code entry != null}：对象在清点中出现，可正常核验孤儿条件；</li>
+     *   <li>{@code entry == null ∧ unverifiable=false}：完整（未截断）清点中未出现、且路径不落任何
+     *       不可验证盲区 → 对象确认不存在（幂等收敛）；</li>
+     *   <li>{@code entry == null ∧ unverifiable=true}：路径命中被跳过（符号链接/别名/解析失败）
+     *       目录前缀、与其被跳过对象同名，或清点被截断（缺失可能只是截断产物）→ 存在性无法核验，
+     *       调用方必须按失败拒绝，不得假报幂等成功。</li>
+     * </ul>
      */
-    private FileObjectEntry findExactEntry(FileClient client, String path) {
-        List<FileObjectEntry> entries = client.listObjects(path, properties.getOrphan().getScanMaxObjects());
-        return entries.stream().filter(e -> StrUtil.equals(e.getPath(), path)).findFirst().orElse(null);
+    private ExactEntryLookup findExactEntry(FileClient client, String path) {
+        int max = properties.getOrphan().getScanMaxObjects();
+        FileListing listing = client.listObjectsDetailed(path, max);
+        FileObjectEntry entry = listing.getEntries().stream()
+                .filter(e -> StrUtil.equals(e.getPath(), path)).findFirst().orElse(null);
+        if (entry != null) {
+            return new ExactEntryLookup(entry, false);
+        }
+        boolean unverifiable = listing.getEntries().size() >= max
+                || isPathUnverifiable(listing, path);
+        return new ExactEntryLookup(null, unverifiable);
+    }
+
+    /**
+     * codex r3 P2：path 命中存储侧「不可验证」集合即拒绝假成功——
+     * ①位于被跳过（符号链接/别名/解析失败）目录前缀之下；②与被跳过文件精确同名。
+     * 两者均按忽略大小写匹配：大小写不敏感文件系统上，变体拼写与被跳过目录/文件寻址
+     * 同一物理对象（大小写敏感存储上属保守方向——宁可多拒绝）。
+     */
+    private static boolean isPathUnverifiable(FileListing listing, String path) {
+        for (String prefix : listing.getUnverifiablePrefixes()) {
+            if (path.length() >= prefix.length()
+                    && path.regionMatches(true, 0, prefix, 0, prefix.length())) {
+                return true;
+            }
+        }
+        for (String skipped : listing.getUnverifiablePaths()) {
+            if (path.equalsIgnoreCase(skipped)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 精确清点结果（codex r3 P2）：见 {@link #findExactEntry}
+     */
+    private static final class ExactEntryLookup {
+
+        private final FileObjectEntry entry;
+        private final boolean unverifiable;
+
+        private ExactEntryLookup(FileObjectEntry entry, boolean unverifiable) {
+            this.entry = entry;
+            this.unverifiable = unverifiable;
+        }
+
     }
 
     private FileOrphanItemRespVO toItem(FileObjectEntry entry) {

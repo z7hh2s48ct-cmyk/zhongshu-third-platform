@@ -85,10 +85,96 @@ public class LocalFileClientListTest {
                 "外部物理文件不得以任何路径进入本配置清单");
     }
 
+    /**
+     * codex r3 P1：符号链接目录【显式】拒下钻（{@code Files.isSymbolicLink} 判先，不依赖别名比较）——
+     * 大小写敏感文件系统上 {@code Temp -> temp} 形态链接（仅大小写不同）的物理解析与词汇路径
+     * 经忽略大小写比较「相等」而被误放行：{@code Temp/live.bin} 以 {@code Temp/} 前缀洗进清单，
+     * 服务层在途凭证保护只认小写 {@code temp/} 前缀被绕过（在途对象被当孤儿候选误删）。
+     */
+    @Test
+    public void listObjects_skipsSymlinkedDirectory_evenWithCaseDifference() throws Exception {
+        // Temp 必须与 temp【同层兄弟】：仅大小写不同的路径对才能复现「忽略大小写别名比较放行」
+        // 的 P1 绕过（嵌套在子目录下会因路径形状不同而被别名比较拦住，测不到本合同）
+        Path root = Files.createDirectories(tempDir.resolve("root"));
+        Path realTemp = Files.createDirectories(root.resolve("temp"));
+        Files.write(realTemp.resolve("live.bin"), "x".getBytes());
+        // 大小写差异别名只有符号链接能表达（junction 无法与既有 temp 仅大小写共处）
+        Path tempLink = createCaseVariantSymlink(root.resolve("Temp"), realTemp);
+        assumeTrue(tempLink != null && Files.isSymbolicLink(tempLink),
+                "平台不支持符号链接/无法启用按目录大小写敏感（Windows 需特权），跳过用例");
+        LocalFileClient client = newClient(root);
+
+        List<String> paths = client.listObjects("", 100).stream()
+                .map(FileObjectEntry::getPath).toList();
+
+        assertTrue(paths.contains("temp/live.bin"), "真实目录正常清点（真实拼写 temp/）");
+        assertTrue(paths.stream().noneMatch(p -> p.startsWith("Temp/")),
+                "符号链接目录（即使仅大小写差异）不得下钻——Temp/live.bin 不得以 Temp/ 前缀进清单");
+    }
+
+    /**
+     * codex r3 P1 同口径：符号链接【文件】同样不清洗进清单——删除会穿透到链接目标，
+     * 清单出现即可能被孤儿清理穿透误删外部对象（少清点永远安全）。
+     */
+    @Test
+    public void listObjects_skipsSymlinkedFile() throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("root"));
+        Path external = Files.createDirectories(tempDir.resolve("external"));
+        Files.write(external.resolve("secret.bin"), "x".getBytes());
+        Path link = createSymlinkOnly(root.resolve("link.bin"), external.resolve("secret.bin"));
+        assumeTrue(link != null && Files.isSymbolicLink(link), "平台不支持符号链接，跳过用例");
+        LocalFileClient client = newClient(root);
+        client.upload("a".getBytes(), "real.bin", "application/octet-stream");
+
+        List<String> paths = client.listObjects("", 100).stream()
+                .map(FileObjectEntry::getPath).toList();
+
+        assertTrue(paths.contains("real.bin"), "真实文件正常清点");
+        assertFalse(paths.contains("link.bin"), "符号链接文件不得进入清单（物理归属不可证明）");
+    }
+
     @Test
     public void listObjects_emptyStorage_returnsEmpty() {
         LocalFileClient client = newClient();
         assertTrue(client.listObjects("", 100).isEmpty());
+    }
+
+    /** 仅符号链接创建（无 junction 回退）：失败返回 null 由 assumeTrue 跳过 */
+    private Path createSymlinkOnly(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 创建「仅大小写差异」的符号链接 {@code Temp -> temp}：大小写敏感平台（Linux/macOS）直接创建；
+     * Windows NTFS 大小写不敏感、无法与既有目录仅大小写共处——先尝试对父目录启用按目录
+     * 区分大小写（fsutil，需特权/WSL 特性，失败不重试），仍不可用返回 null（由 assumeTrue 声明跳过）。
+     */
+    private Path createCaseVariantSymlink(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            // Windows：父目录大小写不敏感导致同名（仅大小写）冲突 → 尝试启用按目录区分大小写
+        }
+        boolean enabled = false;
+        try {
+            Process p = new ProcessBuilder("fsutil", "file", "setCaseSensitiveInfo",
+                    link.getParent().toString(), "enable").start();
+            enabled = p.waitFor() == 0;
+        } catch (Exception ex) {
+            // 非 Windows / 无 fsutil：放弃
+        }
+        if (!enabled) {
+            return null;
+        }
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            return null;
+        }
     }
 
     /** 别名链接创建：优先符号链接，Windows 无特权退回目录 junction（mklink /J），均不可用返回 null */

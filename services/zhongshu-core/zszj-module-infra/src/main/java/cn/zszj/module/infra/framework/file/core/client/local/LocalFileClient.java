@@ -93,26 +93,52 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
      * 目录遍历默认即下钻——树内游离 junction 会把【他配置物理目录】的对象以本配置相对路径
      * 洗进清点清单（引用查不到 → 误删）。故清点在【真实路径空间】进行（根先 toRealPath，
      * 其下子目录逐个比对「自身物理解析 vs 自身词汇路径」）：不一致即为别名（junction/symlink），
-     * 一律不下钻；物理解析失败（断链/环/权限）同样按别名跳过——少清点永远安全（fail-safe 少删）。
-     * 遍历序为「父目录字典序 DFS」，截断取清点序前 N 个（确定性依赖树形态，分前缀续扫合同不变）。</p>
+     * 一律不下钻；物理解析失败（断链/环/权限）同样按别名跳过——少清点永远安全（fail-safe 少删）。</p>
+     *
+     * <p>codex r3 P1：符号链接目录【显式】拒下钻（{@code Files.isSymbolicLink}，先于别名比较、
+     * 不依赖大小写比较）——大小写敏感文件系统上 {@code Temp -> temp} 形态链接的物理解析与
+     * 词汇路径仅大小写不同，忽略大小写的别名比较会误放行，{@code Temp/live.bin} 以 {@code Temp/}
+     * 前缀洗进清单绕过服务层只认 {@code temp/} 的在途凭证保护；符号链接文件同理不清洗进清单
+     * （删除会穿透到链接目标）。</p>
+     *
+     * <p>codex r3 P2：被跳过（符号链接/别名/解析失败）目录的前缀与被跳过文件路径经
+     * {@link #listObjectsDetailed} 上报——「未出现在清单」与「已不存在」是两种语义，
+     * 清理侧对命中被跳过前缀的 path 必须按不可验证拒绝，不得假报成功。</p>
      */
     @Override
     public java.util.List<cn.zszj.module.infra.framework.file.core.client.FileObjectEntry> listObjects(
             String prefix, int maxEntries) {
+        return listObjectsDetailed(prefix, maxEntries).getEntries();
+    }
+
+    /**
+     * ZS-FILE-005.B codex r3 P2：对象清点（带不可验证上报）——条目语义与 {@link #listObjects}
+     * 完全一致，额外返回枚举期被跳过（符号链接/别名/解析失败）目录的相对前缀（正斜杠、
+     * 以 {@code /} 结尾）与被跳过文件的相对路径。
+     */
+    @Override
+    public cn.zszj.module.infra.framework.file.core.client.FileListing listObjectsDetailed(
+            String prefix, int maxEntries) {
         Path basePath = Paths.get(config.getBasePath()).toAbsolutePath().normalize();
         if (!java.nio.file.Files.exists(basePath)) {
-            return java.util.List.of();
+            return new cn.zszj.module.infra.framework.file.core.client.FileListing(
+                    java.util.List.of(), java.util.List.of(), java.util.List.of());
         }
         Path baseReal;
         try {
             baseReal = basePath.toRealPath();
         } catch (java.io.IOException ex) {
             // 根不可解析（断链/环/权限）：无法安全清点 → 空清单（服务层隔离检查对该配置已 036 拒绝）
-            return java.util.List.of();
+            return new cn.zszj.module.infra.framework.file.core.client.FileListing(
+                    java.util.List.of(), java.util.List.of(), java.util.List.of());
         }
         java.util.ArrayDeque<Path> pendingDirs = new java.util.ArrayDeque<>();
         pendingDirs.push(baseReal);
         java.util.List<Path> files = new java.util.ArrayList<>();
+        // codex r3 P2：被跳过（不可验证）目录前缀（以 / 结尾）与文件路径——其下/其身对象可能
+        // 真实存在却不出现在条目中，供清理侧区分「确认不存在」与「不可验证」
+        java.util.List<String> skippedPrefixes = new java.util.ArrayList<>();
+        java.util.List<String> skippedPaths = new java.util.ArrayList<>();
         try {
             while (!pendingDirs.isEmpty() && files.size() < maxEntries) {
                 Path dir = pendingDirs.pop();
@@ -124,9 +150,18 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
                 }
                 children.sort(java.util.Comparator.comparing(p -> p.getFileName().toString()));
                 for (Path child : children) {
+                    // codex r3 P1：符号链接显式判先（不依赖别名比较的大小写容差）——目录不下钻、
+                    // 文件不清洗进清单，其路径登记为不可验证（删除会穿透到链接目标）
+                    if (java.nio.file.Files.isSymbolicLink(child)) {
+                        recordSkipped(baseReal, child, skippedPrefixes, skippedPaths);
+                        continue;
+                    }
                     if (java.nio.file.Files.isDirectory(child)) {
                         if (isAliasDirectory(child)) {
-                            continue; // 别名目录不下钻（无法安全判定其物理归属 → 保守少清点）
+                            // 别名目录不下钻（无法安全判定其物理归属 → 保守少清点），
+                            // codex r3 P2：其前缀登记为不可验证（清理侧不得假报成功）
+                            recordSkipped(baseReal, child, skippedPrefixes, skippedPaths);
+                            continue;
                         }
                         pendingDirs.push(child);
                     } else if (java.nio.file.Files.isRegularFile(child)) {
@@ -164,7 +199,22 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
         }
         entries.sort(java.util.Comparator.comparing(
                 cn.zszj.module.infra.framework.file.core.client.FileObjectEntry::getPath));
-        return entries;
+        return new cn.zszj.module.infra.framework.file.core.client.FileListing(entries, skippedPrefixes, skippedPaths);
+    }
+
+    /**
+     * 登记被跳过条目的相对路径（codex r3 P2）：目录记为前缀（以 {@code /} 结尾，覆盖其下整棵
+     * 子树），文件记为精确路径。
+     */
+    private static void recordSkipped(Path baseReal, Path child,
+                                      java.util.List<String> skippedPrefixes,
+                                      java.util.List<String> skippedPaths) {
+        String rel = baseReal.relativize(child).toString().replace(java.io.File.separatorChar, '/');
+        if (java.nio.file.Files.isDirectory(child)) {
+            skippedPrefixes.add(rel + "/");
+        } else {
+            skippedPaths.add(rel);
+        }
     }
 
     /**
@@ -172,6 +222,10 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
      * junction/symlink 别名（真实子目录两者相同——父目录已在真实空间）；物理解析失败
      * （断链/环/权限）同样按别名处理（不下钻）。大小写不敏感比较规避盘符/目录拼写差异的误报
      * （误报方向是少清点，保守可接受）。
+     *
+     * <p>codex r3 P1：符号链接目录已在遍历处显式拒下钻（{@code Files.isSymbolicLink} 判先）——
+     * 本比较只兜底 junction 等非符号链接别名；大小写敏感文件系统上 {@code Temp -> temp} 形态
+     * 链接「物理解析 vs 词汇路径」仅大小写不同，依赖本比较会误放行。</p>
      */
     private static boolean isAliasDirectory(Path dir) {
         try {

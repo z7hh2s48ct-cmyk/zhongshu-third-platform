@@ -18,7 +18,9 @@ import cn.zszj.module.infra.dal.mysql.file.FileUploadCredentialMapper;
 import cn.zszj.module.infra.framework.file.config.FileConfiguration;
 import cn.zszj.module.infra.framework.file.config.FileCompensationProperties;
 import cn.zszj.module.infra.framework.file.core.client.FileClient;
+import cn.zszj.module.infra.framework.file.core.client.FileListing;
 import cn.zszj.module.infra.framework.file.core.client.FileObjectEntry;
+import cn.zszj.module.infra.framework.file.core.client.local.LocalFileClient;
 import cn.zszj.module.infra.framework.file.core.client.local.LocalFileClientConfig;
 import cn.zszj.module.infra.framework.file.core.enums.FileStorageEnum;
 import jakarta.annotation.Resource;
@@ -30,8 +32,10 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -118,6 +122,12 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
                     .map(p -> new FileObjectEntry(p, (long) objectStore.get(p).length, modifiedMap.get(p)))
                     .toList();
         });
+        // codex r3 P2：模拟对象存储清点即权威（无别名盲区）——detailed 与 listObjects 同答案、上报为空
+        when(masterClient.listObjectsDetailed(anyString(), anyInt())).thenAnswer(inv ->
+                new FileListing(
+                        ((FileClient) inv.getMock()).listObjects(
+                                inv.getArgument(0, String.class), inv.getArgument(1, Integer.class)),
+                        List.of(), List.of()));
         try {
             org.mockito.Mockito.doAnswer(inv -> {
                 objectStore.remove(inv.getArgument(0, String.class));
@@ -416,7 +426,112 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
         assertTrue(objectStore.containsKey("asset/fail.bin"));
     }
 
+    // ========== ⑪（codex r3 P1）大小写差异符号链接：在途对象不得被洗成孤儿候选 ==========
+
+    /**
+     * codex r3 P1（真实 client + service 复现）：大小写敏感文件系统上符号链接目录
+     * {@code Temp -> temp}（仅大小写不同）能通过「忽略大小写」的别名比较被下钻——
+     * {@code Temp/live.bin} 以 {@code Temp/} 前缀洗进清单，服务层在途凭证检查只认小写
+     * {@code temp/} 前缀 → 在途对象被当孤儿候选误删。修复后符号链接目录显式拒下钻
+     * （不依赖大小写比较）：{@code Temp/…} 不进候选、其下 path 清理按不可验证拒绝。
+     */
+    @Test
+    public void caseVariantSymlink_inflightTempObject_notOrphan_notDeleted() throws Exception {
+        Path realTemp = Files.createDirectories(masterRoot.resolve("temp"));
+        Path live = realTemp.resolve("live.bin");
+        Files.write(live, "inflight".getBytes(StandardCharsets.UTF_8));
+        // 过保留期（30 天前）：若被洗成 Temp/live.bin 则满足孤儿条件
+        Files.setLastModifiedTime(live,
+                FileTime.fromMillis(System.currentTimeMillis() - 30L * 24 * 3600 * 1000));
+        seedActiveCredential("temp/live.bin"); // 在途直传凭证认领（保护只认 temp/ 前缀）
+        // 大小写差异链接只能用符号链接构造（junction 无法与既有 temp 仅大小写共处）
+        Path tempLink = createCaseVariantSymlink(masterRoot.resolve("Temp"), realTemp);
+        assumeTrue(tempLink != null && Files.isSymbolicLink(tempLink),
+                "平台不支持符号链接/无法启用按目录大小写敏感（Windows 需特权），跳过用例");
+        switchToRealLocalClient();
+
+        FileOrphanPreviewRespVO preview = orphanService.preview(MASTER_CONFIG_ID, "");
+        assertTrue(preview.getItems().isEmpty(),
+                "在途对象不得成为候选：真实 temp/live.bin 受凭证保护，符号链接 Temp/ 不得下钻洗出 Temp/live.bin");
+
+        FileOrphanCleanupRespVO resp = orphanService.cleanup(req(List.of("Temp/live.bin")));
+        assertTrue(resp.getSuccessPaths().isEmpty(), "不可核验路径不得计入成功");
+        assertEquals(1, resp.getFailures().size());
+        assertTrue(resp.getFailures().get(0).getErrorMessage().contains("ORPHAN_PATH_UNVERIFIABLE"));
+        assertTrue(Files.exists(live), "在途对象物理文件不得被删除");
+    }
+
+    // ========== ⑫（codex r3 P2）被跳过目录下的对象：cleanup 报失败，不得假报成功 ==========
+
+    /**
+     * codex r3 P2（真实 client + service 复现）：树内别名目录 {@code alias -> 外部物理目录}
+     * 被清点保守跳过后，其下真实存在的 {@code alias/old.bin} 不出现在执行前重清点条目中——
+     * 修复前被当「已缺失」按幂等成功上报（假成功，文件原样留存）。修复后被跳过前缀经
+     * listObjectsDetailed 上报，命中即按 037 ORPHAN_PATH_UNVERIFIABLE 失败拒绝。
+     */
+    @Test
+    public void cleanup_underSkippedAliasPrefix_reportsFailure_notFakeSuccess() throws Exception {
+        Path external = Files.createDirectories(tempRoot.resolve("external"));
+        Path oldBin = external.resolve("old.bin");
+        Files.write(oldBin, "old".getBytes(StandardCharsets.UTF_8));
+        // 别名链接：优先符号链接，Windows 无特权退回 junction——两者都须被清点跳过
+        Path alias = createAliasLink(masterRoot.resolve("alias"), external);
+        assumeTrue(alias != null && Files.exists(alias), "环境不支持符号链接/junction 创建，跳过用例");
+        switchToRealLocalClient();
+
+        FileOrphanCleanupRespVO resp = orphanService.cleanup(req(List.of("alias/old.bin")));
+
+        assertTrue(resp.getSuccessPaths().isEmpty(), "被跳过目录下的真实对象不得假报成功");
+        assertEquals(1, resp.getFailures().size());
+        assertEquals("alias/old.bin", resp.getFailures().get(0).getPath());
+        assertTrue(resp.getFailures().get(0).getErrorMessage().contains("ORPHAN_PATH_UNVERIFIABLE"));
+        assertTrue(Files.exists(oldBin), "不可验证对象原样留存（宁可不删，不得假成功）");
+    }
+
     // ========== 造数辅助 ==========
+
+    /**
+     * codex r3 P1/P2 用例改用【真实 LocalFileClient】（mock client 无别名/链接语义，无法复现）：
+     * 存储根即 master 配置根。
+     */
+    private void switchToRealLocalClient() {
+        LocalFileClientConfig localConfig = new LocalFileClientConfig();
+        localConfig.setBasePath(masterRoot.toString());
+        localConfig.setDomain("http://localhost:48080");
+        LocalFileClient realClient = new LocalFileClient(MASTER_CONFIG_ID, localConfig);
+        realClient.init();
+        when(fileConfigService.getMasterFileClient()).thenReturn(realClient);
+        when(fileConfigService.getFileClient(anyLong())).thenReturn(realClient);
+    }
+
+    /**
+     * 创建「仅大小写差异」的符号链接 {@code Temp -> temp}：大小写敏感平台（Linux/macOS）直接创建；
+     * Windows NTFS 大小写不敏感、无法与既有目录仅大小写共处——先尝试对父目录启用按目录
+     * 区分大小写（fsutil，需特权/WSL 特性，失败不重试），仍不可用返回 null（由 assumeTrue 声明跳过）。
+     */
+    private Path createCaseVariantSymlink(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            // Windows：父目录大小写不敏感导致同名（仅大小写）冲突 → 尝试启用按目录区分大小写
+        }
+        boolean enabled = false;
+        try {
+            Process p = new ProcessBuilder("fsutil", "file", "setCaseSensitiveInfo",
+                    link.getParent().toString(), "enable").start();
+            enabled = p.waitFor() == 0;
+        } catch (Exception ex) {
+            // 非 Windows / 无 fsutil：放弃
+        }
+        if (!enabled) {
+            return null;
+        }
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            return null;
+        }
+    }
 
     private void seedOrphanObject(String path, int ageDays) {
         objectStore.put(path, ("orphan-" + path).getBytes());
