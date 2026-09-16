@@ -407,6 +407,9 @@ infra:
       failure-rate-warn-percent: 5 # 失败率预警阈值（百分比，占位，待实测回填）
       lease-stale-seconds: 0 # 租约过期宽限（秒）：0 = 已过期即视为 dispatcher 停摆
       max-manual-retry: 3 # 单事件人工重试上限（无限重试护栏，超过即拒绝）
+      alert: # ZS-OPS-002.B：周期告警探针（OutboxHealthAlertScheduler）配置，由 @ConditionalOnProperty/@Scheduled 直接消费
+        enabled: true # 启用周期探针；false 时不装配探针、不产任何调度开销
+        interval-ms: 60000 # 探针周期（毫秒，保守占位，待 WP-19 实测回填；非容量承诺）
 
 --- #################### 管理端点（ZS-ENG-005：默认仅健康检查） ####################
 
@@ -416,6 +419,17 @@ management:
       base-path: /actuator
       exposure:
         include: health
+  endpoint:
+    health:
+      # 安全边界（ZS-ENG-005）：/actuator/health 与 /actuator/health/** 匿名放行，
+      # 故聚合端点保持 Spring Boot 默认 show-details: never（匿名只见聚合 status，不见组件详情）；
+      # 越阈码/指标详情只在下方 monitoring 组对采集/告警系统可见（该组详情仅指标值+越阈码，无 payload/秘密）。
+      group:
+        monitoring: # ZS-OPS-002.B：专用监测组，聚合队列/依赖健康，供采集与告警系统消费
+          include: outboxQueue,db,redis,ping
+          show-details: always
+        # 红线（开发计划铁律 9）：liveness/readiness 组保持 Spring Boot 默认（仅 livenessState/readinessState），
+        # 绝不将 outboxQueue 纳入 liveness——队列积压是可恢复运维信号，进 liveness 会触发编排器重启风暴（越积压越重启）。
 
 --- #################### 数据库迁移（ZS-DB-003 / PEND-005） ####################
 

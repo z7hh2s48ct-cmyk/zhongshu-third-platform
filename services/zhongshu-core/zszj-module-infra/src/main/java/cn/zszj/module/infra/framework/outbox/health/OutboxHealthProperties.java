@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
  *   <li>{@code failureRateWarnPercent}：失败率预警阈值（百分比）；</li>
  *   <li>{@code leaseStaleSeconds}：租约过期宽限（秒，容忍时钟偏移；默认 0 即「已过期即视为停摆」）；</li>
  *   <li>{@code maxManualRetry}：单事件人工重试上限（无限重试护栏，超过即拒绝）。</li>
+ *   <li>{@code alert}：周期告警探针配置（ZS-OPS-002.B，绑定 {@code infra.outbox.health.alert.*}）。</li>
  * </ul>
  */
 @Data
@@ -42,5 +43,19 @@ public class OutboxHealthProperties {
 
     /** 单事件人工重试上限（无限重试护栏）：{@code manual_retry_seq > 上限} 即拒绝，默认 3。 */
     private int maxManualRetry = 3;
+
+    /** 周期告警探针配置（ZS-OPS-002.B；与 {@code OutboxHealthAlertScheduler} 的 @ConditionalOnProperty/@Scheduled 同源消费）。 */
+    private final Alert alert = new Alert();
+
+    @Data
+    public static class Alert {
+
+        /** 是否启用周期告警探针；false 时探针不装配、不产任何调度开销。 */
+        private boolean enabled = true;
+
+        /** 探针周期（毫秒，保守占位，待 WP-19 实测回填；非容量/告警时效承诺）。 */
+        private long intervalMs = 60000;
+
+    }
 
 }
