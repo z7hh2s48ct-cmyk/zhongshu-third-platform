@@ -104,6 +104,22 @@ public class LogSanitizeUtils {
      * @return 脱敏后的形如 {@code [arg1, arg2]} 的字符串
      */
     public static String sanitizeArgs(Object[] args, String... extraKeys) {
+        return truncate(sanitizeArgsUntruncated(args, extraKeys));
+    }
+
+    /**
+     * 脱敏方法入参数组，但<b>不做 2048 日志截断</b>（ZS-SEC-011.B，codex 011.A P2-1）。
+     *
+     * 专用于幂等参数摘要等「必须全量参与比对」的场景：日志口径的 {@link #sanitizeArgs(Object[], String[])}
+     * 会在 {@link #MAX_LENGTH} 截断并附总长度，导致「等长、仅第 2048 字符后不同」的入参产生相同摘要输入
+     * （等长异尾碰撞）。本方法与日志口径的脱敏规则（键归一/递归掩码/失败摘要化）完全一致，仅免截断；
+     * 调用方须自行控制结果体积（如再 MD5 定长化），不得将返回值直接落日志。
+     *
+     * @param args      原始入参数组
+     * @param extraKeys 端点级附加敏感键
+     * @return 脱敏后的形如 {@code [arg1, arg2]} 的字符串（未截断）
+     */
+    public static String sanitizeArgsUntruncated(Object[] args, String... extraKeys) {
         if (ArrayUtil.isEmpty(args)) {
             return "[]";
         }
@@ -112,7 +128,7 @@ public class LogSanitizeUtils {
         for (Object arg : args) {
             parts.add(sanitizeArgValue(arg, extra));
         }
-        return truncate("[" + String.join(", ", parts) + "]");
+        return "[" + String.join(", ", parts) + "]";
     }
 
     /**

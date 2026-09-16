@@ -17,3 +17,4 @@ DELETE FROM "infra_file_delivery_ticket";
 DELETE FROM "inbox_event";
 DELETE FROM "inbox_object_watermark";
 DELETE FROM "infra_job_tenant_result";
+DELETE FROM "infra_persistent_idempotent";

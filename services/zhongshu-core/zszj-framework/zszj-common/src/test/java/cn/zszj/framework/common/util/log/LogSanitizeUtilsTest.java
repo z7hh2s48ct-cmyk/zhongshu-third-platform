@@ -11,6 +11,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -151,6 +152,27 @@ class LogSanitizeUtilsTest {
         assertTrue(result.contains("null"));
         assertTrue(result.contains("42"));
         assertEquals("[]", LogSanitizeUtils.sanitizeArgs(null));
+    }
+
+    @Test
+    void sanitizeArgsUntruncated_shouldKeepSameMaskingRulesWithoutLengthCap() {
+        // ZS-SEC-011.B（codex 011.A P2-1）：摘要专用的未截断口径——脱敏规则与日志口径完全一致，仅免 2048 截断；
+        // 等长、仅第 2048 字符后不同的入参在摘要输入层必须可区分
+        String base = "x".repeat(2100);
+        Object[] argsA = new Object[]{new LoginReq("tom", SECRET), base + "-tail-A"};
+        Object[] argsB = new Object[]{new LoginReq("tom", SECRET), base + "-tail-B"};
+
+        String untruncatedA = LogSanitizeUtils.sanitizeArgsUntruncated(argsA);
+        String untruncatedB = LogSanitizeUtils.sanitizeArgsUntruncated(argsB);
+
+        assertFalse(untruncatedA.contains(SECRET), "未截断口径同样必须脱敏");
+        assertTrue(untruncatedA.contains("\"password\":\"***\""), "脱敏规则与日志口径一致");
+        assertFalse(untruncatedA.contains("...[truncated,total="), "未截断口径不得截断");
+        assertNotEquals(untruncatedA, untruncatedB, "等长异尾（>2048）入参在未截断口径下必须可区分（P2-1 根基）");
+
+        // 日志口径（截断版）行为不变：超长仍截断并附总长度
+        String truncated = LogSanitizeUtils.sanitizeArgs(argsA);
+        assertTrue(truncated.contains("...[truncated,total="), "日志口径截断行为保持不变");
     }
 
     // ========== sanitizeResponseBody：保留可定位状态码 ==========

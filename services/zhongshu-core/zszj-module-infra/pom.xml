@@ -25,6 +25,13 @@
             <artifactId>zszj-spring-boot-starter-biz-tenant</artifactId>
         </dependency>
 
+        <!-- 服务保障相关（ZS-SEC-011.B：落地 protection starter 的 PersistentIdempotentStore SPI；
+             protection→infra 零依赖，方向 infra→protection 无环） -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-protection</artifactId>
+        </dependency>
+
         <!-- Web 相关 -->
         <dependency>
             <groupId>cn.zszj</groupId>
