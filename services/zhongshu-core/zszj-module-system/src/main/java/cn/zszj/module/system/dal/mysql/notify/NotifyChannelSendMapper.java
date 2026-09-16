@@ -20,22 +20,23 @@ import java.util.List;
 @Mapper
 public interface NotifyChannelSendMapper extends BaseMapperX<NotifyChannelSendDO> {
 
-    /** 按渠道幂等键查询（回执定位 + 回查入口）；tenant 过滤依赖租户拦截器 + 显式谓词双保险。 */
+    /** 按渠道幂等键查询（回执定位 + 回查入口）；tenant 过滤依赖租户拦截器 + 显式谓词双保险。
+     *  手写 @Select 不经 MyBatis-Plus 逻辑删除拦截器，显式 deleted = FALSE 对齐唯一约束同域惯例。 */
     @Select("SELECT * FROM system_notify_channel_send WHERE tenant_id = #{tenantId} "
-            + "AND channel = #{channel} AND channel_message_id = #{channelMessageId} LIMIT 1")
+            + "AND channel = #{channel} AND channel_message_id = #{channelMessageId} AND deleted = FALSE LIMIT 1")
     NotifyChannelSendDO selectByChannelMessageId(@Param("tenantId") Long tenantId,
                                                  @Param("channel") String channel,
                                                  @Param("channelMessageId") String channelMessageId);
 
-    /** 按 Outbox 事件 ID 查询（投递事件 → 台账记录）。 */
+    /** 按 Outbox 事件 ID 查询（投递事件 → 台账记录；每次投递必经，r1 P3 补 deleted 过滤与覆盖索引）。 */
     @Select("SELECT * FROM system_notify_channel_send WHERE tenant_id = #{tenantId} "
-            + "AND outbox_event_id = #{outboxEventId} LIMIT 1")
+            + "AND outbox_event_id = #{outboxEventId} AND deleted = FALSE LIMIT 1")
     NotifyChannelSendDO selectByOutboxEventId(@Param("tenantId") Long tenantId,
                                               @Param("outboxEventId") Long outboxEventId);
 
     /** 按状态列台账（回查/人工处置扫描，id 升序有界）。 */
     @Select("SELECT * FROM system_notify_channel_send WHERE tenant_id = #{tenantId} AND status = #{status} "
-            + "ORDER BY id LIMIT #{limit}")
+            + "AND deleted = FALSE ORDER BY id LIMIT #{limit}")
     List<NotifyChannelSendDO> selectListByStatus(@Param("tenantId") Long tenantId,
                                                  @Param("status") String status,
                                                  @Param("limit") int limit);
@@ -135,6 +136,9 @@ public interface NotifyChannelSendMapper extends BaseMapperX<NotifyChannelSendDO
      *
      * <p>r0 P2 处置：以 <b>expectedOldEventId 条件换绑</b>——PENDING→PENDING 不再是无条件空转迁移，
      * 并发/双击人工重试只有一次成功（其余落败方由事务回滚连带撤销其追加的事件）。
+     * r1 P1 处置：占位符显式声明 {@code jdbcType=BIGINT}——MyBatis 默认 jdbcTypeForNull=OTHER 在
+     * pgjdbc 绑定为 OID UNSPECIFIED，{@code ? IS NULL} 占位符无列上下文可推断类型即报 42P18
+     * （could not determine data type of parameter）；显式类型后 NULL 绑定为 bigint，双方言可移植。
      *
      * @return 影响行数；0 = 状态或事件绑定已被并发改变（真 CAS 落败）
      */
@@ -144,8 +148,8 @@ public interface NotifyChannelSendMapper extends BaseMapperX<NotifyChannelSendDO
             + "last_retry_actor_type = #{actorType}, last_retry_actor_id = #{actorId}, "
             + "last_retry_reason = #{reason}, outbox_event_id = #{outboxEventId}, update_time = #{now} "
             + "WHERE id = #{id} AND tenant_id = #{tenantId} AND status IN ('PENDING','FAILED','UNKNOWN') "
-            + "AND (outbox_event_id = #{expectedOldEventId} "
-            + "OR (outbox_event_id IS NULL AND #{expectedOldEventId} IS NULL)) AND deleted = FALSE")
+            + "AND (outbox_event_id = #{expectedOldEventId,jdbcType=BIGINT} "
+            + "OR (outbox_event_id IS NULL AND #{expectedOldEventId,jdbcType=BIGINT} IS NULL)) AND deleted = FALSE")
     int casManualRetry(@Param("id") Long id, @Param("tenantId") Long tenantId,
                        @Param("expectedOldEventId") Long expectedOldEventId, @Param("contact") String contact,
                        @Param("actorType") String actorType, @Param("actorId") String actorId,

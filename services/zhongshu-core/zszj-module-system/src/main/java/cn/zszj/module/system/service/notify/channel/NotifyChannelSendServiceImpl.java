@@ -382,23 +382,7 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
         if (!ctx.isValid()) {
             return null;
         }
-        return resolveChannelContact(NotifyChannel.valueOf(record.getChannel()), ctx);
-    }
-
-    /** 按渠道取联系方式（ZS-MSG-004）：SMS→手机号，EMAIL→邮箱；PUSH 暂无联系方式语义（返回 null，
-     *  与缺失同归 RECIPIENT_CONTACT_MISSING 明确阻断，待 D-10 后定义设备令牌语义）。 */
-    static String resolveChannelContact(NotifyChannel channel, NotifyRecipientContext ctx) {
-        if (ctx == null) {
-            return null;
-        }
-        switch (channel) {
-            case SMS:
-                return ctx.getContactMobile();
-            case EMAIL:
-                return ctx.getContactEmail();
-            default:
-                return null;
-        }
+        return NotifyChannelContacts.contactFor(NotifyChannel.valueOf(record.getChannel()), ctx);
     }
 
     @Override

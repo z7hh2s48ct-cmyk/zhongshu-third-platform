@@ -10,6 +10,7 @@ import cn.zszj.module.system.dal.dataobject.notify.NotifyTemplateDO;
 import cn.zszj.module.system.dal.mysql.notify.NotifySendLogMapper;
 import cn.zszj.module.system.service.notify.NotifyMessageService;
 import cn.zszj.module.system.service.notify.NotifyTemplateService;
+import cn.zszj.module.system.service.notify.channel.NotifyChannelContacts;
 import cn.zszj.module.system.service.notify.channel.NotifyChannelSendService;
 import cn.zszj.module.system.service.notify.channel.NotifyChannelSenderRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -233,28 +234,12 @@ public class NotifyDispatcherImpl implements NotifyDispatcher {
         }
         // ZS-MSG-004 渠道路径：建渠道发送台账（PENDING，同事务追加 NOTIFY_CHANNEL_SEND 事件）；
         // 联系方式缺失由台账以 RECIPIENT_CONTACT_MISSING 明确阻断（不入投递管道）
-        String contact = resolveChannelContact(channel, ctx);
+        String contact = NotifyChannelContacts.contactFor(channel, ctx);
         NotifyChannelSendDO sendRecord = channelSendService.createFromDispatch(
                 command, recipient, channel, contact, content, logDO.getId());
         notifySendLogMapper.fillDispatchSideEffects(logDO.getId(), null, sendRecord.getOutboxEventId());
         return toResult(command, recipient, channel, NotifyDispatchStatus.SUCCESS, null,
                 logDO.getId(), null, sendRecord.getOutboxEventId());
-    }
-
-    /** 按渠道取联系方式（ZS-MSG-004）：SMS→手机号，EMAIL→邮箱；PUSH 暂无联系方式语义（返回 null，
-     *  与缺失同归 RECIPIENT_CONTACT_MISSING 明确阻断，待 D-10 后定义设备令牌语义）。 */
-    static String resolveChannelContact(NotifyChannel channel, NotifyRecipientContext ctx) {
-        if (ctx == null) {
-            return null;
-        }
-        switch (channel) {
-            case SMS:
-                return ctx.getContactMobile();
-            case EMAIL:
-                return ctx.getContactEmail();
-            default:
-                return null;
-        }
     }
 
     /** 无渠道（命令未指定任何渠道）：以哨兵渠道持久化 NO_CHANNEL，可查询、幂等，不建消息、不入 Outbox。 */

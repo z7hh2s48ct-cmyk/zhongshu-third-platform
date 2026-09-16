@@ -53,6 +53,8 @@ CREATE INDEX IF NOT EXISTS idx_notify_channel_send_status ON system_notify_chann
 CREATE INDEX IF NOT EXISTS idx_notify_channel_send_event ON system_notify_channel_send (event_id);
 CREATE INDEX IF NOT EXISTS idx_notify_channel_send_send_log ON system_notify_channel_send (send_log_id);
 CREATE INDEX IF NOT EXISTS idx_notify_channel_send_tenant ON system_notify_channel_send (tenant_id);
+-- ZS-MSG-004 r1：事件身份定位（selectByOutboxEventId 为每次 Outbox 投递必经查询，需覆盖索引防台账线性退化）
+CREATE INDEX IF NOT EXISTS idx_notify_channel_send_outbox ON system_notify_channel_send (tenant_id, outbox_event_id);
 
 -- ZS-MSG-004：派发状态新增 CHANNEL_NOT_CONFIGURED（未配置渠道明确阻断，不静默丢弃——众墅要求
 -- 「未配置渠道明确阻断或保留待发送」；与「未指定渠道」的 NO_CHANNEL 语义区分）。
