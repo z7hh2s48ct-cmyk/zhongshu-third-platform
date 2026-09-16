@@ -34,6 +34,7 @@ DELETE FROM "system_notify_template";
 DELETE FROM "system_notify_message";
 
 DELETE FROM system_notify_send_log;
+DELETE FROM system_notify_channel_send;
 DELETE FROM outbox_event;
 
 DELETE FROM system_notify_todo;

@@ -31,6 +31,13 @@ public enum NotifyDispatchStatus {
     TEMPLATE_NOT_FOUND,
 
     /** 重复忽略：同一 eventId + 收件人 + 渠道已存在发送日志（幂等硬兜底）；返回既有 sendLogId */
-    DUPLICATE_IGNORED
+    DUPLICATE_IGNORED,
+
+    /**
+     * 渠道未配置（ZS-MSG-004）：指定了非 INBOX 渠道但容器无该渠道 {@code NotifyChannelSender} 实现
+     * （真实渠道受 D-10 门禁，B05 生产容器无实现）——明确阻断：只记发送日志，不建渠道发送台账、
+     * 不入投递管道、不静默丢弃（区别于「未指定渠道」的 {@link #NO_CHANNEL}）
+     */
+    CHANNEL_NOT_CONFIGURED
 
 }
