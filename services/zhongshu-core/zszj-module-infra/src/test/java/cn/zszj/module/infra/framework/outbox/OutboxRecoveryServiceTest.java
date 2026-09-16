@@ -27,6 +27,7 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -733,6 +734,30 @@ public class OutboxRecoveryServiceTest extends BaseDbUnitTest {
                 "不含凭据词根的受控异常类名应直显（防过度拦截）");
         assertEquals("java.lang.TokenExpiredException", detail.getErrorCategory());
         assertEquals(7, detail.getMessageLength());
+    }
+
+    /**
+     * 用例 31（JOB-004-P2-1 locale 回归，codex 评审 P2）：凭据词根折叠必须与部署机 locale 无关——
+     * 默认 locale 为土耳其语/阿塞拜疆语时 {@code String.toLowerCase()} 把 ASCII {@code I} 折成无点
+     * {@code ı}，{@code APIKEY_real_123Exception} 等含 I 词根形态将绕过过滤直显（codex 对编译后方法
+     * 多 locale 实锤）。以 Locale.ROOT 折叠修复；本用例在 tr-TR 下驱动回查路径锁定该合同。
+     */
+    @Test
+    public void test_回查详情_凭据词根过滤不受部署机locale影响() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(new Locale("tr", "TR"));
+            long eventId = insertEventWithLastError("DEAD", "{}",
+                    "{\"errorClass\":\"APIKEY_real_123Exception\",\"messageLength\":12}", 1L);
+
+            OutboxEventRecoveryDetail detail = recoveryService.getRecoveryDetail(eventId);
+
+            assertEquals("UNPARSEABLE_ERROR", detail.getErrorCategory(),
+                    "tr-TR locale 下凭据词根（含 I）仍须命中过滤（Locale.ROOT 折叠）");
+            assertNull(detail.getErrorClass(), "凭据词根异常名在非默认 locale 下同样不得回显");
+        } finally {
+            Locale.setDefault(original);
+        }
     }
 
     // ========== 夹具与并发助手（用例 16-25） ==========

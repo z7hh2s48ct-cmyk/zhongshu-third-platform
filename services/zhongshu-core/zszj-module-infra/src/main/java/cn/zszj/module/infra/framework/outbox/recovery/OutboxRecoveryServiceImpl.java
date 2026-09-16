@@ -421,7 +421,10 @@ public class OutboxRecoveryServiceImpl implements OutboxRecoveryService {
         if (THROWABLE_NAME_SUFFIXES.stream().noneMatch(simpleName::endsWith)) {
             return false;
         }
-        String folded = name.toLowerCase();
+        // Locale.ROOT 折叠（codex 评审 P2）：默认 locale 为 tr-TR/az-AZ 时 toLowerCase() 把 ASCII I 折成无点 ı，
+        // APIKEY/CREDENTIAL/PRIVATEKEY 等含 I 词根将绕过过滤（codex 对编译后方法多 locale 实锤）——
+        // 凭据词根全为 ASCII，Locale.ROOT 折叠与部署机 locale 无关
+        String folded = name.toLowerCase(Locale.ROOT);
         return SENSITIVE_NAME_ROOTS.stream().noneMatch(folded::contains);
     }
 
