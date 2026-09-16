@@ -32,4 +32,10 @@ public final class AuditEventTypes {
     /** 参数配置恢复成功（ZS-CFG-004 B04：配置变更审计与审查后恢复流程接线）。 */
     public static final String CONFIG_PARAM_RESTORED = "CONFIG_PARAM_RESTORED";
 
+    /** Outbox 事件人工重试成功（ZS-JOB-004：DEAD→PENDING 授权恢复）。 */
+    public static final String OUTBOX_EVENT_RETRIED = "OUTBOX_EVENT_RETRIED";
+
+    /** Outbox 事件人工跳过成功（ZS-JOB-004：DEAD→SKIPPED 授权放弃）。 */
+    public static final String OUTBOX_EVENT_SKIPPED = "OUTBOX_EVENT_SKIPPED";
+
 }

@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：342
+# 端点总数：347
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -123,6 +123,9 @@ GET|/admin-api/infra/job/export-excel|ADMIN|PERMISSION|infra:job:export|infra|Jo
 GET|/admin-api/infra/job/get_next_times|ADMIN|PERMISSION|infra:job:query|infra|JobController
 GET|/admin-api/infra/job/get|ADMIN|PERMISSION|infra:job:query|infra|JobController
 GET|/admin-api/infra/job/page|ADMIN|PERMISSION|infra:job:query|infra|JobController
+GET|/admin-api/infra/outbox-event/get-detail|ADMIN|PERMISSION|infra:job:query|infra|OutboxEventController
+GET|/admin-api/infra/outbox-event/health|ADMIN|PERMISSION|infra:job:query|infra|OutboxEventController
+GET|/admin-api/infra/outbox-event/page|ADMIN|PERMISSION|infra:job:query|infra|OutboxEventController
 GET|/admin-api/infra/redis/get-monitor-info|ADMIN|PERMISSION|infra:redis:get-monitor-info|infra|RedisController
 GET|/admin-api/system/area/get-by-ip|ADMIN|AUTHENTICATED|-|system|AreaController
 GET|/admin-api/system/area/tree|ADMIN|AUTHENTICATED|-|system|AreaController
@@ -319,6 +322,8 @@ PUT|/admin-api/infra/file/update-scope|ADMIN|PERMISSION|infra:file:update|infra|
 PUT|/admin-api/infra/job/trigger|ADMIN|PERMISSION|infra:job:trigger|infra|JobController
 PUT|/admin-api/infra/job/update-status|ADMIN|PERMISSION|infra:job:update|infra|JobController
 PUT|/admin-api/infra/job/update|ADMIN|PERMISSION|infra:job:update|infra|JobController
+PUT|/admin-api/infra/outbox-event/retry|ADMIN|PERMISSION|infra:job:recover|infra|OutboxEventController
+PUT|/admin-api/infra/outbox-event/skip|ADMIN|PERMISSION|infra:job:recover|infra|OutboxEventController
 PUT|/admin-api/system/dept/update|ADMIN|PERMISSION|system:dept:update|system|DeptController
 PUT|/admin-api/system/dict-data/update|ADMIN|PERMISSION|system:dict:update|system|DictDataController
 PUT|/admin-api/system/dict-type/update|ADMIN|PERMISSION|system:dict:update|system|DictTypeController

@@ -13,6 +13,7 @@
  *   9. ZS-BPM-001 BPM 独立装配与 PG 验收（两阶段：owner 建表引导 + app 低权限运行）
  *  10. ZS-JOB-002 事务 Outbox 领取/租约/栅栏/DEAD（双实例 SKIP LOCKED、崩溃重领、旧凭证栅栏）
  *  11. ZS-JOB-003 消费者幂等 Inbox（唯一键抢占并发语义、租户隔离、状态机硬约束）
+ *  12. ZS-JOB-004 人工恢复台账（V20260915.021 迁移重放、DEAD→retry/skip、SKIPPED 终态、双轨审计落地、payload 只读）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -34,6 +35,7 @@ const cases = [
   { id: 'ZS-BPM-001 BPM 独立装配与PG验收', cmd: ['node', 'scripts/db/run-bpm001-verify.mjs'] },
   { id: 'ZS-JOB-002 事务Outbox领取/租约/栅栏', cmd: ['node', 'scripts/db/run-job002-verify.mjs'] },
   { id: 'ZS-JOB-003 消费者幂等Inbox唯一键抢占', cmd: ['node', 'scripts/db/run-job003-verify.mjs'] },
+  { id: 'ZS-JOB-004 人工恢复台账/DEAD跳过/双轨审计', cmd: ['node', 'scripts/db/run-job004-verify.mjs'] },
 ];
 
 let failed = false;

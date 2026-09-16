@@ -12,6 +12,7 @@ DELETE FROM "infra_codegen_column";
 DELETE FROM "infra_config_history";
 DELETE FROM "outbox_event";
 DELETE FROM "dispatcher_lease";
+DELETE FROM "outbox_recovery_log";
 DELETE FROM "infra_file_delivery_ticket";
 DELETE FROM "inbox_event";
 DELETE FROM "inbox_object_watermark";
