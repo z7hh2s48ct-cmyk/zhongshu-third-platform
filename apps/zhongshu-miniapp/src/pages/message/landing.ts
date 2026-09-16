@@ -18,7 +18,8 @@ export type NotifyLandingOutcome = 'navigated' | 'unavailable'
 /** 导航函数（uni.navigateTo 的最小投影，便于纯函数测试） */
 export type LandingNavigator = (url: string) => void
 
-/** 落点描述 → 完整页面路径（route + params 拼 query）；无 descriptor/无 route 视为不可用返回空串 */
+/** 落点描述 → 完整页面路径（route + params 拼 query，route 已含 query 时以 & 续接）；
+ * 无 descriptor/无 route 视为不可用返回空串 */
 export function buildNotifyLandingRoute(result: NotifyMessageLandingResult): string {
   const descriptor = result?.descriptor
   if (!result?.available || !descriptor?.route) {
@@ -29,7 +30,11 @@ export function buildNotifyLandingRoute(result: NotifyMessageLandingResult): str
     .filter(key => params[key] !== undefined && params[key] !== null)
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(String(params[key]))}`)
     .join('&')
-  return query ? `${descriptor.route}?${query}` : descriptor.route
+  if (!query) {
+    return descriptor.route
+  }
+  const separator = descriptor.route.includes('?') ? '&' : '?'
+  return `${descriptor.route}${separator}${query}`
 }
 
 /**

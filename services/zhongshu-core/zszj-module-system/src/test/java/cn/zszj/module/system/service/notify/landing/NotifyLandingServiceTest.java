@@ -31,9 +31,11 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * {@link NotifyLandingServiceImpl} 的单元测试（ZS-MSG-003 技术收件箱与落点二次授权）
  *
- * <p>边界：跨技术租户的行级隔离由 tenant 拦截器在生产装配（system_notify_message 非 ignore-tables）
- * 提供，H2 测试上下文不含该拦截器，该轴复用 ZS-DB-018 PG 回归，不在此重复；
- * 本测试覆盖应用层 fail-closed 防线（租户缺失/存在性/归属/注册/模块/重授权/端描述）。
+ * <p>边界：跨技术租户的行级隔离由生产装配的 tenant 拦截器提供（system_notify_message 非
+ * ignore-tables）；H2 测试上下文不含该拦截器，消息链路的跨租户专项回归（真实 Mapper/HTTP 链验证
+ * 跨租户消息 ID 不可读、不可解析、不可改已读）已登记为后续专项、随真实环境联调收口（r0-P2 订正：
+ * 不得宣称复用 ZS-DB-018 既有 PG 回归——其用例未覆盖消息表与本接口）。本测试覆盖应用层
+ * fail-closed 防线（租户缺失/存在性/归属/注册/模块/重授权/端描述）。
  */
 @Import({NotifyLandingServiceImpl.class, NotifyLandingServiceTest.FixtureConfig.class})
 public class NotifyLandingServiceTest extends BaseDbUnitTest {

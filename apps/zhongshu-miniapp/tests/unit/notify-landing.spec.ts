@@ -44,6 +44,18 @@ describe('buildNotifyLandingRoute', () => {
     )
   })
 
+  it('route 自带 query 时以 & 续接，不产生第二个 ?', () => {
+    const result: NotifyMessageLandingResult = {
+      available: true,
+      descriptor: {
+        module: 'system',
+        route: '/pages-fixture/detail/index?tab=main',
+        params: { id: 9 },
+      },
+    }
+    expect(buildNotifyLandingRoute(result)).toBe('/pages-fixture/detail/index?tab=main&id=9')
+  })
+
   it('不可用 / 缺 descriptor / 缺 route → 空串（不猜测跳转）', () => {
     expect(buildNotifyLandingRoute({ available: false })).toBe('')
     expect(buildNotifyLandingRoute({ available: true })).toBe('')

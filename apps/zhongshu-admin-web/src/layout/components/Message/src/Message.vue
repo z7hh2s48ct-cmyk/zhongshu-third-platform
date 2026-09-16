@@ -45,9 +45,13 @@ const goMyList = () => {
 // ZS-MSG-003：点击消息消费落点——服务端二次授权裁决；不可用明确提示，不猜测跳转
 const message = useMessage()
 const goLanding = async (item: NotifyMessageApi.NotifyMessageVO) => {
-  const result = await NotifyMessageApi.resolveNotifyMessageLanding(item.id, 'WEB')
-  if (applyNotifyLandingRoute({ push }, result) === 'unavailable') {
-    message.warning(notifyLandingUnavailableText(result))
+  try {
+    const result = await NotifyMessageApi.resolveNotifyMessageLanding(item.id, 'WEB')
+    if (applyNotifyLandingRoute({ push }, result) === 'unavailable') {
+      message.warning(notifyLandingUnavailableText(result))
+    }
+  } catch {
+    // 安全拒绝（他人消息/不存在）已由 axios 拦截层统一错误提示，此处不再重复
   }
 }
 

@@ -67,8 +67,10 @@ import { ref } from 'vue'
 import { resolveNotifyMessageLanding } from '@/api/system/notify/message'
 import { useToast } from '@wot-ui/ui/components/wd-toast'
 import { getDictLabel } from '@/hooks/useDict'
+import { isTabBarPage } from '@/tabbar/config'
 import { DICT_TYPE } from '@/utils/constants'
 import { formatDateTime } from '@/utils/date'
+import { parseUrl, setTabParams } from '@/utils/url'
 import {
   applyNotifyLandingRoute,
   notifyLandingUnavailableText,
@@ -98,12 +100,25 @@ async function goLanding() {
   landingLoading.value = true
   try {
     const result = await resolveNotifyMessageLanding(formData.value.id, 'MOBILE')
+    // r0-P2：TabBar 落点须 switchTab（navigateTo 会拒绝），query 经 globalData 透传；
+    // 导航失败（页面不存在/非法目标）明确反馈，不静默
     if (applyNotifyLandingRoute((url) => {
       visible.value = false
-      uni.navigateTo({ url })
+      const { path, query } = parseUrl(url)
+      const fail = () => toast.show('落点页面不存在或不可达')
+      if (isTabBarPage(path)) {
+        if (Object.keys(query).length > 0) {
+          setTabParams(query)
+        }
+        uni.switchTab({ url: path, fail })
+      } else {
+        uni.navigateTo({ url, fail })
+      }
     }, result) === 'unavailable') {
       toast.show(notifyLandingUnavailableText(result))
     }
+  } catch {
+    // 他人消息/不存在等安全拒绝已由请求层统一 toast（http.ts），此处不再重复提示
   } finally {
     landingLoading.value = false
   }

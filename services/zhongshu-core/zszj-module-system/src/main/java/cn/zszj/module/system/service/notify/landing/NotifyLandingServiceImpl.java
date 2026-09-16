@@ -22,12 +22,16 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.NOTIFY_LANDING_TENA
  *
  * <p>解析顺序即防线顺序（fail-closed，任何一步不过即拒绝）：
  * <ol>
- *   <li><b>租户上下文</b>：缺失即拒绝（循 MSG-001/JOB-002 惯例，不默认 0）；跨技术租户
- *       读取由 tenant 行级隔离兜底（非 ignore-tables 表自动追加 tenant_id 条件，
- *       跨租户 ID 解析为「消息不存在」，复用 ZS-DB-018 既有回归，不重复建设）；</li>
+ *   <li><b>租户上下文</b>：缺失即拒绝（循 MSG-001/JOB-002 惯例，不默认 0）；跨技术租户读取由
+ *       tenant 行级隔离在生产装配兜底（system_notify_message 非 ignore-tables，自动追加 tenant_id
+ *       条件，跨租户 ID 解析为「消息不存在」）。边界：H2 测试上下文不含租户拦截器，消息链路的
+ *       跨租户专项回归（真实 Mapper/HTTP 链验证跨租户消息 ID 不可读、不可解析、不可改已读）登记为
+ *       后续专项，随真实环境联调收口，不在本卡 H2 用例内伪装覆盖；</li>
  *   <li><b>消息存在性</b>：不存在（含跨租户不可见）→ NOT_FOUND；</li>
  *   <li><b>归属校验</b>：userId/userType 与登录主体不一致 → ACCESS_DENIED
- *       （技术收件箱边界：他人 IDs 不能读、不能借落点触碰）；</li>
+ *       （技术收件箱边界：他人消息不能解析落点、不泄露他人可触达的业务入口）。
+ *       r0-P3：NOT_FOUND 与 ACCESS_DENIED 的对外文案统一（防同租户消息 ID 存在性探测），
+ *       错误码保持区分供内部日志与本卡验收证据；</li>
  *   <li><b>落点注册判定</b>：模板编码未注册 → NOT_REGISTERED（未知消息类型明确不可用）；
  *       归属模块未启用（{@link ModuleCatalog} 运行白名单）→ MODULE_DISABLED，
  *       且不再触碰业务（关闭模块的业务 Bean 不在，重读无意义）；</li>
@@ -58,7 +62,10 @@ public class NotifyLandingServiceImpl implements NotifyLandingService {
             throw exception(NOTIFY_LANDING_MESSAGE_NOT_FOUND);
         }
         if (!message.getUserId().equals(userId) || !message.getUserType().equals(userType)) {
-            // 归属校验：技术收件箱边界——他人消息不能解析落点（不泄露他人消息可触达的业务入口）
+            // 归属校验：技术收件箱边界——他人消息不能解析落点（不泄露他人消息可触达的业务入口）。
+            // 对外文案与 NOT_FOUND 统一（r0-P3），此处记内部日志保留区分度
+            log.info("[resolveMessageLanding][消息({}) 归属不匹配：消息 userId/userType={}/{}, 登录主体 {}/{}]",
+                    messageId, message.getUserId(), message.getUserType(), userId, userType);
             throw exception(NOTIFY_LANDING_ACCESS_DENIED);
         }
         NotifyLandingProvider provider = landingRegistry.getByTemplateCode(message.getTemplateCode());

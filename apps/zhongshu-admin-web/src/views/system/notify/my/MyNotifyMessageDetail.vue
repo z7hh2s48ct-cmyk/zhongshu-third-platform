@@ -57,12 +57,16 @@ const open = async (data: NotifyMessageApi.NotifyMessageVO) => {
 const message = useMessage()
 const { push } = useRouter()
 const goLanding = async () => {
-  const result = await NotifyMessageApi.resolveNotifyMessageLanding(detailData.value.id, 'WEB')
-  if (applyNotifyLandingRoute({ push }, result) === 'unavailable') {
-    message.warning(notifyLandingUnavailableText(result))
-    return
+  try {
+    const result = await NotifyMessageApi.resolveNotifyMessageLanding(detailData.value.id, 'WEB')
+    if (applyNotifyLandingRoute({ push }, result) === 'unavailable') {
+      message.warning(notifyLandingUnavailableText(result))
+      return
+    }
+    dialogVisible.value = false
+  } catch {
+    // 安全拒绝（他人消息/不存在）已由 axios 拦截层统一错误提示，此处不再重复
   }
-  dialogVisible.value = false
 }
 defineExpose({ open }) // 提供 open 方法，用于打开弹窗
 </script>

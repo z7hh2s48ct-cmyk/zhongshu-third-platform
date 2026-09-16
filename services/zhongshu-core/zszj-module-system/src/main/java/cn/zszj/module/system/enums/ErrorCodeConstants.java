@@ -227,7 +227,9 @@ public interface ErrorCodeConstants {
     ErrorCode NOTIFY_TODO_FIELD_REQUIRED = new ErrorCode(1_002_030_007, "业务待办缺少必填字段：{}");
 
     // ========== 消息落点 1-002-031-000（ZS-MSG-003） ==========
-    ErrorCode NOTIFY_LANDING_MESSAGE_NOT_FOUND = new ErrorCode(1_002_031_000, "站内信不存在");
-    ErrorCode NOTIFY_LANDING_ACCESS_DENIED = new ErrorCode(1_002_031_001, "不能访问他人的站内信");
+    // r0-P3：NOT_FOUND 与 ACCESS_DENIED 的对外文案统一为同一句，避免登录用户以错误码文案差异
+    // 探测同租户消息 ID 的存在性；错误码本身保持区分，供内部日志与本卡验收证据（他人消息显式拒绝）使用
+    ErrorCode NOTIFY_LANDING_MESSAGE_NOT_FOUND = new ErrorCode(1_002_031_000, "站内信不存在或不可访问");
+    ErrorCode NOTIFY_LANDING_ACCESS_DENIED = new ErrorCode(1_002_031_001, "站内信不存在或不可访问");
     ErrorCode NOTIFY_LANDING_TENANT_REQUIRED = new ErrorCode(1_002_031_002, "缺少租户上下文，拒绝解析消息落点");
 }

@@ -19,7 +19,7 @@ export interface LandingNavigator {
   push(location: string): Promise<unknown> | unknown
 }
 
-/** 落点描述 → 完整路由（route + params 拼 query）；无 descriptor/无 route 视为不可用返回 null */
+/** 落点描述 → 完整路由（route + params 拼 query，route 已含 query 时以 & 续接）；无 descriptor/无 route 视为不可用返回 null */
 export function buildNotifyLandingRoute(result: NotifyMessageLandingResult): string | null {
   const descriptor = result?.descriptor
   if (!result?.available || !descriptor?.route) {
@@ -30,7 +30,11 @@ export function buildNotifyLandingRoute(result: NotifyMessageLandingResult): str
     .filter((key) => params[key] !== undefined && params[key] !== null)
     .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(String(params[key]))}`)
     .join('&')
-  return query ? `${descriptor.route}?${query}` : descriptor.route
+  if (!query) {
+    return descriptor.route
+  }
+  const separator = descriptor.route.includes('?') ? '&' : '?'
+  return `${descriptor.route}${separator}${query}`
 }
 
 /**
