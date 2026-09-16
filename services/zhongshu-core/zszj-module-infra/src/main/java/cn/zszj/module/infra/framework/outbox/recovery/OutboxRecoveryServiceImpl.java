@@ -77,6 +77,21 @@ public class OutboxRecoveryServiceImpl implements OutboxRecoveryService {
      */
     private static final Set<String> KNOWN_ERROR_CONSTANTS = Set.of("NO_SINK_SUPPORTS_EVENT_TYPE");
 
+    /**
+     * 凭据词根集（JOB-004-P2-1 收敛）：异常类名逐段（大小写折叠 {@code contains}）命中任一词根即视为
+     * <b>来源不可信</b>，即便字符形态与后缀约定全部合法也降级 {@code UNPARSEABLE_ERROR}——
+     * 派发器 {@code describeThrowable} 恒写真实异常 {@code getClass().getSimpleName()}，真实异常类名不会嵌入
+     * 凭据词根；「形如类名的敏感串」（如 {@code password_real_secret_123Exception}）几乎必然是异常消息/凭据
+     * 被误格式化为类名，直显即泄露敏感内容形态（codex r2 登记的极窄来源信任残留）。
+     *
+     * <p>刻意<b>不收</b> {@code token}：{@code Token*Exception}（如 TokenExpiredException）是常见真实异常族，
+     * 误杀损失运维定位信息且无对应泄露形态（收敛边界：词根过滤是「极窄信任残留」的收窄而非穷举，
+     * 无法命中的伪装形态仍可能通过——残余风险与降级取舍已在 docs/05 JOB-004 开发记录登记）。
+     */
+    private static final List<String> SENSITIVE_NAME_ROOTS = List.of(
+            "password", "passwd", "pwd", "secret", "credential", "apikey", "api_key",
+            "accesskey", "access_key", "secretkey", "secret_key", "privatekey", "private_key");
+
     /** 载入事件（租户 scoped）：只读恢复所需字段。 */
     private static final String LOAD_EVENT_SQL = "SELECT id, event_type, biz_type, biz_id, status, retry_count, "
             + "payload, last_error, tenant_id, create_time FROM outbox_event WHERE id = ? AND tenant_id = ?";
@@ -390,8 +405,9 @@ public class OutboxRecoveryServiceImpl implements OutboxRecoveryService {
 
     /**
      * 受控异常类型名判定（{@code errorClass} 直显门槛）：须为 {@code String}、为合法 Java 限定名
-     * （{@link #isQualifiedJavaName} 逐段验证，拦截连续点/数字开头段等畸形名），且 simpleName（去包名）以
-     * {@link #THROWABLE_NAME_SUFFIXES} 之一结尾——三者共同确保值来自受控异常类型而非伪装成类名的敏感明文（ZS-JOB-004 codex P2）。
+     * （{@link #isQualifiedJavaName} 逐段验证，拦截连续点/数字开头段等畸形名），simpleName（去包名）以
+     * {@link #THROWABLE_NAME_SUFFIXES} 之一结尾，且<b>全名不含 {@link #SENSITIVE_NAME_ROOTS} 凭据词根</b>
+     * （JOB-004-P2-1，大小写折叠逐段 {@code contains}）——四者共同确保值来自受控异常类型而非伪装成类名的敏感明文。
      */
     private static boolean isControlledExceptionName(Object errorClass) {
         if (!(errorClass instanceof String)) {
@@ -402,7 +418,11 @@ public class OutboxRecoveryServiceImpl implements OutboxRecoveryService {
             return false;
         }
         String simpleName = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1) : name;
-        return THROWABLE_NAME_SUFFIXES.stream().anyMatch(simpleName::endsWith);
+        if (THROWABLE_NAME_SUFFIXES.stream().noneMatch(simpleName::endsWith)) {
+            return false;
+        }
+        String folded = name.toLowerCase();
+        return SENSITIVE_NAME_ROOTS.stream().noneMatch(folded::contains);
     }
 
     /**

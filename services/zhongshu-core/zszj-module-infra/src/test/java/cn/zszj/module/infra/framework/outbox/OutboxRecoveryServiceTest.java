@@ -33,6 +33,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntConsumer;
@@ -494,10 +495,13 @@ public class OutboxRecoveryServiceTest extends BaseDbUnitTest {
         CountDownLatch roundTripDone = new CountDownLatch(1);
         AtomicReference<Throwable> orchestratorError = new AtomicReference<>();
         AtomicInteger roundTripHits = new AtomicInteger();
+        // JOB-004-P2-2：记录 A 栅栏 await 的实际结果——不再忽略返回值（原实现无法保证「实现被移除时必然 RED」）
+        AtomicBoolean aWaitInterleaved = new AtomicBoolean(false);
         when(properties.getMaxManualRetry()).thenAnswer(inv -> {
             if (arrivals.incrementAndGet() == 1) {
                 // A：等 B 也读到过期计数后再提交（FOR UPDATE 下 B 阻塞于载入、永不到达 → 短超时放行，< H2 锁超时）
-                bReadStaleCount.await(A_LOCK_HOLD_MS, TimeUnit.MILLISECONDS);
+                boolean interleaved = bReadStaleCount.await(A_LOCK_HOLD_MS, TimeUnit.MILLISECONDS);
+                aWaitInterleaved.set(interleaved);
             } else {
                 // B：已持过期计数=2；放行 A 提交，再等编排线程注入状态往返后 UPDATE（复现交错第 3-4 步）
                 bReadStaleCount.countDown();
@@ -532,6 +536,12 @@ public class OutboxRecoveryServiceTest extends BaseDbUnitTest {
         // 断言 0：往返确实发生（编排线程 UPDATE 命中 1 行）——否则未真正复现「DEAD→PENDING→DEAD」交错，视为非确定性假绿
         assertEquals(1, roundTripHits.get(),
                 "编排线程的 DEAD→PENDING→DEAD 往返 UPDATE 必须命中 1 行，否则未真正复现并发交错（非确定性假绿）");
+        // 断言 0b（JOB-004-P2-2）：A 的栅栏 await 必须以超时收场（返回 false）——修复实现（FOR UPDATE 行锁）下
+        // B 被阻塞在「载入事件」处，不可能在 A 持锁期间到达计数栅栏；await 提前返回（true）= B 在 A 提交前读到了
+        // 过期计数 = 行锁串行化被破坏（缺陷实现回归的直接信号；250ms 窗口 ≫ 缺陷实现下 B 到达栅栏的毫秒级耗时）。
+        assertFalse(aWaitInterleaved.get(),
+                "A 的栅栏 await 必须超时返回（B 应被 FOR UPDATE 阻塞在载入处，无法在 A 持锁期间先读计数）；"
+                        + "await 提前返回说明行锁串行化被破坏（缺陷实现回归）");
         // 断言 1：恰好一个线程成功、另一个被业务规则拒绝；拒绝码必须是 NOT_DEAD 或 RETRY_LIMIT_EXCEEDED
         //         （不得把锁超时/基础设施异常当作「安全拒绝」——那意味着交错未按设计发生）
         int successes = 0;
@@ -673,6 +683,56 @@ public class OutboxRecoveryServiceTest extends BaseDbUnitTest {
         Map<String, Object> detail = captor.getValue().getDetail();
         assertEquals("UNPARSEABLE_ERROR", detail.get("errorCategory"), "审计 detail 的异常类别须降级");
         assertFalse(String.valueOf(detail).contains("password_real_secret_123"), "审计 detail 绝不含敏感类名原文");
+    }
+
+    /**
+     * 用例 28（JOB-004-P2-1 收敛）：「合法 Java 限定名 + Throwable 后缀」但嵌入凭据词根的形态
+     * （如 {@code password_real_secret_123Exception}）必须降级——派发器 {@code describeThrowable} 恒写真实异常
+     * SimpleName，真实异常类名不会嵌入凭据词根；该形状几乎必然是异常消息/凭据被误格式化为类名，
+     * 直显即泄露敏感内容形态（codex r2 登记的极窄来源信任残留收敛）。
+     */
+    @Test
+    public void test_回查详情_凭据词根异常名降级() {
+        long eventId = insertEventWithLastError("DEAD", "{}",
+                "{\"errorClass\":\"password_real_secret_123Exception\",\"messageLength\":18}", 1L);
+
+        OutboxEventRecoveryDetail detail = recoveryService.getRecoveryDetail(eventId);
+
+        assertEquals("UNPARSEABLE_ERROR", detail.getErrorCategory(),
+                "合法限定名+Throwable 后缀但嵌入凭据词根必须降级（来源不可信）");
+        assertNull(detail.getErrorClass(), "凭据词根异常名不得回显");
+        assertEquals(18, detail.getMessageLength(), "合法 messageLength 仍保留");
+    }
+
+    /** 用例 29（JOB-004-P2-1）：凭据词根出现在<b>包段</b>（非 simpleName）同样降级——逐段任一命中即不可信。 */
+    @Test
+    public void test_回查详情_包段凭据词根降级() {
+        long eventId = insertEventWithLastError("DEAD", "{}",
+                "{\"errorClass\":\"com.evil.password.hunterException\",\"messageLength\":4}", 1L);
+
+        OutboxEventRecoveryDetail detail = recoveryService.getRecoveryDetail(eventId);
+
+        assertEquals("UNPARSEABLE_ERROR", detail.getErrorCategory(), "包段嵌入凭据词根同样须降级");
+        assertNull(detail.getErrorClass(), "凭据词根限定名不得回显");
+        assertEquals(4, detail.getMessageLength(), "合法 messageLength 仍保留");
+    }
+
+    /**
+     * 用例 30（JOB-004-P2-1 过度拦截护栏）：含 {@code Token} 等业务常见词根的<b>真实异常类名</b>
+     * （如 {@code TokenExpiredException}）不受凭据词根过滤影响仍直显——词根集合刻意不收
+     * {@code token}（Token*Exception 是常见真实异常族，误杀会损失运维定位信息；降级方向安全但非必要）。
+     */
+    @Test
+    public void test_回查详情_业务常见词根异常名不受影响() {
+        long eventId = insertEventWithLastError("DEAD", "{}",
+                "{\"errorClass\":\"java.lang.TokenExpiredException\",\"messageLength\":7}", 1L);
+
+        OutboxEventRecoveryDetail detail = recoveryService.getRecoveryDetail(eventId);
+
+        assertEquals("java.lang.TokenExpiredException", detail.getErrorClass(),
+                "不含凭据词根的受控异常类名应直显（防过度拦截）");
+        assertEquals("java.lang.TokenExpiredException", detail.getErrorCategory());
+        assertEquals(7, detail.getMessageLength());
     }
 
     // ========== 夹具与并发助手（用例 16-25） ==========
