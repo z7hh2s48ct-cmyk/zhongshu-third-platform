@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：341
+# 端点总数：342
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -162,6 +162,7 @@ GET|/admin-api/system/menu/list|ADMIN|PERMISSION|system:menu:query|system|MenuCo
 GET|/admin-api/system/menu/simple-list|ADMIN|AUTHENTICATED|-|system|MenuController
 GET|/admin-api/system/notice/get|ADMIN|PERMISSION|system:notice:query|system|NoticeController
 GET|/admin-api/system/notice/page|ADMIN|PERMISSION|system:notice:query|system|NoticeController
+GET|/admin-api/system/notify-message/get-landing|ADMIN|AUTHENTICATED|-|system|NotifyMessageController
 GET|/admin-api/system/notify-message/get-unread-count|ADMIN|AUTHENTICATED|-|system|NotifyMessageController
 GET|/admin-api/system/notify-message/get-unread-list|ADMIN|AUTHENTICATED|-|system|NotifyMessageController
 GET|/admin-api/system/notify-message/get|ADMIN|PERMISSION|system:notify-message:query|system|NotifyMessageController

@@ -32,9 +32,28 @@ export function getMyNotifyMessagePage(params: PageParam) {
   return http.get<PageResult<NotifyMessage>>('/system/notify-message/my-page', params)
 }
 
-/** 获取我的站内信详情 */
-export function getMyNotifyMessage(id: number) {
-  return http.get<NotifyMessage>(`/system/notify-message/get`, { id })
+/** ZS-MSG-003：消息落点描述（纯结构性业务引用，不含消息正文） */
+export interface NotifyMessageLandingDescriptor {
+  module: string
+  route: string
+  params?: Record<string, any>
+}
+
+/** ZS-MSG-003：消息落点解析结果（available=false 时以 unavailableCode/reason 给出明确不可用原因） */
+export interface NotifyMessageLandingResult {
+  available: boolean
+  unavailableCode?: 'NOT_REGISTERED' | 'MODULE_DISABLED' | 'REVOKED' | 'CLIENT_UNSUPPORTED'
+  reason?: string
+  descriptor?: NotifyMessageLandingDescriptor
+}
+
+/**
+ * ZS-MSG-003：解析站内信落点（跳转二次授权：归属 → 注册 → 模块 → 业务重授权，服务端统一裁决）。
+ * 刻意不提供「我的消息按 ID 取详情」接口：个人收件箱数据一律来自 my-page 列表；
+ * 按 ID 取详情属管理面（/system/notify-message/get + system:notify-message:query），不得混用。
+ */
+export function resolveNotifyMessageLanding(id: number, client: 'WEB' | 'MOBILE') {
+  return http.get<NotifyMessageLandingResult>('/system/notify-message/get-landing', { id, client })
 }
 
 /** 批量标记站内信已读 */
