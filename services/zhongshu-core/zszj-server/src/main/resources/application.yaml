@@ -421,13 +421,18 @@ management:
         include: health
   endpoint:
     health:
-      # 安全边界（ZS-ENG-005）：/actuator/health 与 /actuator/health/** 匿名放行，
-      # 故聚合端点保持 Spring Boot 默认 show-details: never（匿名只见聚合 status，不见组件详情）；
-      # 越阈码/指标详情只在下方 monitoring 组对采集/告警系统可见（该组详情仅指标值+越阈码，无 payload/秘密）。
+      # 安全边界（ZS-ENG-005 + codex r0 P1 修复）：/actuator/health 与 /actuator/health/** 匿名放行，
+      # 因此任何健康端点都不得对匿名开放组件详情——聚合端点保持默认 never；monitoring 组虽含
+      # 内建 db/redis 指示器（其详情含依赖异常原文/内部地址，不可对外），同样显式 show-details: never。
+      # 匿名监控面只暴露「状态」：队列越阈或依赖故障 → 组状态 DOWN（被发现）；越阈码/指标详情
+      # 经两条授权/非 HTTP 通道获取——①探针结构化日志（ERROR/WARN 携越阈码）②授权端点
+      # GET /infra/outbox-event/health（infra:job:query）。经 HTTP 携详情的授权监控面归后置外部接入（B11/D-10）。
       group:
-        monitoring: # ZS-OPS-002.B：专用监测组，聚合队列/依赖健康，供采集与告警系统消费
+        monitoring: # ZS-OPS-002.B：专用监测组（队列+依赖的状态聚合视图，供采集/告警系统轮询状态）
           include: outboxQueue,db,redis,ping
-          show-details: always
+          show-details: never
+        # 红线（开发计划铁律 9）：liveness/readiness 组保持 Spring Boot 默认（仅 livenessState/readinessState），
+        # 绝不将 outboxQueue 纳入 liveness——队列积压是可恢复运维信号，进 liveness 会触发编排器重启风暴（越积压越重启）。
         # 红线（开发计划铁律 9）：liveness/readiness 组保持 Spring Boot 默认（仅 livenessState/readinessState），
         # 绝不将 outboxQueue 纳入 liveness——队列积压是可恢复运维信号，进 liveness 会触发编排器重启风暴（越积压越重启）。
 

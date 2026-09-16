@@ -69,9 +69,13 @@ public class OutboxMonitoringHealthGroupTest {
         return (Map<String, Object>) health.get("group");
     }
 
-    /** 用例 C1：monitoring 组包含 outboxQueue 与 db/redis/ping 依赖（退出条件「依赖故障和积压被发现」）。 */
+    /**
+     * 用例 C1：monitoring 组包含 outboxQueue 与 db/redis/ping 依赖（退出条件「依赖故障和积压被发现」），
+     * 且<b>组详情不对匿名开放</b>（codex r0 P1：/actuator/health/** 匿名可达，内建 db/redis 指示器详情
+     * 含依赖异常原文/内部地址，必须 show-details: never；越阈码/指标详情走探针日志与授权端点）。
+     */
     @Test
-    public void test_monitoring组_含队列与依赖() {
+    public void test_monitoring组_含队列与依赖_详情不对匿名开放() {
         Map<String, Object> group = healthGroup(mergedDocs());
         Map<String, Object> monitoring = (Map<String, Object>) group.get("monitoring");
         assertNotNull(monitoring, "应定义 management.endpoint.health.group.monitoring 组");
@@ -79,8 +83,8 @@ public class OutboxMonitoringHealthGroupTest {
         assertTrue(include.contains("outboxQueue"), "monitoring 组应含 outboxQueue 队列指示器");
         assertTrue(include.contains("db"), "monitoring 组应含 db 依赖指示器");
         assertTrue(include.contains("redis"), "monitoring 组应含 redis 依赖指示器");
-        assertEquals("always", String.valueOf(monitoring.get("show-details")),
-                "monitoring 组应对采集/告警系统开放详情（越阈码+指标）");
+        assertFalse("always".equalsIgnoreCase(String.valueOf(monitoring.get("show-details"))),
+                "monitoring 组匿名可达，不得 show-details: always（内建 db/redis 详情含异常原文，ENG-005/codex r0 P1）");
     }
 
     /** 用例 C2（铁律 9 反重启风暴）：liveness 组不存在或不含 outboxQueue（readiness 同理校验）。 */

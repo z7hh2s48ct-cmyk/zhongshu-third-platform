@@ -55,8 +55,9 @@ public class OutboxHealthAlertScheduler {
         try {
             metrics = monitor.snapshot();
         } catch (RuntimeException ex) {
-            // 失败不静默：依赖不可用时明示探针失败（脱敏——仅异常类名，不外泄原文），且不击穿调度线程
-            log.error("[probe][Outbox 健康监测探针失败，依赖可能不可用 errorClass={}]", ex.getClass().getName(), ex);
+            // 失败不静默：依赖不可用时明示探针失败。仅记录异常类名（codex r0 P2：不把异常对象传给日志门面——
+            // SLF4J 会渲染完整消息/堆栈/cause 链，连接诊断文本可能携内部地址/凭据；脱敏循 JOB-004「不回显原文」红线）
+            log.error("[probe][Outbox 健康监测探针失败，依赖可能不可用 errorClass={}]", ex.getClass().getName());
             return;
         }
         List<String> breaches = metrics.getBreaches();

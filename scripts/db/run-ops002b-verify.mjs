@@ -34,11 +34,18 @@ execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWO
 const psql = (user, db, sql) => spawnSync('docker', ['exec', '-i', container, 'psql', '-U', user, '-d', db, '-v', 'ON_ERROR_STOP=1', '-q'], { input: sql, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const psqlOut = (user, db, sql) => spawnSync('docker', ['exec', container, 'psql', '-U', user, '-d', db, '-At', '-c', sql], { encoding: 'utf8' });
 
+// 就绪探测（codex r0 P2 修复）：必须走 TCP + 口令探「最终 server」——容器 init 期会先起一个临时 server
+// （仅 Unix socket、无口令），若经 socket 探到它会把 init 中途当就绪，随后 CREATE DATABASE 即失败。
+// postgres:17-alpine 容器内 127.0.0.1:5432 即最终 server 的监听地址，PGPASSWORD 注入口令与启动参数一致。
 let ready = false;
-for (let i = 0; i < 30; i++) { if (psqlOut('postgres', 'postgres', 'SELECT 1').status === 0) { ready = true; break; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); }
+for (let i = 0; i < 60; i++) {
+  const probe = spawnSync('docker', ['exec', '-e', 'PGPASSWORD=ops002b', container, 'psql', '-h', '127.0.0.1', '-p', '5432', '-U', 'postgres', '-d', 'postgres', '-At', '-c', 'SELECT 1'], { encoding: 'utf8' });
+  if (probe.status === 0) { ready = true; break; }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+}
 if (!ready) { cleanup(); fail(1, '[ops002b] PG 未就绪'); }
 
-execFileSync('docker', ['exec', container, 'psql', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
+execFileSync('docker', ['exec', '-e', 'PGPASSWORD=ops002b', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
 {
   const setup = readFileSync(join(root, 'services/zhongshu-core/sql/postgresql/env-setup-test.sql'), 'utf8');
   if (psql('postgres', 'zhongshu', setup).status !== 0) { cleanup(); fail(1, '[ops002b] 角色授权失败'); }

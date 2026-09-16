@@ -14,6 +14,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -103,12 +104,14 @@ public class OutboxHealthAlertSchedulerTest {
 
     /**
      * 用例 S4（退出条件「失败不静默」核心）：{@code snapshot()} 抛出（依赖不可用）→ 探针
-     * ①<b>不击穿调度线程</b>（不向外抛异常）②ERROR 明示「探针失败」携异常类名（不吞、不伪装健康）。
+     * ①<b>不击穿调度线程</b>（不向外抛异常）②ERROR 明示「探针失败」携异常类名（不吞、不伪装健康）
+     * ③<b>脱敏</b>（codex r0 P2：日志事件不携异常对象——SLF4J 渲染 throwable 会输出完整消息/堆栈/cause 链，
+     * 连接诊断文本可能携内部地址/凭据；断言 throwable 代理为空且原文消息不出现于渲染结果）。
      */
     @Test
     public void test_探针异常_不静默_不击穿调度() {
         OutboxHealthMonitor failing = () -> {
-            throw new IllegalStateException("db unavailable");
+            throw new IllegalStateException("jdbc:secret@db-host-internal/db?password=hunter2");
         };
         OutboxHealthAlertScheduler scheduler = new OutboxHealthAlertScheduler(failing);
 
@@ -116,8 +119,13 @@ public class OutboxHealthAlertSchedulerTest {
 
         List<ILoggingEvent> errors = eventsAt(Level.ERROR);
         assertEquals(1, errors.size(), "探针失败应产出 ERROR 明示（失败不静默）");
-        assertTrue(errors.get(0).getFormattedMessage().contains("IllegalStateException"),
-                "ERROR 应携异常类名供定位（脱敏：类名而非原文消息），实际=" + errors.get(0).getFormattedMessage());
+        ILoggingEvent event = errors.get(0);
+        assertTrue(event.getFormattedMessage().contains("IllegalStateException"),
+                "ERROR 应携异常类名供定位（脱敏：类名而非原文消息），实际=" + event.getFormattedMessage());
+        assertNull(event.getThrowableProxy(),
+                "日志事件不得携异常对象（渲染 throwable 会泄露完整消息/堆栈/cause 链）");
+        assertFalse(event.getFormattedMessage().contains("hunter2"),
+                "渲染结果不得包含异常原文中的敏感信息，实际=" + event.getFormattedMessage());
     }
 
     /** 用例 S5：CRITICAL 与 WARN 越阈码并存 → 取最高严重度 ERROR（不漏报严重项）。 */
