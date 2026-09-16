@@ -14,9 +14,11 @@
  *      SQL 字面量与 AuditEventTypes 常量无旧名。
  *   4. MSG/序列化：Redis Stream key 为类 SimpleName 动态派生、消费组 = spring.application.name
  *      = zszj-server、yaml key-prefix 无旧名；子类对 getChannel()/getStreamKey() 的路由覆写返回值
- *      必须过旧名判定（codex r0 P2-4）；Jackson 多态类名落库面（@JsonTypeInfo(Id.CLASS)）按
- *      「package 声明 + 类型声明（嵌套类 $ 二进制名）」推导实际持久化 FQCN，必须全新包根
- *      （codex r0 P2-3，目录推导在包声明漂移时假绿），且 JsonUtils 无全局 default typing。
+ *      必须过旧名判定，方法体走花括号平衡扫描（嵌套块/字符串内花括号不截断），解析失败保守拒绝
+ *      （codex r0 P2-4 / r1 P2-B）；Jackson 多态类名落库面（@JsonTypeInfo(Id.CLASS)）按
+ *      「package 声明 + 类型声明 class|record|enum|interface（嵌套类 $ 二进制名）」推导实际持久化
+ *      FQCN，必须全新包根，过滤命中却推导不出 → fail-loud（codex r0 P2-3 / r1 P2-A，目录推导与
+ *      静默缩清单均假绿），且 JsonUtils 无全局 default typing。
  *   5. 旧名判定循 .B 模式清单（verify-brand-004b-storage.mjs 的
  *      OLD_NAME_PATTERNS），另加包形（cn.iocoder./cn.yudao.）增强；只对提取出的
  *      标识/字面量判定，不重复 G3 全仓文本扫描、不误伤已登记来源署名。
@@ -262,18 +264,20 @@ export function extractJsonTypeInfoInterfaces(text, source) {
 }
 
 /**
- * 从 Java 源码文本推导「实际持久化的 FQCN」（codex r0 P2-3）：以 package 声明 + 类型声明为准，
- * 不信任文件目录（目录与包声明不一致时，目录推导会假绿）；嵌套类按二进制名 `Outer$Inner`
- * （@class 落库即二进制名）。返回 results（待判定清单）与 problem（package/类型声明缺失时
- * fail-loud，不得静默放过）。
+ * 从 Java 源码文本推导「实际持久化的 FQCN」（codex r0 P2-3 / r1 P2-A）：以 package 声明 + 类型声明
+ * 为准，不信任文件目录（目录与包声明不一致时，目录推导会假绿）；类型声明覆盖
+ * class|record|enum|interface（Java 17 record 带形参头部，`[^{;]*` 覆盖 `(…)`）；嵌套类按二进制名
+ * `Outer$Inner`（@class 落库即二进制名）。
+ * fail-loud 契约：声明缺失、或「过滤命中 implements 却提取不出任何 FQCN」（声明形状超出覆盖范围）
+ * 一律返回 problem 计入 contractProblems，绝不静默缩清单。
  */
 export function deriveImplFqcns(text, source, iface) {
   const pkgMatch = text.match(/^[ \t]*package\s+([A-Za-z_][\w.]*)\s*;/m);
-  const topLevelMatch = text.match(/\b(?:class|interface|enum|record)\s+([A-Za-z0-9_]+)/);
+  const topLevelMatch = text.match(/\b(?:class|record|enum|interface)\s+([A-Za-z0-9_]+)/);
   if (!pkgMatch) return { results: [], problem: { source, check: 'java-package-decl-missing', why: `多态实现文件缺 package 声明，无法推导持久化 FQCN：${source}` } };
   if (!topLevelMatch) return { results: [], problem: { source, check: 'java-type-decl-missing', why: `多态实现文件缺类型声明，无法推导持久化 FQCN：${source}` } };
   const results = [];
-  const implRe = new RegExp(`class\\s+([A-Za-z0-9_]+)[^{;]*\\bimplements\\s+[\\w.,<> \\t]*\\b${iface}\\b`, 'g');
+  const implRe = new RegExp(`\\b(?:class|record|enum|interface)\\s+([A-Za-z0-9_]+)[^{;]*\\bimplements\\s+[\\w.,<> \\t]*\\b${iface}\\b`, 'g');
   let m;
   while ((m = implRe.exec(text))) {
     const cls = m[1];
@@ -282,26 +286,70 @@ export function deriveImplFqcns(text, source, iface) {
       : `${pkgMatch[1]}.${topLevelMatch[1]}$${cls}`;
     results.push({ source, field: 'json-typinfo-impl-fqcn', value: fqcn });
   }
+  if (!results.length) {
+    return {
+      results,
+      problem: {
+        source, check: 'impl-fqcn-derive-empty',
+        why: `发现 ${iface} 实现但声明形状不在推导覆盖范围（class|record|enum|interface + implements），拒绝静默缩清单：${source}`,
+      },
+    };
+  }
   return { results, problem: null };
 }
 
 /**
- * 消息子类路由覆写提取（codex r0 P2-4）：getChannel()/getStreamKey() 的非默认实现返回值
- * 才是真实路由/持久化键名。策略=允许覆写但覆写返回的字面量必须过旧名判定；
- * 无覆写=类 SimpleName 动态派生（默认合同），无需判定。
+ * 花括号平衡的方法体提取（codex r1 P2-B）：从 startIdx 指向的 '{' 起扫描至配平的 '}'；
+ * 字符串/字符字面量与行/块注释内的花括号不参与配平（至少字符串为红线）。
+ * 不平衡（截断/损坏源）→ ok=false，调用方 fail-loud 保守拒绝，不静默放过。
+ */
+export function extractBalancedBraceBody(text, startIdx) {
+  let depth = 0, inStr = null, inLineComment = false, inBlockComment = false;
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (inLineComment) { if (ch === '\n' || ch === '\r') inLineComment = false; continue; }
+    if (inBlockComment) { if (ch === '*' && next === '/') { inBlockComment = false; i++; } continue; }
+    if (inStr) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === '/' && next === '/') { inLineComment = true; i++; continue; }
+    if (ch === '/' && next === '*') { inBlockComment = true; i++; continue; }
+    if (ch === '"' || ch === "'") { inStr = ch; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return { body: text.slice(startIdx + 1, i), ok: true }; }
+  }
+  return { body: text.slice(startIdx + 1), ok: false };
+}
+
+/**
+ * 消息子类路由覆写提取（codex r0 P2-4 / r1 P2-B）：getChannel()/getStreamKey() 的非默认实现
+ * 返回值才是真实路由/持久化键名。策略=允许覆写但覆写返回的字面量必须过旧名判定；
+ * 方法体提取走花括号平衡扫描（嵌套块/字符串内花括号不截断、转义引号不切断字面量），
+ * 无法安全解析的方法体 fail-loud 进 problems，不静默放过；无覆写=类 SimpleName 动态派生
+ * （默认合同），无需判定。
  */
 export function extractMessageRouteOverrides(text, source) {
   const literals = [];
-  const re = /get(?:Channel|StreamKey)\s*\(\s*\)\s*\{([^}]*)\}/g;
+  const problems = [];
+  const re = /get(?:Channel|StreamKey)\s*\(\s*\)\s*\{/g;
   let m;
   while ((m = re.exec(text))) {
-    const litRe = /(['"])((?:(?!\1).)+)\1/g;
+    const { body, ok } = extractBalancedBraceBody(text, m.index + m[0].length - 1);
+    if (!ok) {
+      problems.push({ source, check: 'route-override-body-unbalanced', why: `路由覆写方法体花括号不平衡，保守拒绝不静默放过：${source}` });
+      continue;
+    }
+    // 转义感知的字面量提取：\" 等转义序列不得切断字面量
+    const litRe = /(['"])((?:\\.|(?!\1).)*)\1/g;
     let l;
-    while ((l = litRe.exec(m[1]))) {
+    while ((l = litRe.exec(body))) {
       literals.push({ source, field: 'message-route-override', value: l[2] });
     }
   }
-  return literals;
+  return { literals, problems };
 }
 
 export function hasDefaultTyping(text) {
@@ -459,18 +507,20 @@ export function runInventory() {
 
   // ④ MSG/序列化
   const jsonTypeInfoImplFqcns = [];
-  const fqcnDeriveProblems = [];
+  const deriveProblems = [];
   for (const rel of listGitFiles((f) => inCoreJava(f))) {
     const text = readRepoFile(rel);
     if (text === null) continue;
     const subs = extractRedisMessageSubclasses(text, rel);
     inventory.msg.streamSubclasses += subs.length;
     violations.push(...subs.flatMap((s) => judgeValue(s.source, s.field, s.value)));
-    // 路由覆写（codex r0 P2-4）：子类覆写 getChannel/getStreamKey 的返回字面量必须过旧名判定
+    // 路由覆写（codex r0 P2-4 / r1 P2-B）：子类覆写 getChannel/getStreamKey 的返回字面量必须过
+    // 旧名判定；方法体无法安全解析（花括号不平衡）→ fail-loud 不静默放过
     if (subs.length) {
-      const overrides = extractMessageRouteOverrides(text, rel);
+      const { literals: overrides, problems: routeProblems } = extractMessageRouteOverrides(text, rel);
       inventory.msg.routeOverrides += overrides.length;
       violations.push(...overrides.flatMap((o) => judgeValue(o.source, o.field, o.value)));
+      deriveProblems.push(...routeProblems);
     }
     if (extractJsonTypeInfoInterfaces(text, rel).length) {
       // 该文件是多态接口：找实现类，按 package 声明 + 类型声明推导「实际持久化 FQCN」判定
@@ -482,7 +532,7 @@ export function runInventory() {
           if (implText === null) continue;
           if (!new RegExp(`implements\\s+[\\w.,<> \\t]*\\b${iface}\\b`).test(implText)) continue;
           const { results, problem } = deriveImplFqcns(implText, implRel, iface);
-          if (problem) { fqcnDeriveProblems.push(problem); continue; }
+          if (problem) { deriveProblems.push(problem); continue; }
           for (const r of results) {
             jsonTypeInfoImplFqcns.push(r.value);
             violations.push(...judgeValue(r.source, r.field, r.value));
@@ -502,7 +552,7 @@ export function runInventory() {
   }
   inventory.msg.yamlKeyPrefixes = yamlPrefixes.length;
 
-  return { inventory, violations: [...violations, ...qrtzViolations], beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, fqcnDeriveProblems };
+  return { inventory, violations: [...violations, ...qrtzViolations], beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, deriveProblems };
 }
 
 // ---------------------------------------------------------------------------
@@ -587,8 +637,60 @@ export function injectionSelfTest() {
       // codex r0 P2-4 变异反证：子类覆写 getChannel 返回旧路由名，必须被提取并打红
       name: 'message-route-override-old-name',
       extract: () => extractMessageRouteOverrides(
-        'public class X extends AbstractRedisChannelMessage {\n  @Override\n  public String getChannel() { return "yudao_channel"; }\n}', 'injected'),
+        'public class X extends AbstractRedisChannelMessage {\n  @Override\n  public String getChannel() { return "yudao_channel"; }\n}', 'injected').literals,
       expectValue: 'yudao_channel',
+    },
+    {
+      // codex r1 P2-A record 形状：record ... implements 同样可成为多态实现，旧包根必须打红
+      // （r0 版本仅匹配 class 声明，record 夹具被静默跳过、清单缩水假绿）
+      name: 'json-typinfo-record-old-package',
+      extract: () => {
+        const { results } = deriveImplFqcns(
+          'package cn.iocoder.yudao.module.infra.framework.file.core.client.db;\n\npublic record DBFileClientConfig(String basePath) implements FileClientConfig {\n}',
+          'any/dir/DBFileClientConfig.java', 'FileClientConfig');
+        return results.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // codex r1 P2-A fail-loud：过滤命中 implements 但声明形状提取不出 FQCN → 必须产 problem，
+      // 不许静默跳过（否则清单缩水无人知）
+      name: 'json-typinfo-undeclared-impl-fail-loud',
+      extract: () => {
+        const { problem } = deriveImplFqcns('package cn.zszj.module.x;\n// 这里只是注释提及 implements FileClientConfig\n', 'injected', 'FileClientConfig');
+        return problem ? [problem] : [];
+      },
+      expectValue: null, // 布尔判定：产 problem 即通过
+      minHits: 1,
+    },
+    {
+      // codex r1 P2-B 嵌套块：方法体含 if 复合块时不得在首个 '}' 截断——后置返回的
+      // yudao_channel 必须被扫到（r0 版本 [^}]* 只扫到 zszj_channel，漏检假绿）
+      name: 'message-route-override-nested-block',
+      extract: () => {
+        const { literals } = extractMessageRouteOverrides(
+          'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    if (userType == null) { return "zszj_channel"; }\n'
+          + '    return "yudao_channel";\n'
+          + '  }\n'
+          + '}', 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // codex r1 P2-B 字符串内花括号：字面量中的 '}' 不得终止方法体扫描，
+      // 否则同文件后续方法（getStreamKey 返回 yudao_stream）整体漏检
+      name: 'message-route-override-braces-in-string',
+      extract: () => extractMessageRouteOverrides(
+        'public class X extends AbstractRedisChannelMessage {\n'
+        + '  public String getChannel() { return "brace}inside"; }\n'
+        + '  public String getStreamKey() { return "yudao_stream"; }\n'
+        + '}', 'injected').literals,
+      expectValue: 'yudao_stream',
     },
   ];
   const results = [];
@@ -626,7 +728,7 @@ export function injectionSelfTest() {
 const invokedDirectly = process.argv[1] && process.argv[1].replaceAll('\\', '/').endsWith('scripts/brand/verify-brand-004c-persistence.mjs');
 if (invokedDirectly) {
   try {
-    const { inventory, violations, beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, fqcnDeriveProblems } = runInventory();
+    const { inventory, violations, beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, deriveProblems } = runInventory();
     const appYamlText = readRepoFile('services/zhongshu-core/zszj-server/src/main/resources/application.yaml') ?? '';
     const jsonUtilsRel = listGitFiles((f) => f.endsWith('util/json/JsonUtils.java'))[0] ?? null;
     const jsonUtilsText = jsonUtilsRel ? readRepoFile(jsonUtilsRel) : null;
@@ -640,7 +742,7 @@ if (invokedDirectly) {
         hasHandlerWhitelistKey: /handler-whitelist:/.test(appYamlText),
       },
       jsonUtilsText,
-    }).concat(fqcnDeriveProblems);
+    }).concat(deriveProblems);
     const selfTest = injectionSelfTest();
 
     const report = {
