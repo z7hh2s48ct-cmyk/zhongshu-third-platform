@@ -264,12 +264,89 @@ export function extractJsonTypeInfoInterfaces(text, source) {
 }
 
 /**
- * 从 Java 源码文本推导「实际持久化的 FQCN」（codex r0 P2-3 / r1 P2-A）：以 package 声明 + 类型声明
- * 为准，不信任文件目录（目录与包声明不一致时，目录推导会假绿）；类型声明覆盖
- * class|record|enum|interface（Java 17 record 带形参头部，`[^{;]*` 覆盖 `(…)`）；嵌套类按二进制名
- * `Outer$Inner`（@class 落库即二进制名）。
- * fail-loud 契约：声明缺失、或「过滤命中 implements 却提取不出任何 FQCN」（声明形状超出覆盖范围）
- * 一律返回 problem 计入 contractProblems，绝不静默缩清单。
+ * 单一复用的注释掩码预处理（codex r2 根治）：按 Java 词法扫描，把 // 行注释与 block 块注释
+ * 区间的字符替换为等长空白（保留换行——偏移量/行号不变）；掩码器感知字符串/字符字面量与
+ * 转义（字面量内的注释记号不参与词法）。Java 17 文本块按 JLS 开界符（""" + [空白] + 行终止符）
+ * 识别，块内内容原样保留（其中的引号/注释记号同样不参与词法）；文本块未闭合 → fail-loud 产
+ * problem，不放过。所有 Java 文本提取（类型声明匹配、路由字面量提取等）一律只对掩码后文本
+ * 工作——各正则不再各自为战。掩码幂等性注意：文本块内容原样保留，掩码只可对原文应用一次。
+ */
+export function maskComments(text) {
+  const problems = [];
+  const chars = text.split('');
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < chars.length; k++) {
+      if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ';
+    }
+  };
+  // JLS 文本块开界符：""" 后仅允许空白再行终止符；否则按普通字符串词法（如 "" 空串序列）
+  const isTextBlockOpen = (idx) => {
+    if (!text.startsWith('"""', idx)) return false;
+    let j = idx + 3;
+    while (j < text.length && (text[j] === ' ' || text[j] === '\t')) j++;
+    return text[j] === '\n' || text[j] === '\r';
+  };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' && isTextBlockOpen(i)) {
+      i += 3; // 开界符原样保留
+      let closed = false;
+      while (i < text.length) {
+        if (text[i] === '\\') { i += 2; continue; } // 转义（含 \""）
+        if (text.startsWith('"""', i)) { i += 3; closed = true; break; }
+        i++;
+      }
+      if (!closed) problems.push({ check: 'text-block-unterminated', why: 'Java 17 文本块未闭合，无法安全词法分析，保守拒绝' });
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '/') {
+      let j = i;
+      while (j < text.length && text[j] !== '\n') j++;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      let j = i + 2;
+      while (j < text.length && !text.startsWith('*/', j)) j++;
+      const end = Math.min(j + 2, text.length);
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length) {
+        if (text[j] === '\\') { j += 2; continue; }
+        if (text[j] === '"' || text[j] === '\n') break; // 普通字符串不跨行
+        j++;
+      }
+      i = Math.min(j + 1, text.length);
+      continue;
+    }
+    if (ch === "'") {
+      let j = i + 1;
+      while (j < text.length) {
+        if (text[j] === '\\') { j += 2; continue; }
+        if (text[j] === "'" || text[j] === '\n') break;
+        j++;
+      }
+      i = Math.min(j + 1, text.length);
+      continue;
+    }
+    i++;
+  }
+  return { masked: chars.join(''), problems };
+}
+
+/**
+ * 从 Java 源码文本推导「实际持久化的 FQCN」（codex r0 P2-3 / r1 P2-A / r2 P2-A）：以 package
+ * 声明 + 类型声明为准，不信任文件目录；类型声明覆盖 class|record|enum|interface；嵌套类按
+ * 二进制名 `Outer$Inner`（@class 落库即二进制名）。**输入必须是 maskComments 掩码后文本**——
+ * 紧邻声明的 Javadoc 中的「record of」等词不得启动类型匹配（r2 P2-A：注释未排除时顶层类型
+ * 被劫持、FQCN 推导错误且旧名静默消失）。fail-loud 契约：声明缺失、或「过滤命中 implements
+ * 却提取不出任何 FQCN」一律返回 problem，绝不静默缩清单。
  */
 export function deriveImplFqcns(text, source, iface) {
   const pkgMatch = text.match(/^[ \t]*package\s+([A-Za-z_][\w.]*)\s*;/m);
@@ -325,11 +402,12 @@ export function extractBalancedBraceBody(text, startIdx) {
 }
 
 /**
- * 消息子类路由覆写提取（codex r0 P2-4 / r1 P2-B）：getChannel()/getStreamKey() 的非默认实现
- * 返回值才是真实路由/持久化键名。策略=允许覆写但覆写返回的字面量必须过旧名判定；
- * 方法体提取走花括号平衡扫描（嵌套块/字符串内花括号不截断、转义引号不切断字面量），
- * 无法安全解析的方法体 fail-loud 进 problems，不静默放过；无覆写=类 SimpleName 动态派生
- * （默认合同），无需判定。
+ * 消息子类路由覆写提取（codex r0 P2-4 / r1 P2-B / r2 P2-B）：getChannel()/getStreamKey() 的
+ * 非默认实现返回值才是真实路由/持久化键名。**输入必须是 maskComments 掩码后文本**——同行
+ * 块注释内的引号不得启动/吞掉字面量扫描（r2 P2-B）。策略=允许覆写但覆写返回的字面量必须过
+ * 旧名判定；方法体走花括号平衡扫描（嵌套块/字符串内花括号不截断），无法安全解析 → problems
+ * 保守拒绝；普通字符串与 Java 17 文本块内容均作为路由值参与判定；无覆写=类 SimpleName 动态
+ * 派生（默认合同），无需判定。
  */
 export function extractMessageRouteOverrides(text, source) {
   const literals = [];
@@ -347,6 +425,12 @@ export function extractMessageRouteOverrides(text, source) {
     let l;
     while ((l = litRe.exec(body))) {
       literals.push({ source, field: 'message-route-override', value: l[2] });
+    }
+    // Java 17 文本块内容（掩码保留原文）同样作为路由值参与判定
+    const tbRe = /"""[ \t]*(?:\r?\n)([\s\S]*?)"""/g;
+    let t;
+    while ((t = tbRe.exec(body))) {
+      literals.push({ source, field: 'message-route-override-textblock', value: t[1] });
     }
   }
   return { literals, problems };
@@ -379,7 +463,8 @@ export function checkNamingContract({ seedHandlers, beanNames, quartzJobClasses,
   }
   // Quartz 调度入口 Job 类必须 cn.zszj 包根（经 import 解析；这是 QRTZ_JOB_DETAILS.JOB_CLASS_NAME 的持久化源头）
   for (const ref of quartzJobClasses) {
-    const text = readRepoFile(ref.source) ?? '';
+    const raw = readRepoFile(ref.source) ?? '';
+    const text = maskComments(raw).masked; // r2 根治：FQCN 解析输入同样走注释掩码
     const importRe = new RegExp(`import\\s+([\\w.]+)\\.${ref.value};`);
     const im = text.match(importRe);
     const fqcn = im ? `${im[1]}.${ref.value}` : null;
@@ -431,6 +516,18 @@ export function runInventory() {
   };
   const violations = [];
   const qrtzViolations = [];
+  // codex r2 根治：全部 Java 文本提取共用单一注释掩码（每文件恰好掩码一次，文本块问题只上报一次）
+  const deriveProblems = [];
+  const javaMaskMemo = new Map();
+  const getMaskedJava = (rel) => {
+    if (javaMaskMemo.has(rel)) return javaMaskMemo.get(rel);
+    const raw = readRepoFile(rel);
+    if (raw === null) return null;
+    const { masked, problems } = maskComments(raw);
+    deriveProblems.push(...problems.map((p) => ({ source: rel, ...p })));
+    javaMaskMemo.set(rel, masked);
+    return masked;
+  };
 
   // ① 任务域 + QRTZ 面 + SQL 包形旧 FQCN
   for (const rel of listGitFiles((f) => inCoreSql(f) && /\.sql$/.test(f))) {
@@ -460,22 +557,22 @@ export function runInventory() {
     if (text === null) continue;
     contractSeedHandlers.push(...extractInfraJobSeedHandlers(text, rel));
   }
-  // JobHandler Bean 名清单（合同用）
+  // JobHandler Bean 名清单（合同用）——注释掩码后提取（r2 根治：javadoc 中的 class/record 词不得伪造 Bean）
   const beanNames = [];
   for (const rel of listGitFiles((f) => inCoreJava(f))) {
-    const text = readRepoFile(rel);
-    if (text === null) continue;
-    beanNames.push(...extractJobHandlerBeanNames(text));
+    const masked = getMaskedJava(rel);
+    if (masked === null) continue;
+    beanNames.push(...extractJobHandlerBeanNames(masked));
   }
   inventory.jobSeeds.beanNames = beanNames;
   inventory.jobSeeds.beans = beanNames.length;
 
-  // ② Quartz 调度入口（JobBuilder.newJob → JOB_CLASS_NAME 持久化源头）
+  // ② Quartz 调度入口（JobBuilder.newJob → JOB_CLASS_NAME 持久化源头）——掩码后提取
   const quartzJobClasses = [];
   for (const rel of listGitFiles((f) => inCoreJava(f) && /SchedulerManager\.java$/.test(f))) {
-    const text = readRepoFile(rel);
-    if (text === null) continue;
-    const refs = extractQuartzJobBuilderClasses(text, rel);
+    const masked = getMaskedJava(rel);
+    if (masked === null) continue;
+    const refs = extractQuartzJobBuilderClasses(masked, rel);
     quartzJobClasses.push(...refs);
     for (const r of refs) violations.push(...judgeValue(r.source, r.field, r.value));
   }
@@ -498,40 +595,40 @@ export function runInventory() {
   }
   const auditConstants = [];
   for (const rel of listGitFiles((f) => f.endsWith('AuditEventTypes.java'))) {
-    const text = readRepoFile(rel);
-    if (text === null) continue;
-    auditConstants.push(...extractStringConstants(text, rel));
+    const masked = getMaskedJava(rel);
+    if (masked === null) continue;
+    auditConstants.push(...extractStringConstants(masked, rel));
   }
   inventory.outboxInbox.auditConstants = auditConstants.length;
   violations.push(...auditConstants.flatMap((c) => judgeValue(c.source, c.field, c.value)));
 
   // ④ MSG/序列化
   const jsonTypeInfoImplFqcns = [];
-  const deriveProblems = [];
   for (const rel of listGitFiles((f) => inCoreJava(f))) {
-    const text = readRepoFile(rel);
-    if (text === null) continue;
-    const subs = extractRedisMessageSubclasses(text, rel);
+    const masked = getMaskedJava(rel);
+    if (masked === null) continue;
+    const subs = extractRedisMessageSubclasses(masked, rel);
     inventory.msg.streamSubclasses += subs.length;
     violations.push(...subs.flatMap((s) => judgeValue(s.source, s.field, s.value)));
-    // 路由覆写（codex r0 P2-4 / r1 P2-B）：子类覆写 getChannel/getStreamKey 的返回字面量必须过
-    // 旧名判定；方法体无法安全解析（花括号不平衡）→ fail-loud 不静默放过
+    // 路由覆写（codex r0 P2-4 / r1 P2-B / r2 P2-B）：子类覆写 getChannel/getStreamKey 的返回
+    // 字面量必须过旧名判定；方法体无法安全解析 → fail-loud 不静默放过
     if (subs.length) {
-      const { literals: overrides, problems: routeProblems } = extractMessageRouteOverrides(text, rel);
+      const { literals: overrides, problems: routeProblems } = extractMessageRouteOverrides(masked, rel);
       inventory.msg.routeOverrides += overrides.length;
       violations.push(...overrides.flatMap((o) => judgeValue(o.source, o.field, o.value)));
       deriveProblems.push(...routeProblems);
     }
-    if (extractJsonTypeInfoInterfaces(text, rel).length) {
+    if (extractJsonTypeInfoInterfaces(masked, rel).length) {
       // 该文件是多态接口：找实现类，按 package 声明 + 类型声明推导「实际持久化 FQCN」判定
-      const ifaceMatch = text.match(/interface\s+([A-Za-z0-9_]+)/);
+      // （输入为掩码后文本——r2 P2-A：紧邻声明的 Javadoc 词不得劫持顶层类型匹配）
+      const ifaceMatch = masked.match(/interface\s+([A-Za-z0-9_]+)/);
       const iface = ifaceMatch ? ifaceMatch[1] : null;
       if (iface) {
         for (const implRel of listGitFiles((f) => inCoreJava(f))) {
-          const implText = readRepoFile(implRel);
-          if (implText === null) continue;
-          if (!new RegExp(`implements\\s+[\\w.,<> \\t]*\\b${iface}\\b`).test(implText)) continue;
-          const { results, problem } = deriveImplFqcns(implText, implRel, iface);
+          const implMasked = getMaskedJava(implRel);
+          if (implMasked === null) continue;
+          if (!new RegExp(`implements\\s+[\\w.,<> \\t]*\\b${iface}\\b`).test(implMasked)) continue;
+          const { results, problem } = deriveImplFqcns(implMasked, implRel, iface);
           if (problem) { deriveProblems.push(problem); continue; }
           for (const r of results) {
             jsonTypeInfoImplFqcns.push(r.value);
@@ -692,6 +789,86 @@ export function injectionSelfTest() {
         + '}', 'injected').literals,
       expectValue: 'yudao_stream',
     },
+    {
+      // codex r2 P2-A 变异反证（精确形状）：干净包根 + 旧品牌类名 + 紧邻 Javadoc 含「record of」
+      // ——r1 无掩码时类型匹配被注释劫持（cls=topLevel=of），旧品牌类名从 FQCN 彻底消失（0 violations
+      // 假绿且无 derive-empty problem）；r2 掩码后必须推出真实类 FQCN、旧品牌类名被打红
+      name: 'json-typinfo-javadoc-hijack-red',
+      extract: () => {
+        const src = 'package cn.zszj.module.infra.framework.file.core.client.db;\n\n'
+          + '/** A record of file settings. */\n'
+          + 'public class YudaoFileClientConfig implements FileClientConfig {\n}';
+        const { results } = deriveImplFqcns(maskComments(src).masked, 'injected', 'FileClientConfig');
+        return results.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // codex r2 P2-A 形状断言：同场景干净包根——推导必须是真实类 FQCN，而非注释劫持的 $of
+      name: 'json-typinfo-javadoc-hijack-shape',
+      extract: () => {
+        const src = 'package cn.zszj.module.infra.framework.file.core.client.db;\n\n'
+          + '/** A record of file settings. */\n'
+          + 'public class YudaoFileClientConfig implements FileClientConfig {\n}';
+        return deriveImplFqcns(maskComments(src).masked, 'injected', 'FileClientConfig').results;
+      },
+      expectDerived: 'cn.zszj.module.infra.framework.file.core.client.db.YudaoFileClientConfig',
+    },
+    {
+      // codex r2 P2-B 变异反证：块注释与 return 同行且注释内含引号——掩码前转义感知正则从
+      // 注释内启动、把 return 开引号当转义消费（路由漏检且无 problem）；掩码后必须命中
+      name: 'message-route-override-comment-inline',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { /* escape " as \\" */ return "yudao_channel"; }\n'
+          + '}';
+        const { literals } = extractMessageRouteOverrides(maskComments(src).masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // Java 17 文本块路由值：块内旧名同样参与判定（掩码保留文本块原文，内容提取进判定）
+      name: 'message-route-override-textblock',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '        yudao_channel\n'
+          + '        """;\n'
+          + '  }\n'
+          + '}';
+        const { literals } = extractMessageRouteOverrides(maskComments(src).masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // 掩码器字符串感知：字符串字面量内的 /* 不得被当块注释掩掉（否则后续路由漏检）
+      name: 'masker-string-with-block-comment-token',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { String s = "/* not comment */"; return "yudao_channel"; }\n'
+          + '}';
+        const { literals } = extractMessageRouteOverrides(maskComments(src).masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // 文本块未闭合：无法安全词法分析 → maskComments 必须 fail-loud 产 problem，不放过
+      name: 'masker-textblock-unterminated-fail-loud',
+      extract: () => {
+        const { problems } = maskComments('public class X {\n  String s = """\n never closed\n');
+        return problems;
+      },
+      expectValue: null, // 布尔判定：产 problem 即通过
+      minHits: 1,
+    },
   ];
   const results = [];
   let failed = false;
@@ -731,7 +908,7 @@ if (invokedDirectly) {
     const { inventory, violations, beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, deriveProblems } = runInventory();
     const appYamlText = readRepoFile('services/zhongshu-core/zszj-server/src/main/resources/application.yaml') ?? '';
     const jsonUtilsRel = listGitFiles((f) => f.endsWith('util/json/JsonUtils.java'))[0] ?? null;
-    const jsonUtilsText = jsonUtilsRel ? readRepoFile(jsonUtilsRel) : null;
+    const jsonUtilsText = jsonUtilsRel ? maskComments(readRepoFile(jsonUtilsRel) ?? '').masked : null;
     const contractProblems = checkNamingContract({
       seedHandlers: contractSeedHandlers,
       beanNames,
