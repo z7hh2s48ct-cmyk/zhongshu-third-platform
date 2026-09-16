@@ -47,6 +47,11 @@
       "reason": "命名检查与迁移工具自身包含旧名匹配串"
     },
     {
+      "path": "^apps/zhongshu-admin-web/tests/unit/login-brand-residue\\.spec\\.ts$",
+      "category": "必要保留",
+      "reason": "登录页品牌残留检测测试（ZS-BRAND-003.B）：负向断言与变异样本必须引用上游旧品牌标识作为检测模式，同 scripts/brand/ 检查器自身包含匹配串；系测试文件非产品运行内容，不外显"
+    },
+    {
       "path": "services/zhongshu-core/zszj-ui/",
       "category": "必要保留",
       "reason": "未启用的上游前端模板资产（docs/06 第 4.2 节）；实际摘取启用前须按映射适配"

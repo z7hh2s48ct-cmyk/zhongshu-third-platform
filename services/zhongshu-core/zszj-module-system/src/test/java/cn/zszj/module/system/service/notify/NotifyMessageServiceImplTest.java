@@ -183,6 +183,41 @@ public class NotifyMessageServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testGetUnreadNotifyMessageList_sizeNormalized() {
+        // ZS-MSG-003「限制未读列表 size」：服务端防御性收敛，不信任调用方（HTTP 入口另有 @Min/@Max）
+        assertEquals(10, NotifyMessageServiceImpl.normalizeUnreadSize(null));
+        assertEquals(10, NotifyMessageServiceImpl.normalizeUnreadSize(0));
+        assertEquals(10, NotifyMessageServiceImpl.normalizeUnreadSize(-5));
+        assertEquals(50, NotifyMessageServiceImpl.normalizeUnreadSize(50));
+        assertEquals(100, NotifyMessageServiceImpl.normalizeUnreadSize(100));
+        assertEquals(100, NotifyMessageServiceImpl.normalizeUnreadSize(1000));
+    }
+
+    @Test
+    public void testGetUnreadNotifyMessageList_sizeCappedAtMax() {
+        // 端到端证据：请求超上限条数时最多返回 UNREAD_LIST_MAX_SIZE 条，不全量拉取
+        NotifyMessageDO dbNotifyMessage = randomPojo(NotifyMessageDO.class, o -> {
+            o.setUserId(1L);
+            o.setUserType(UserTypeEnum.ADMIN.getValue());
+            o.setReadStatus(false);
+            o.setTemplateParams(randomTemplateParams());
+        });
+        for (int i = 0; i < 105; i++) {
+            notifyMessageMapper.insert(cloneIgnoreId(dbNotifyMessage,
+                    o -> o.setTemplateParams(randomTemplateParams())));
+        }
+        // 调用：请求 1000 条（超上限）
+        List<NotifyMessageDO> list = notifyMessageService.getUnreadNotifyMessageList(1L,
+                UserTypeEnum.ADMIN.getValue(), 1000);
+        // 断言：截断到上限 100，且全部属于本人
+        assertEquals(100, list.size());
+        list.forEach(message -> {
+            assertEquals(1L, message.getUserId());
+            assertFalse(message.getReadStatus());
+        });
+    }
+
+    @Test
     public void testGetUnreadNotifyMessageCount() {
         // mock 数据
         NotifyMessageDO dbNotifyMessage = randomPojo(NotifyMessageDO.class, o -> { // 等会查询到
@@ -218,14 +253,17 @@ public class NotifyMessageServiceImplTest extends BaseDbUnitTest {
         });
         notifyMessageMapper.insert(dbNotifyMessage);
         // 测试 userId 不匹配
-        notifyMessageMapper.insert(cloneIgnoreId(dbNotifyMessage, o -> o.setUserId(2L)));
+        NotifyMessageDO otherUserMessage = cloneIgnoreId(dbNotifyMessage, o -> o.setUserId(2L));
+        notifyMessageMapper.insert(otherUserMessage);
         // 测试 userType 不匹配
-        notifyMessageMapper.insert(cloneIgnoreId(dbNotifyMessage, o -> o.setUserType(UserTypeEnum.MEMBER.getValue())));
+        NotifyMessageDO otherTypeMessage = cloneIgnoreId(dbNotifyMessage,
+                o -> o.setUserType(UserTypeEnum.MEMBER.getValue()));
+        notifyMessageMapper.insert(otherTypeMessage);
         // 测试 readStatus 不匹配
         notifyMessageMapper.insert(cloneIgnoreId(dbNotifyMessage, o -> o.setReadStatus(true)));
-        // 准备参数
-        Collection<Long> ids = Arrays.asList(dbNotifyMessage.getId(), dbNotifyMessage.getId() + 1,
-                dbNotifyMessage.getId() + 2, dbNotifyMessage.getId() + 3);
+        // 准备参数：本人消息 + 混入他人 userId / 他人 userType 的 IDs + 不存在的 ID
+        Collection<Long> ids = Arrays.asList(dbNotifyMessage.getId(), otherUserMessage.getId(),
+                otherTypeMessage.getId(), dbNotifyMessage.getId() + 10000);
         Long userId = 1L;
         Integer userType = UserTypeEnum.ADMIN.getValue();
 
@@ -236,6 +274,13 @@ public class NotifyMessageServiceImplTest extends BaseDbUnitTest {
         NotifyMessageDO notifyMessage = notifyMessageMapper.selectById(dbNotifyMessage.getId());
         assertTrue(notifyMessage.getReadStatus());
         assertNotNull(notifyMessage.getReadTime());
+        // ZS-MSG-003 显式证据：混入的他人 IDs（不同 userId / 不同 userType）已读状态不被改变
+        NotifyMessageDO otherUserAfter = notifyMessageMapper.selectById(otherUserMessage.getId());
+        assertFalse(otherUserAfter.getReadStatus());
+        assertNull(otherUserAfter.getReadTime());
+        NotifyMessageDO otherTypeAfter = notifyMessageMapper.selectById(otherTypeMessage.getId());
+        assertFalse(otherTypeAfter.getReadStatus());
+        assertNull(otherTypeAfter.getReadTime());
     }
 
     @Test

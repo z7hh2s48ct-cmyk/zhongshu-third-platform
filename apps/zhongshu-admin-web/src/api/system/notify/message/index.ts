@@ -47,3 +47,26 @@ export const getUnreadNotifyMessageList = async () => {
 export const getUnreadNotifyMessageCount = async () => {
   return await request.get({ url: '/system/notify-message/get-unread-count' })
 }
+
+// ZS-MSG-003：消息落点描述（纯结构性业务引用，不含消息正文）
+export interface NotifyMessageLandingDescriptor {
+  module: string
+  route: string
+  params?: Record<string, any>
+}
+
+// ZS-MSG-003：消息落点解析结果（available=false 时以 unavailableCode/reason 给出明确不可用原因）
+export interface NotifyMessageLandingResult {
+  available: boolean
+  unavailableCode?: 'NOT_REGISTERED' | 'MODULE_DISABLED' | 'REVOKED' | 'CLIENT_UNSUPPORTED'
+  reason?: string
+  descriptor?: NotifyMessageLandingDescriptor
+}
+
+// ZS-MSG-003：解析站内信落点（跳转二次授权：归属 → 注册 → 模块 → 业务重授权，服务端统一裁决）
+export const resolveNotifyMessageLanding = async (
+  id: number,
+  client: 'WEB' | 'MOBILE'
+): Promise<NotifyMessageLandingResult> => {
+  return await request.get({ url: '/system/notify-message/get-landing', params: { id, client } })
+}

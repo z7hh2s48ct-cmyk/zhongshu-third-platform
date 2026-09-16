@@ -20,12 +20,20 @@
         {{ detailData.templateContent }}
       </el-descriptions-item>
     </el-descriptions>
+    <template #footer>
+      <!-- ZS-MSG-003：跳转前经服务端落点二次授权；不可用明确提示，不猜测跳转 -->
+      <el-button :disabled="!detailData.id" type="primary" @click="goLanding"> 前往处理 </el-button>
+    </template>
   </Dialog>
 </template>
 <script lang="ts" setup>
 import { DICT_TYPE } from '@/utils/dict'
 import { formatDate } from '@/utils/formatTime'
 import * as NotifyMessageApi from '@/api/system/notify/message'
+import {
+  applyNotifyLandingRoute,
+  notifyLandingUnavailableText
+} from '@/views/system/notify/landing'
 
 defineOptions({ name: 'MyNotifyMessageDetailDetail' })
 
@@ -42,6 +50,22 @@ const open = async (data: NotifyMessageApi.NotifyMessageVO) => {
     detailData.value = data
   } finally {
     detailLoading.value = false
+  }
+}
+
+/** 前往处理：解析落点（服务端二次授权）→ 导航由既有路由守卫最终判定 */
+const message = useMessage()
+const { push } = useRouter()
+const goLanding = async () => {
+  try {
+    const result = await NotifyMessageApi.resolveNotifyMessageLanding(detailData.value.id, 'WEB')
+    if (applyNotifyLandingRoute({ push }, result) === 'unavailable') {
+      message.warning(notifyLandingUnavailableText(result))
+      return
+    }
+    dialogVisible.value = false
+  } catch {
+    // 安全拒绝（他人消息/不存在）已由 axios 拦截层统一错误提示，此处不再重复
   }
 }
 defineExpose({ open }) // 提供 open 方法，用于打开弹窗

@@ -226,9 +226,17 @@ public interface ErrorCodeConstants {
     ErrorCode NOTIFY_TODO_TENANT_REQUIRED = new ErrorCode(1_002_030_006, "业务待办缺少租户上下文，拒绝写入");
     ErrorCode NOTIFY_TODO_FIELD_REQUIRED = new ErrorCode(1_002_030_007, "业务待办缺少必填字段：{}");
 
-    // ========== 渠道发送生命周期 1-002-031-000（ZS-MSG-004） ==========
-    ErrorCode NOTIFY_CHANNEL_SEND_NOT_FOUND = new ErrorCode(1_002_031_001, "渠道发送台账记录不存在");
-    ErrorCode NOTIFY_CHANNEL_SEND_TENANT_REQUIRED = new ErrorCode(1_002_031_002, "渠道发送处理缺少租户上下文，拒绝执行");
-    ErrorCode NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID = new ErrorCode(1_002_031_003, "当前状态({})不允许人工重试（受理/送达状态由回执与回查推进）");
-    ErrorCode NOTIFY_CHANNEL_SEND_CONTACT_STILL_MISSING = new ErrorCode(1_002_031_004, "收件人仍缺少该渠道联系方式，人工重试拒绝；请先补齐联系方式后重试");
+    // ========== 消息落点 1-002-031-000（ZS-MSG-003） ==========
+    // r0-P3/r1-P3/r2-P3：NOT_FOUND 与 ACCESS_DENIED 统一对外文案，但错误码本身仍可区分
+    // （异常处理器原样输出 code），消息 ID 存在性探测的残余风险经评审接受；双码保留用于
+    // 内部日志区分与本卡验收证据（他人消息显式拒绝），不得据此宣称探测面已闭合
+    ErrorCode NOTIFY_LANDING_MESSAGE_NOT_FOUND = new ErrorCode(1_002_031_000, "站内信不存在或不可访问");
+    ErrorCode NOTIFY_LANDING_ACCESS_DENIED = new ErrorCode(1_002_031_001, "站内信不存在或不可访问");
+    ErrorCode NOTIFY_LANDING_TENANT_REQUIRED = new ErrorCode(1_002_031_002, "缺少租户上下文，拒绝解析消息落点");
+
+    // ========== 渠道发送生命周期 1-002-032-000（ZS-MSG-004；原拟 1-002-031 与 MSG-003 落点段撞段，改 032） ==========
+    ErrorCode NOTIFY_CHANNEL_SEND_NOT_FOUND = new ErrorCode(1_002_032_001, "渠道发送台账记录不存在");
+    ErrorCode NOTIFY_CHANNEL_SEND_TENANT_REQUIRED = new ErrorCode(1_002_032_002, "渠道发送处理缺少租户上下文，拒绝执行");
+    ErrorCode NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID = new ErrorCode(1_002_032_003, "当前状态({})不允许人工重试（受理/送达状态由回执与回查推进）");
+    ErrorCode NOTIFY_CHANNEL_SEND_CONTACT_STILL_MISSING = new ErrorCode(1_002_032_004, "收件人仍缺少该渠道联系方式，人工重试拒绝；请先补齐联系方式后重试");
 }

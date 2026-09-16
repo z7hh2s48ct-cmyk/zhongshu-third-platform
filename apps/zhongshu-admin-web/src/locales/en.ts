@@ -121,7 +121,7 @@ export default {
   },
   login: {
     welcome: 'Welcome to the system',
-    message: 'Backstage management system',
+    message: 'Zhongshu Zhijia AI Enablement Platform',
     tenantname: 'TenantName',
     username: 'Username',
     password: 'Password',
@@ -383,8 +383,6 @@ export default {
       signUpFormTitle: 'Sign up',
       forgetFormTitle: 'Reset password',
 
-      signInTitle: 'Backstage management system',
-      signInDesc: 'Enter your personal details and get started!',
       policy: 'I agree to the xxx Privacy Policy',
       scanSign: `scanning the code to complete the login`,
 

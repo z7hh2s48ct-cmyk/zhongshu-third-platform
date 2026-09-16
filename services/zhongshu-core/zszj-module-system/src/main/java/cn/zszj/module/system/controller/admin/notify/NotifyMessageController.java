@@ -5,20 +5,25 @@ import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.object.BeanUtils;
+import cn.zszj.module.system.controller.admin.notify.vo.message.NotifyMessageLandingRespVO;
 import cn.zszj.module.system.controller.admin.notify.vo.message.NotifyMessageMyPageReqVO;
 import cn.zszj.module.system.controller.admin.notify.vo.message.NotifyMessagePageReqVO;
 import cn.zszj.module.system.controller.admin.notify.vo.message.NotifyMessageRespVO;
 import cn.zszj.module.system.dal.dataobject.notify.NotifyMessageDO;
 import cn.zszj.module.system.service.notify.NotifyMessageService;
+import cn.zszj.module.system.service.notify.landing.NotifyLandingClient;
+import cn.zszj.module.system.service.notify.landing.NotifyLandingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.Resource;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
-import jakarta.annotation.Resource;
-import jakarta.validation.Valid;
 import java.util.List;
 
 import static cn.zszj.framework.common.pojo.CommonResult.success;
@@ -32,6 +37,9 @@ public class NotifyMessageController {
 
     @Resource
     private NotifyMessageService notifyMessageService;
+
+    @Resource
+    private NotifyLandingService notifyLandingService;
 
     // ========== 管理所有的站内信 ==========
 
@@ -81,10 +89,22 @@ public class NotifyMessageController {
     @Operation(summary = "获取当前用户的最新站内信列表，默认 10 条")
     @Parameter(name = "size", description = "10")
     public CommonResult<List<NotifyMessageRespVO>> getUnreadNotifyMessageList(
-            @RequestParam(name = "size", defaultValue = "10") Integer size) {
+            @RequestParam(name = "size", defaultValue = "10") @Min(value = 1, message = "未读列表条数至少为 1")
+            @Max(value = 100, message = "未读列表条数最多为 100") Integer size) {
         List<NotifyMessageDO> list = notifyMessageService.getUnreadNotifyMessageList(
                 getLoginUserId(), UserTypeEnum.ADMIN.getValue(), size);
         return success(BeanUtils.toBean(list, NotifyMessageRespVO.class));
+    }
+
+    @GetMapping("/get-landing")
+    @Operation(summary = "解析站内信落点", description = "消息点击跳转的二次授权入口：确认消息归属 → 落点注册判定 → 业务重新授权；不可用时返回原因码")
+    @Parameter(name = "id", description = "站内信编号", required = true, example = "1024")
+    @Parameter(name = "client", description = "请求端（WEB / MOBILE）", required = true, example = "WEB")
+    public CommonResult<NotifyMessageLandingRespVO> getNotifyMessageLanding(
+            @RequestParam("id") Long id,
+            @RequestParam("client") NotifyLandingClient client) {
+        return success(notifyLandingService.resolveMessageLanding(id, getLoginUserId(),
+                UserTypeEnum.ADMIN.getValue(), client));
     }
 
     @GetMapping("/get-unread-count")
