@@ -14,6 +14,7 @@
  *  10. ZS-JOB-002 事务 Outbox 领取/租约/栅栏/DEAD（双实例 SKIP LOCKED、崩溃重领、旧凭证栅栏）
  *  11. ZS-JOB-003 消费者幂等 Inbox（唯一键抢占并发语义、租户隔离、状态机硬约束）
  *  12. ZS-JOB-004 人工恢复台账（V20260915.021 迁移重放、DEAD→retry/skip、SKIPPED 终态、双轨审计落地、payload 只读）
+ *  13. ZS-FILE-005.B 超时补偿（V20260916.102 重放+存量回填、并发领取 CAS 串行化、重复清理不误删、孤儿清点全局核验）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -36,6 +37,7 @@ const cases = [
   { id: 'ZS-JOB-002 事务Outbox领取/租约/栅栏', cmd: ['node', 'scripts/db/run-job002-verify.mjs'] },
   { id: 'ZS-JOB-003 消费者幂等Inbox唯一键抢占', cmd: ['node', 'scripts/db/run-job003-verify.mjs'] },
   { id: 'ZS-JOB-004 人工恢复台账/DEAD跳过/双轨审计', cmd: ['node', 'scripts/db/run-job004-verify.mjs'] },
+  { id: 'ZS-FILE-005.B 超时补偿CAS串行/孤儿清点/重复清理', cmd: ['node', 'scripts/db/run-file005b-verify.mjs'] },
 ];
 
 let failed = false;

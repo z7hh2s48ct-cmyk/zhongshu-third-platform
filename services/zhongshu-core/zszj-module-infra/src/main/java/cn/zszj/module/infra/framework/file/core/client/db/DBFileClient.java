@@ -67,4 +67,17 @@ public class DBFileClient extends AbstractFileClient<DBFileClientConfig> {
         return java.util.Arrays.copyOfRange(content, from, to);
     }
 
+    /**
+     * ZS-FILE-005.B：对象清点——按 config 分组 path（max(create_time) 作 lastModified 保留期锚点），
+     * 不拉取 content 大字段（size 置 null，服务层对 null 保守跳过）。LIMIT 双方言（H2/PG）可移植。
+     */
+    @Override
+    public java.util.List<cn.zszj.module.infra.framework.file.core.client.FileObjectEntry> listObjects(
+            String prefix, int maxEntries) {
+        return fileContentMapper.selectPathSummariesByPrefix(getId(), prefix, maxEntries).stream()
+                .map(row -> new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(
+                        row.getPath(), null, row.getLastModified()))
+                .toList();
+    }
+
 }

@@ -43,6 +43,9 @@ public class FileController {
     @Resource
     private FileService fileService;
 
+    @Resource
+    private cn.zszj.module.infra.service.file.FileOrphanService fileOrphanService;
+
     @PostMapping("/upload")
     @Operation(summary = "上传文件", description = "模式一：后端上传文件")
     @Parameter(name = "file", description = "文件附件", required = true,
@@ -105,6 +108,25 @@ public class FileController {
     public CommonResult<Boolean> reconcileCleanupFile(@RequestParam("id") Long id) throws Exception {
         fileService.reconcileCleanupFile(id);
         return success(true);
+    }
+
+    @GetMapping("/orphan/preview")
+    @Operation(summary = "孤儿对象预览", description = "ZS-FILE-005.B：只读清点——存储有对象/DB 无记录（跨租户全局核验）"
+            + "且过保留期、temp 无活跃凭证认领的候选清单；清理须以本预览结果显式授权")
+    @Parameter(name = "configId", description = "存储配置编号（缺省用 master 存储）", example = "1")
+    @PreAuthorize("@ss.hasPermission('infra:file:query')")
+    public CommonResult<FileOrphanPreviewRespVO> previewOrphanObjects(
+            @RequestParam(value = "configId", required = false) Long configId) {
+        return success(fileOrphanService.preview(configId));
+    }
+
+    @PostMapping("/orphan/cleanup")
+    @Operation(summary = "孤儿对象清理", description = "ZS-FILE-005.B：显式 path 授权（有界批次）；"
+            + "执行前逐项重新清点并重核验引用/保留期/活跃凭证，逐项记录结果不伪报全成功，重复清理幂等")
+    @PreAuthorize("@ss.hasPermission('infra:file:delete')")
+    public CommonResult<FileOrphanCleanupRespVO> cleanupOrphanObjects(
+            @Valid @RequestBody FileOrphanCleanupReqVO reqVO) {
+        return success(fileOrphanService.cleanup(reqVO));
     }
 
     @GetMapping("/{configId}/get/**")

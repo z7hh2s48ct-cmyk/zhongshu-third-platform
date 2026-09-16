@@ -85,4 +85,41 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
         return filePath.toString();
     }
 
+    /**
+     * ZS-FILE-005.B：对象清点——目录遍历返回相对路径（正斜杠）、按 path 稳定排序、受 maxEntries 有界，
+     * lastModified 取文件修改时间（孤儿保留期判定锚点）。仅清点常规文件，不解析符号链接。
+     */
+    @Override
+    public java.util.List<cn.zszj.module.infra.framework.file.core.client.FileObjectEntry> listObjects(
+            String prefix, int maxEntries) {
+        Path basePath = Paths.get(config.getBasePath()).toAbsolutePath().normalize();
+        if (!java.nio.file.Files.exists(basePath)) {
+            return java.util.List.of();
+        }
+        try (java.util.stream.Stream<Path> stream = java.nio.file.Files.walk(basePath)) {
+            return stream.filter(java.nio.file.Files::isRegularFile)
+                    .map(basePath::relativize)
+                    .map(p -> p.toString().replace(java.io.File.separatorChar, '/'))
+                    .filter(p -> p.startsWith(prefix))
+                    .sorted()
+                    .limit(maxEntries)
+                    .map(p -> {
+                        try {
+                            java.nio.file.attribute.BasicFileAttributes attrs = java.nio.file.Files.readAttributes(
+                                    basePath.resolve(p), java.nio.file.attribute.BasicFileAttributes.class);
+                            return new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(
+                                    p, attrs.size(),
+                                    java.time.LocalDateTime.ofInstant(attrs.lastModifiedTime().toInstant(),
+                                            java.time.ZoneId.systemDefault()));
+                        } catch (java.io.IOException ex) {
+                            // 条目属性读取失败保守降级：lastModified 置空（服务层对 null 保守跳过，不清理）
+                            return new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(p, null, null);
+                        }
+                    })
+                    .toList();
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("对象清点失败: " + ex.getMessage(), ex);
+        }
+    }
+
 }

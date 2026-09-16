@@ -80,6 +80,23 @@ public interface FileClient {
         return java.util.Arrays.copyOfRange(content, from, to);
     }
 
+    /**
+     * 对象清点（ZS-FILE-005.B 孤儿对象「预览」）：返回 path 以 prefix 开头的对象条目，
+     * 按 path 稳定排序、受 maxEntries 有界。
+     *
+     * <p>默认抛 {@link UnsupportedOperationException}——当前仅 local/db 实装；
+     * s3/ftp/sftp 待真实对象存储接入并实测后回填（未经实测的清点实现若前缀/边界有缺陷，
+     * 会直接放大为孤儿误删，保守不支持优于假支持）。</p>
+     *
+     * @param prefix     前缀过滤（空串=全部）
+     * @param maxEntries 返回条目上限
+     * @return 清点条目列表（size/lastModified 允许为 null，服务层对 null 保守跳过）
+     * @throws UnsupportedOperationException 当前存储不支持清点
+     */
+    default java.util.List<FileObjectEntry> listObjects(String prefix, int maxEntries) {
+        throw new UnsupportedOperationException("当前存储不支持对象清点");
+    }
+
     // ========== 文件签名，目前仅 S3 支持 ==========
 
     /**

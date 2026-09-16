@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS "infra_file" (
     "size" bigint NOT NULL,
     "file_hash" varchar(64) DEFAULT NULL,
     "status" varchar(16) NOT NULL DEFAULT 'PUBLISHED',
+    "deleting_time" timestamp DEFAULT NULL, -- ZS-FILE-005.B：删除中间态进入时刻（补偿超时/领取租约）
     "owner_user_id" bigint NOT NULL DEFAULT 0,
     "scope" varchar(16) NOT NULL DEFAULT 'PRIVATE',
     "creator" varchar(64) DEFAULT '',
