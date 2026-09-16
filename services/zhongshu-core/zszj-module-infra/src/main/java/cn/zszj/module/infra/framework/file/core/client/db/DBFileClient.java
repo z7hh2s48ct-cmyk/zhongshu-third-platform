@@ -69,15 +69,38 @@ public class DBFileClient extends AbstractFileClient<DBFileClientConfig> {
 
     /**
      * ZS-FILE-005.B：对象清点——按 config 分组 path（max(create_time) 作 lastModified 保留期锚点），
-     * 不拉取 content 大字段（size 置 null，服务层对 null 保守跳过）。LIMIT 双方言（H2/PG）可移植。
+     * 不拉取 content 大字段（size 置 null，服务层对 null 保守跳过）。
+     * codex r1 P2：prefix 经 {@link #escapeLikePrefix} 字面转义后交 LIKE（mapper 侧 ESCAPE '\\' 子句），
+     * 与 local 客户端 startsWith 的「字面前缀」语义对齐——合法路径字符 {@code _}/{@code %}
+     * 不被展开为通配符（否则前缀外候选挤占扫描上限/污染清点结果）。
      */
     @Override
     public java.util.List<cn.zszj.module.infra.framework.file.core.client.FileObjectEntry> listObjects(
             String prefix, int maxEntries) {
-        return fileContentMapper.selectPathSummariesByPrefix(getId(), prefix, maxEntries).stream()
+        return fileContentMapper.selectPathSummariesByPrefix(getId(), escapeLikePrefix(prefix), maxEntries).stream()
                 .map(row -> new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(
                         row.getPath(), null, row.getLastModified()))
                 .toList();
+    }
+
+    /**
+     * LIKE 前缀字面转义（codex r1 P2）：转义 {@code \}/{@code %}/{@code _} 三字符（{@code \} 首先自转义，
+     * 三字符统一前置转义符一次遍历完成）。与 {@link FileContentMapper#selectPathSummariesByPrefix}
+     * 的 {@code ESCAPE '\'} 子句构成同一合同。包内可见供单测固化。
+     */
+    static String escapeLikePrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return prefix;
+        }
+        StringBuilder sb = new StringBuilder(prefix.length() + 16);
+        for (int i = 0; i < prefix.length(); i++) {
+            char c = prefix.charAt(i);
+            if (c == '\\' || c == '%' || c == '_') {
+                sb.append('\\');
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
 }

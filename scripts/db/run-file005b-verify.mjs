@@ -16,7 +16,8 @@
  *   P5 引用保护数据路径：REDEEMED 未过期谓词命中 / 过期不命中（补偿不得绕过 .A 引用保护）；
  *   P6 回退清空 deleting_time：引用拒绝回退 PUBLISHED 后不再构成补偿候选；
  *   P7 孤儿清点：无任何 infra_file 记录引用的存储 path 恰为候选集（跨租户全局核验形状）；
- *   P8 候选 FIFO 排序（codex r0 P2-1）：ORDER BY deleting_time ASC, id ASC——最久等待优先。
+ *   P8 候选 FIFO 排序（codex r0 P2-1）：ORDER BY deleting_time ASC, id ASC——最久等待优先；
+ *   P9 清点前缀 LIKE 转义（codex r1 P2）：ESCAPE '' 下 _ 字面量不展开为通配符（字面前缀合同）。
  * 任一失败退出非零；缺 Docker 退出码 3。用法：node scripts/db/run-file005b-verify.mjs
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -182,6 +183,28 @@ VALUES (hash2, 9103, 101, 'download', 'REDEEMED', 'sess-2', 'sess-101', 1, now()
 WHERE status = 'DELETING' AND deleting_time IS NOT NULL AND deleting_time <= now() - interval '60 minutes'`);
   record('P8 补偿候选 FIFO 排序（deleting_time ASC, id ASC）：最久等待（大 id）排在最前',
     order === '9101,9001', `order=${order}`);
+}
+
+// P9 清点前缀 LIKE 转义（codex r1 P2）：ESCAPE 下 _ 字面量不展开（DBFileClient.escapeLikePrefix + mapper ESCAPE 合同）
+{
+  psql('postgres', 'zhongshu', `DELETE FROM infra_file_content WHERE config_id = 1 AND path IN ('asset/_/a.bin', 'asset/0/a.bin', 'asset/50%/x.bin')`);
+  const seedRows = [
+    "INSERT INTO infra_file_content (id, config_id, path, content) VALUES (8011, 1, 'asset/_/a.bin', '\\x6f'::bytea)",
+    "INSERT INTO infra_file_content (id, config_id, path, content) VALUES (8012, 1, 'asset/0/a.bin', '\\x6f'::bytea)",
+    "INSERT INTO infra_file_content (id, config_id, path, content) VALUES (8013, 1, 'asset/50%/x.bin', '\\x6f'::bytea)",
+  ].join(';\n');
+  if (psql('zhongshu_owner', 'zhongshu', seedRows).status !== 0) { cleanup(); fail(1, '[file005b] P9 造数失败'); }
+  // 转义合同（应用形状）：prefix 'asset/_/a' 经 escapeLikePrefix → 'asset/\_/a'，LIKE ... ESCAPE '\' → _ 字面
+  const escaped = one(`SELECT string_agg(path, ',' ORDER BY path) FROM infra_file_content
+WHERE config_id = 1 AND deleted = 0 AND path LIKE CONCAT('asset/\\_/a', '%') ESCAPE '\\' GROUP BY path`);
+  // 未转义对照（修复前行为）：_ 展开为通配符，前缀外行被误配
+  const unescaped = one(`SELECT string_agg(path, ',' ORDER BY path) FROM infra_file_content
+WHERE config_id = 1 AND deleted = 0 AND path LIKE CONCAT('asset/_/a', '%') GROUP BY path`);
+  const pctEscaped = one(`SELECT string_agg(path, ',' ORDER BY path) FROM infra_file_content
+WHERE config_id = 1 AND deleted = 0 AND path LIKE CONCAT('asset/50\\%', '%') ESCAPE '\\' GROUP BY path`);
+  record('P9 清点前缀 LIKE 转义：_/% 字面量不展开（转义恰配 1 行；未转义对照误配 2 行佐证修复必要）',
+    escaped === 'asset/_/a.bin' && unescaped.includes('asset/0/a.bin') && pctEscaped === 'asset/50%/x.bin',
+    `escaped=${escaped} unescaped=${unescaped} pct=${pctEscaped}`);
 }
 
 console.log(JSON.stringify({ pass, fail: failCount }));

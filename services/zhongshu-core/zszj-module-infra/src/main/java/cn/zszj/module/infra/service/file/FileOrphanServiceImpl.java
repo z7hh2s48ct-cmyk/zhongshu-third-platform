@@ -44,8 +44,10 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PATH_INVALID;
  *       本租户操作方误判为孤儿（「不跨技术租户误删」的反面）；引用匹配按 LOWER 折叠
  *       （codex r0 P1-2：大小写不敏感文件系统下清点拼写与记录拼写可能不同，精确匹配漏检会误删活文件；
  *       大小写敏感系统上折叠属保守方向——宁可多保留）；</li>
- *   <li>存储根隔离（codex r0 P1-1，保守拒绝方向）：local 类型配置在与其他配置【共享或嵌套】同一
- *       存储根（basePath）时直接拒绝 preview/cleanup——此时两个 client 清点的是同一批物理文件，
+ *   <li>存储根隔离（codex r0 P1-1 + r1 P1-A/P1-B，保守拒绝方向）：local 类型配置在与其他配置【共享或嵌套】同一
+ *       存储根（物理真实路径，toRealPath 解析 junction/symlink 别名——字符串规范化发现不了别名共享，
+ *       r1 P1-A；尾分隔符剥离合同防 C:\ 类根的 c:// 边界失配，r1 P1-B；根不存在/解析失败同拒）时
+ *       直接拒绝 preview/cleanup——此时两个 client 清点的是同一批物理文件，
  *       而引用核验只能按所选 configId 查，他配置名下引用的同物理文件过保留期会被误删；
  *       物理身份跨配置判定（方案①）需为每种存储建模根身份且嵌套拼写映射复杂，保守拒绝（方案②）
  *       宁可少删——退出条件「不误删」优先于检测最大化；db 类型按 config_id 在 infra_file_content
@@ -212,8 +214,11 @@ public class FileOrphanServiceImpl implements FileOrphanService {
     }
 
     /**
-     * local 配置的存储根（绝对路径规范化 + 正斜杠统一 + 大小写折叠）；
-     * 解析失败返回 null（调用方按「无法证明隔离」拒绝）。
+     * local 配置的存储根——解析【物理真实路径】（codex r1 P1-A）：{@code toRealPath} 解析
+     * junction/symlink 别名到同一物理目录，字符串规范化发现不了的别名共享得以命中；
+     * 统一正斜杠 + 大小写折叠 + 尾分隔符剥离（codex r1 P1-B：根如 {@code C:\} 规范化后
+     * 仍带尾分隔符，追加边界会得到 {@code c://} 使包含判定失效）。
+     * 解析失败（不存在/IO 错误）返回 null——无法证明隔离即拒绝（循 036 保守口径）。
      */
     private String localRootOf(FileConfigDO config) {
         try {
@@ -221,13 +226,27 @@ public class FileOrphanServiceImpl implements FileOrphanService {
             if (localConfig == null || StrUtil.isEmpty(localConfig.getBasePath())) {
                 return null;
             }
-            return Paths.get(localConfig.getBasePath()).toAbsolutePath().normalize().toString()
-                    .replace('\\', '/').toLowerCase(Locale.ROOT);
+            // toRealPath 要求路径真实存在：未创建的存储根同样拒绝（无物可清点，拒绝无损失且保守）
+            return toCanonicalRoot(Paths.get(localConfig.getBasePath()).toRealPath());
         } catch (Exception ex) {
             log.warn("[localRootOf][配置({}) 存储根解析失败，按共享拒绝处理: {}]",
                     config.getId(), ex.getClass().getSimpleName());
             return null;
         }
+    }
+
+    /**
+     * 物理路径 → 规范化根字符串（纯字符串变换，不触 FS）：正斜杠统一 + 大小写折叠 +
+     * 尾分隔符剥离（根路径如 {@code Z:\} 规范化后仍带尾分隔符，P1-B 合同：无尾分隔符）；
+     * 剥离至空（整个文件系统根 {@code /}）时保留 {@code /}。
+     * 包内可见供单测固化合同。
+     */
+    static String toCanonicalRoot(java.nio.file.Path realPath) {
+        String root = realPath.normalize().toString().replace('\\', '/').toLowerCase(Locale.ROOT);
+        while (root.length() > 1 && root.endsWith("/")) {
+            root = root.substring(0, root.length() - 1);
+        }
+        return root.isEmpty() ? "/" : root;
     }
 
     private LocalFileClientConfig asLocalConfig(FileConfigDO config) {
@@ -240,9 +259,14 @@ public class FileOrphanServiceImpl implements FileOrphanService {
 
     /**
      * 物理根共享判定：相等，或一方是另一方的前缀目录（嵌套——外层清点会覆盖内层全部对象）。
-     * 入参须为已「小写 + 正斜杠」规范化的根。
+     * 入参合同（{@link #toCanonicalRoot}）：无尾分隔符——边界分隔符只补不加，
+     * 杜绝 {@code c://} 式失配（P1-B）；任一方为文件系统根 {@code /} 时视为共享（包罗一切）。
+     * 包内可见供单测固化合同。
      */
-    private boolean sharesPhysicalRoot(String selfRoot, String otherRoot) {
+    static boolean sharesPhysicalRoot(String selfRoot, String otherRoot) {
+        if ("/".equals(selfRoot) || "/".equals(otherRoot)) {
+            return true;
+        }
         return selfRoot.equals(otherRoot)
                 || selfRoot.startsWith(otherRoot + "/")
                 || otherRoot.startsWith(selfRoot + "/");

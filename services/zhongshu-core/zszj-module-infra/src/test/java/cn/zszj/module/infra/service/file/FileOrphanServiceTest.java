@@ -23,11 +23,15 @@ import cn.zszj.module.infra.framework.file.core.client.local.LocalFileClientConf
 import cn.zszj.module.infra.framework.file.core.enums.FileStorageEnum;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,6 +39,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_ORPHAN_CLEANUP_BATCH_EXCEED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_ORPHAN_LISTING_NOT_SUPPORTED;
@@ -64,7 +70,15 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
 
     /** master 配置（id=1）与其 local 存储根；隔离用例据此构造共享/嵌套/互斥配置 */
     private static final Long MASTER_CONFIG_ID = 1L;
-    private static final String MASTER_BASE_PATH = "Z:/storage-a";
+
+    /**
+     * 真实存在的物理根（codex r1 P1-A：隔离核验按 toRealPath 物理路径解析，
+     * 配置 basePath 必须真实存在，故用例以临时目录构造）。
+     */
+    @TempDir
+    Path tempRoot;
+
+    private Path masterRoot;
 
     @Resource
     private FileOrphanService orphanService;
@@ -86,7 +100,7 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
     private FileClient masterClient;
 
     @BeforeEach
-    public void beforeEach() {
+    public void beforeEach() throws Exception {
         TenantContextHolder.setTenantId(1L);
         properties.getOrphan().setRetentionDays(7);
         properties.getOrphan().setScanMaxObjects(1000);
@@ -113,8 +127,9 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
         }
         when(fileConfigService.getMasterFileClient()).thenReturn(masterClient);
         when(fileConfigService.getFileClient(anyLong())).thenReturn(masterClient);
-        // 存储根隔离核验（P1-1）依赖配置表：master local 配置
-        seedFileConfig(MASTER_CONFIG_ID, "master-local", MASTER_BASE_PATH, true);
+        // 存储根隔离核验（P1-1/r1 P1-A）依赖配置表与真实存在的物理根
+        masterRoot = Files.createDirectories(tempRoot.resolve("real"));
+        seedFileConfig(MASTER_CONFIG_ID, "master-local", masterRoot.toString(), true);
     }
 
     @AfterEach
@@ -203,10 +218,10 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
     // ========== ⑤（P1-1）存储根共享/嵌套的 local 配置保守拒绝 ==========
 
     @Test
-    public void sharedStorageRoot_previewAndCleanup_conservativelyRefused() {
+    public void sharedStorageRoot_previewAndCleanup_conservativelyRefused() throws Exception {
         seedOrphanObject("asset/orphan-old.bin", 30);
         // 同 basePath 的第二个 local 配置：两 client 清点的是同一批物理文件 → 保守拒绝
-        seedFileConfig(2L, "mirror-local", MASTER_BASE_PATH, false);
+        seedFileConfig(2L, "mirror-local", masterRoot.toString(), false);
 
         ServiceException previewEx = assertThrows(ServiceException.class,
                 () -> orphanService.preview(MASTER_CONFIG_ID, ""));
@@ -220,10 +235,11 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
     }
 
     @Test
-    public void nestedStorageRoot_conservativelyRefused_butDisjointAllowed() {
+    public void nestedStorageRoot_conservativelyRefused_butDisjointAllowed() throws Exception {
         seedOrphanObject("asset/orphan-old.bin", 30);
         // 嵌套根（外层清点覆盖内层全部对象）→ 拒绝
-        seedFileConfig(2L, "nested-local", MASTER_BASE_PATH + "/sub", false);
+        Path nestedRoot = Files.createDirectories(tempRoot.resolve("real").resolve("sub"));
+        seedFileConfig(2L, "nested-local", nestedRoot.toString(), false);
         ServiceException nestedEx = assertThrows(ServiceException.class,
                 () -> orphanService.preview(MASTER_CONFIG_ID, ""));
         assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), nestedEx.getCode());
@@ -231,16 +247,56 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
         // 物理互斥根 → 正常清点（隔离核验不误伤正常单配置/互斥多配置）
         //（注：deleteById 为 @TableLogic 逻辑删除，行仍占主键，故互斥配置以新 id 落库）
         fileConfigMapper.deleteById(2L);
-        seedFileConfig(3L, "elsewhere-local", "Z:/storage-b", false);
+        Path elsewhereRoot = Files.createDirectories(tempRoot.resolve("elsewhere"));
+        seedFileConfig(3L, "elsewhere-local", elsewhereRoot.toString(), false);
         FileOrphanPreviewRespVO preview = orphanService.preview(MASTER_CONFIG_ID, "");
         assertEquals(1, preview.getItems().size());
         assertEquals("asset/orphan-old.bin", preview.getItems().get(0).getPath());
     }
 
+    // ========== ⑤b（codex r1 P1-A）junction/symlink 别名共享：物理路径解析后仍被拒绝 ==========
+
+    @Test
+    public void aliasStorageRoot_junctionToSamePhysicalPath_conservativelyRefused() throws Exception {
+        seedOrphanObject("asset/orphan-old.bin", 30);
+        // 别名根：优先符号链接，Windows 无特权环境退回目录 junction（mklink /J 无需管理员）
+        Path alias = createAliasLink(tempRoot.resolve("alias"), masterRoot);
+        assumeTrue(alias != null && Files.exists(alias), "环境不支持符号链接/junction 创建，跳过别名共享用例");
+
+        // 字符串规范化下 real≠alias，物理真实路径解析后同一目录 → 保守拒绝（修复前此处放行 → 误删）
+        seedFileConfig(2L, "alias-local", alias.toString(), false);
+        ServiceException previewEx = assertThrows(ServiceException.class,
+                () -> orphanService.preview(MASTER_CONFIG_ID, ""));
+        assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), previewEx.getCode());
+
+        // 反向同理：以别名配置为清点入口同样拒绝
+        ServiceException reverseEx = assertThrows(ServiceException.class,
+                () -> orphanService.preview(2L, ""));
+        assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), reverseEx.getCode());
+        assertTrue(objectStore.containsKey("asset/orphan-old.bin"), "拒绝路径不产生任何删除");
+    }
+
+    // ========== ⑤c（codex r1 P1-B）尾分隔符根：边界判定不失配 ==========
+
+    @Test
+    public void trailingSeparatorRoot_containmentStillHolds_conservativelyRefused() throws Exception {
+        seedOrphanObject("asset/orphan-old.bin", 30);
+        // 盘根/文件系统根规范化后带尾分隔符（C:\ → c:、/ → /）——修复前边界拼接得 c:// 使
+        // 包含判定失效、内层配置绕过隔离；修复后尾分隔符剥离合同 + 「/ 包罗一切」双保险
+        Path driveRoot = masterRoot.getRoot();
+        assumeTrue(driveRoot != null, "临时目录无根组件（异常环境），跳过尾分隔符用例");
+        seedFileConfig(2L, "drive-root-local", driveRoot.toString(), false);
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> orphanService.preview(MASTER_CONFIG_ID, ""));
+        assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), ex.getCode());
+        assertTrue(objectStore.containsKey("asset/orphan-old.bin"));
+    }
+
     // ========== ⑥（P1-2）大小写不敏感文件系统：清点拼写≠记录拼写仍命中引用 ==========
 
     @Test
-    public void caseInsensitiveFilesystem_referenceMatchedByFoldedPath_notOrphan() {
+    public void caseInsensitiveFilesystem_referenceMatchedByFoldedPath_notOrphan() throws Exception {
         // FS 既有拼写为 "Asset/live.bin"；DB 记录拼写为 "asset/live.bin"（各自拼写）——
         // 修复前精确匹配漏检引用 → 过保留期被误删活文件；修复后 LOWER 折叠命中 → 保留
         seedOrphanObject("Asset/live.bin", 30);
@@ -321,6 +377,28 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
     private void seedOrphanObject(String path, int ageDays) {
         objectStore.put(path, ("orphan-" + path).getBytes());
         modifiedMap.put(path, LocalDateTime.now().minusDays(ageDays));
+    }
+
+    /**
+     * 创建指向 target 的目录别名：优先 Files.createSymbolicLink（Linux/特权 Windows），
+     * 失败退回目录 junction（cmd mklink /J，Windows 免管理员）；均不可用返回 null（用例 skip）。
+     */
+    private Path createAliasLink(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            // fallthrough 到 junction
+        }
+        try {
+            Process p = new ProcessBuilder("cmd", "/c", "mklink", "/J",
+                    link.toString(), target.toString()).start();
+            if (p.waitFor() == 0 && Files.exists(link)) {
+                return link;
+            }
+        } catch (Exception ex) {
+            // 非 Windows/无 cmd：返回 null 由 assumeTrue 跳过
+        }
+        return null;
     }
 
     private void seedFileConfig(Long id, String name, String basePath, boolean master) {
