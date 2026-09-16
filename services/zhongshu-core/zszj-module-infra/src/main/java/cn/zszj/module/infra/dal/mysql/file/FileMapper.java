@@ -55,8 +55,10 @@ public interface FileMapper extends BaseMapperX<FileDO> {
     // ========== ZS-FILE-005.B：自动补偿（超时 DELETING 的扫描 / CAS 领取 / 条件移除） ==========
 
     /**
-     * 补偿候选（ZS-FILE-005.B）：DELETING 且 deleting_time 已超时（≤ graceBefore），稳定 id 排序、有界。
+     * 补偿候选（ZS-FILE-005.B）：DELETING 且 deleting_time 已超时（≤ graceBefore）、有界。
      * deleting_time 为 NULL 的记录不进入候选（其进入时刻由迁移 V20260916.102 按 update_time 回填，超时语义保持确定）。
+     * codex r0 P2-1：排序 【deleting_time ASC, id ASC】——最久等待优先（FIFO）；失败记录领取时
+     * deleting_time 前推即自然排到队尾，防低位 ID 长期占据批次窗口饿死高位 ID。
      * 调度线程无租户上下文，调用方须以 TenantUtils.executeIgnore 包裹。
      */
     default List<FileDO> selectCompensationCandidates(java.time.LocalDateTime graceBefore, int limit) {
@@ -64,6 +66,7 @@ public interface FileMapper extends BaseMapperX<FileDO> {
                 .eq(FileDO::getStatus, FileDO.STATUS_DELETING)
                 .isNotNull(FileDO::getDeletingTime)
                 .le(FileDO::getDeletingTime, graceBefore)
+                .orderByAsc(FileDO::getDeletingTime)
                 .orderByAsc(FileDO::getId)
                 .last("LIMIT " + limit));
     }
@@ -93,14 +96,17 @@ public interface FileMapper extends BaseMapperX<FileDO> {
     }
 
     /**
-     * 引用存在性统计（ZS-FILE-005.B 孤儿核验）：同 config+path 的资产记录数——
+     * 引用存在性统计（ZS-FILE-005.B 孤儿核验）：同 config 下与 path 引用等价的资产记录数——
      * 调用方必须以 TenantUtils.executeIgnore 包裹做【跨租户全局】核验：若被租户过滤，
      * 他租户在同 config+path 的记录会被误判为孤儿（不跨技术租户误删的反面）。
+     * codex r0 P1-2：path 按 LOWER 两侧折叠比较——大小写不敏感文件系统（Windows/macOS 默认）
+     * 下，清点返回既有目录拼写、FileDO 记录保留各自拼写，精确匹配会漏检引用导致误删活文件；
+     * 大小写敏感系统上折叠属保守方向（可能把异拼写孤儿多保留，宁可少删）。
      */
     default Long selectCountByConfigIdAndPathIgnoreTenant(Long configId, String path) {
         return selectCount(new LambdaQueryWrapperX<FileDO>()
                 .eq(FileDO::getConfigId, configId)
-                .eq(FileDO::getPath, path));
+                .apply("LOWER(path) = LOWER({0})", path));
     }
 
 }

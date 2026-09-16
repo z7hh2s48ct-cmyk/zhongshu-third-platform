@@ -20,6 +20,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -215,6 +216,23 @@ public class FileDeleteCompensationJobTest extends BaseDbUnitTest {
 
         assertNotNull(fileMapper.selectById(file.getId()), "无进入时间的 DELETING 记录不由补偿处理");
         verify(masterClient, never()).delete(anyString());
+    }
+
+    // ========== ⑧（codex r0 P2-1）候选 FIFO 排序：最久等待优先，防低位 ID 占据批次窗口 ==========
+
+    @Test
+    public void compensationCandidates_fifoByDeletingTime_beforeIdOrder() {
+        // id 升序与 deleting_time 升序刻意相反：低位 id 记录等待更短、高位 id 记录等待更久——
+        // 修复前 ORDER BY id 会让低位 id 恒占批次窗口；修复后按 deleting_time ASC FIFO，最久等待优先
+        FileDO youngerLowerId = seedDeletingFile("fifo-younger", 70); // 先插入 → id 更小，等待更短
+        FileDO olderHigherId = seedDeletingFile("fifo-older", 200);   // 后插入 → id 更大，等待更久
+
+        List<Long> candidateIds = fileMapper
+                .selectCompensationCandidates(LocalDateTime.now().minusMinutes(60), 10)
+                .stream().map(FileDO::getId).toList();
+
+        assertEquals(Arrays.asList(olderHigherId.getId(), youngerLowerId.getId()),
+                candidateIds, "候选按 deleting_time ASC FIFO 排序（id 仅作同刻并列裁决）");
     }
 
     // ========== 造数辅助 ==========

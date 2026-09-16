@@ -112,12 +112,17 @@ public class FileController {
 
     @GetMapping("/orphan/preview")
     @Operation(summary = "孤儿对象预览", description = "ZS-FILE-005.B：只读清点——存储有对象/DB 无记录（跨租户全局核验）"
-            + "且过保留期、temp 无活跃凭证认领的候选清单；清理须以本预览结果显式授权")
-    @Parameter(name = "configId", description = "存储配置编号（缺省用 master 存储）", example = "1")
+            + "且过保留期、temp 无活跃凭证认领的候选清单；清理须以本预览结果显式授权。"
+            + "清点有上限，截断时以逐段前缀续扫推进（codex r0 P2-2）")
+    @Parameters({
+            @Parameter(name = "configId", description = "存储配置编号（缺省用 master 存储）", example = "1"),
+            @Parameter(name = "prefix", description = "清点前缀（相对路径片段，缺省全部；截断续扫用）", example = "asset/2026")
+    })
     @PreAuthorize("@ss.hasPermission('infra:file:query')")
     public CommonResult<FileOrphanPreviewRespVO> previewOrphanObjects(
-            @RequestParam(value = "configId", required = false) Long configId) {
-        return success(fileOrphanService.preview(configId));
+            @RequestParam(value = "configId", required = false) Long configId,
+            @RequestParam(value = "prefix", required = false) String prefix) {
+        return success(fileOrphanService.preview(configId, prefix));
     }
 
     @PostMapping("/orphan/cleanup")

@@ -58,4 +58,24 @@ public class LocalFileClientListTest {
         assertTrue(client.listObjects("", 100).isEmpty());
     }
 
+    /**
+     * ZS-FILE-005.B codex r0 P1-2（文件系统层佐证）：大小写不敏感文件系统（Windows/默认 macOS）下，
+     * 先上传 "Asset" 再上传 "asset" 只有一个物理文件，Files.walk 只返回既有目录拼写；
+     * 清点结果必须能以 LOWER 折叠覆盖两种拼写（服务层引用核验按折叠匹配，见
+     * FileOrphanServiceTest.caseInsensitiveFilesystem_referenceMatchedByFoldedPath_notOrphan）。
+     * 大小写敏感文件系统（Linux）上两路径为独立文件、双双返回——断言两种平台行为均满足折叠覆盖。
+     */
+    @Test
+    public void listObjects_caseVariantPaths_foldedCoverage() throws Exception {
+        LocalFileClient client = newClient();
+        client.upload("a".getBytes(), "Asset/a.bin", "text/plain");
+        client.upload("b".getBytes(), "asset/a.bin", "text/plain");
+
+        List<String> foldedPaths = client.listObjects("", 100).stream()
+                .map(e -> e.getPath().toLowerCase(java.util.Locale.ROOT)).toList();
+
+        assertTrue(foldedPaths.contains("asset/a.bin"),
+                "清点结果折叠后必须覆盖 case 变体路径（不敏感 FS 单拼写 / 敏感 FS 双拼写）");
+    }
+
 }

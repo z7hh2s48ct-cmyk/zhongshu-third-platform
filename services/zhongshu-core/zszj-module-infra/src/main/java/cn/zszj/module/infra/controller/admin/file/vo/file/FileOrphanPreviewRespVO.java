@@ -17,7 +17,11 @@ public class FileOrphanPreviewRespVO {
     @Schema(description = "存储配置编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1")
     private Long configId;
 
-    @Schema(description = "清点是否达到上限被截断（true 时应分前缀多次清点，不得以本次结果为完整清单）",
+    @Schema(description = "本次清点使用的前缀（空串=全部；截断时以逐段前缀续扫推进，codex r0 P2-2）",
+            requiredMode = Schema.RequiredMode.REQUIRED, example = "asset/")
+    private String prefix;
+
+    @Schema(description = "清点是否达到上限被截断（true 时应以更细前缀多次清点，不得以本次结果为完整清单）",
             requiredMode = Schema.RequiredMode.REQUIRED, example = "false")
     private boolean truncated;
 

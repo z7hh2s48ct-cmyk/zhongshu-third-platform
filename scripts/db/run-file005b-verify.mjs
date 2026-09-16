@@ -15,7 +15,8 @@
  *   P4 收敛 + 重复清理不误删：条件删除恰一次，重复 affected=0，行消失（最终对账一致）；
  *   P5 引用保护数据路径：REDEEMED 未过期谓词命中 / 过期不命中（补偿不得绕过 .A 引用保护）；
  *   P6 回退清空 deleting_time：引用拒绝回退 PUBLISHED 后不再构成补偿候选；
- *   P7 孤儿清点：无任何 infra_file 记录引用的存储 path 恰为候选集（跨租户全局核验形状）。
+ *   P7 孤儿清点：无任何 infra_file 记录引用的存储 path 恰为候选集（跨租户全局核验形状）；
+ *   P8 候选 FIFO 排序（codex r0 P2-1）：ORDER BY deleting_time ASC, id ASC——最久等待优先。
  * 任一失败退出非零；缺 Docker 退出码 3。用法：node scripts/db/run-file005b-verify.mjs
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -170,6 +171,17 @@ VALUES (hash2, 9103, 101, 'download', 'REDEEMED', 'sess-2', 'sess-101', 1, now()
     AND NOT EXISTS (SELECT 1 FROM infra_file f WHERE f.config_id = fc.config_id AND f.path = fc.path AND f.deleted = 0)) t`);
   record('P7 孤儿清点：无任何租户记录引用的 path 恰为候选（跨租户全局核验防误判）',
     orphans === 'asset/orphan.bin', `orphans=${orphans}`);
+}
+
+// P8 候选 FIFO 排序（codex r0 P2-1）：deleting_time ASC, id ASC——最久等待优先，防低位 ID 占据批次窗口
+{
+  // 9101（P2 转移为 DELETING）拉成最老等待但 id 较大；9001（存量回填）等待较短但 id 更小
+  psql('postgres', 'zhongshu', `UPDATE infra_file SET deleting_time = now() - interval '3 hours' WHERE id = 9101`);
+  psql('postgres', 'zhongshu', `UPDATE infra_file SET deleting_time = now() - interval '2 hours' WHERE id = 9001`);
+  const order = one(`SELECT string_agg(id::text, ',' ORDER BY deleting_time ASC, id ASC) FROM infra_file
+WHERE status = 'DELETING' AND deleting_time IS NOT NULL AND deleting_time <= now() - interval '60 minutes'`);
+  record('P8 补偿候选 FIFO 排序（deleting_time ASC, id ASC）：最久等待（大 id）排在最前',
+    order === '9101,9001', `order=${order}`);
 }
 
 console.log(JSON.stringify({ pass, fail: failCount }));
