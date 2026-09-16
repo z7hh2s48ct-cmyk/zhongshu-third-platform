@@ -393,6 +393,21 @@ zszj:
 
 debug: false
 
+--- #################### Outbox 恢复台账与健康监测阈值（ZS-JOB-004） ####################
+
+# 阈值为「保守占位」，待 WP-19 运行监控阶段实测回填（验收④：告警阈值经实测回填而非凭空声称容量达标）。
+# 下列默认值仅保证「监测逻辑可运行 + 越阈可告警」，禁止被解读为生产容量/TPS 承诺（开发计划铁律 8）。
+# 与 OutboxHealthProperties（@ConfigurationProperties "infra.outbox.health"）字段一一对应；某项缺省时以代码默认值生效。
+infra:
+  outbox:
+    health:
+      backlog-warn: 1000 # PENDING 积压预警阈值（占位，待实测回填）
+      backlog-critical: 5000 # PENDING 积压严重阈值（占位，待实测回填）
+      longest-wait-warn-seconds: 3600 # 最长等待预警阈值（秒，占位，待实测回填）
+      failure-rate-warn-percent: 5 # 失败率预警阈值（百分比，占位，待实测回填）
+      lease-stale-seconds: 0 # 租约过期宽限（秒）：0 = 已过期即视为 dispatcher 停摆
+      max-manual-retry: 3 # 单事件人工重试上限（无限重试护栏，超过即拒绝）
+
 --- #################### 管理端点（ZS-ENG-005：默认仅健康检查） ####################
 
 management:

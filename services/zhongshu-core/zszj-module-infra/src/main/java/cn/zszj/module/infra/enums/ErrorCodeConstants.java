@@ -120,6 +120,15 @@ public interface ErrorCodeConstants {
     ErrorCode INBOX_TRANSACTION_REQUIRED = new ErrorCode(1_001_010_001, "Inbox 幂等记录必须在业务事务内登记，禁止无事务写入");
     ErrorCode INBOX_TENANT_CONTEXT_REQUIRED = new ErrorCode(1_001_010_002, "Inbox 登记缺少技术租户上下文，拒绝默认归属");
 
+    // ========== Outbox 人工恢复台账与健康监测 1-001-011-000（ZS-JOB-004） ==========
+    ErrorCode OUTBOX_EVENT_NOT_FOUND = new ErrorCode(1_001_011_000, "Outbox 事件不存在或不属于当前租户");
+    ErrorCode OUTBOX_RECOVERY_REASON_REQUIRED = new ErrorCode(1_001_011_001, "人工恢复（重试/跳过）必须填写理由，拒绝无据操作");
+    ErrorCode OUTBOX_RECOVERY_NOT_DEAD = new ErrorCode(1_001_011_002, "仅 DEAD 状态事件可人工恢复，当前状态（{}）不允许");
+    ErrorCode OUTBOX_RECOVERY_RETRY_LIMIT_EXCEEDED = new ErrorCode(1_001_011_003, "该事件人工重试已达上限（{}），拒绝无限重试；请排查根因或改用跳过放弃");
+    ErrorCode OUTBOX_RECOVERY_TENANT_REQUIRED = new ErrorCode(1_001_011_004, "Outbox 恢复缺少技术租户上下文，拒绝默认归属");
+    ErrorCode OUTBOX_RECOVERY_WRITE_FAILED = new ErrorCode(1_001_011_005, "Outbox 恢复台账写入失败");
+    ErrorCode OUTBOX_RECOVERY_OPERATOR_REQUIRED = new ErrorCode(1_001_011_006, "Outbox 人工恢复缺少操作者上下文，拒绝匿名重放");
+
     // ========== 学生 1-001-201-000 ==========
     ErrorCode DEMO01_CONTACT_NOT_EXISTS = new ErrorCode(1_001_201_000, "示例联系人不存在");
     ErrorCode DEMO02_CATEGORY_NOT_EXISTS = new ErrorCode(1_001_201_001, "示例分类不存在");
