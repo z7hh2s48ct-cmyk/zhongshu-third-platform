@@ -2,7 +2,6 @@ package cn.zszj.framework.idempotent.core.keyresolver.impl;
 
 import cn.hutool.crypto.SecureUtil;
 import cn.zszj.framework.common.util.servlet.ServletUtils;
-import cn.zszj.framework.common.util.string.StrUtils;
 import cn.zszj.framework.idempotent.core.annotation.Idempotent;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
 import org.aspectj.lang.JoinPoint;
@@ -20,6 +19,10 @@ import static org.mockito.Mockito.*;
  *
  * ZS-SEC-011.A：验证幂等键包含租户 + 用户主体作用域，
  * 不同主体/租户不得共用幂等键（主体隔离合同）；并显式钉住 null 作用域塌缩的危险语义。
+ *
+ * ZS-SEC-011.B（Key/Value 切分）：Key 不再烘入 argsStr——Key = md5(method + 租户 + 主体 + userType) 稳定短键，
+ * 入参差异由切面层的「未截断脱敏摘要」（Value/持久化记录 request_digest）承担比对，
+ * 使「同键异参冲突检测」在默认路径真正可达（codex 011.A P2-1/REC-2 收编）。
  */
 class DefaultIdempotentKeyResolverTest {
 
@@ -110,8 +113,9 @@ class DefaultIdempotentKeyResolverTest {
     }
 
     @Test
-    void resolver_differentArgs_shouldProduceDifferentKey() {
-        // C7（MIN-8）：补不同入参 → 不同 Key 用例（主体隔离合同组成部分：Key 已烘入 argsStr）
+    void resolver_differentArgs_shouldProduceSameKey() {
+        // ZS-SEC-011.B Key/Value 切分（codex 011.A P2-1/REC-2 收编）：同主体同方法不同入参 → 同一 Key，
+        // 入参差异由切面层全量摘要（Value/request_digest）比对承担——「同键异参冲突」在默认路径可达。
         HttpServletRequest req = mock(HttpServletRequest.class);
         JoinPoint jp1 = mockJoinPoint(METHOD_DESC, new Object[]{"arg1"});
         JoinPoint jp2 = mockJoinPoint(METHOD_DESC, new Object[]{"arg2"});
@@ -126,7 +130,7 @@ class DefaultIdempotentKeyResolverTest {
             String k1 = new DefaultIdempotentKeyResolver().resolver(jp1, mockIdempotent());
             String k2 = new DefaultIdempotentKeyResolver().resolver(jp2, mockIdempotent());
 
-            assertNotEquals(k1, k2, "同主体不同入参不得共用幂等键（Key 已烘入 argsStr）");
+            assertEquals(k1, k2, "同主体同方法不同入参应产生相同 Key（Key 不含 argsStr，差异由摘要承担）");
         }
     }
 
@@ -163,11 +167,10 @@ class DefaultIdempotentKeyResolverTest {
         try (MockedStatic<ServletUtils> servletMs = mockStatic(ServletUtils.class)) {
             servletMs.when(ServletUtils::getRequest).thenReturn(null);
             String key = new DefaultIdempotentKeyResolver().resolver(jp, mockIdempotent());
-            // C6（IMP-7）：锁定确切 Key 格式（tenant/user/type 均 null 占位），
+            // C6（IMP-7）：锁定确切 Key 格式（tenant/user/type 均 null 占位，Key 不含 argsStr——ZS-SEC-011.B 切分），
             // 而非仅 assertNotNull（MD5 恒非 null，对格式无约束力，无效断言）
-            String argsStr = StrUtils.joinMethodArgs(jp);
-            String expected = SecureUtil.md5(METHOD_DESC + ":null:null:null:" + argsStr);
-            assertEquals(expected, key, "无 request 上下文应以 null 占位拼接、口径确定的 Key");
+            String expected = SecureUtil.md5(METHOD_DESC + ":null:null:null");
+            assertEquals(expected, key, "无 request 上下文应以 null 占位拼接、口径确定的 Key（不含入参）");
         }
     }
 
@@ -176,8 +179,9 @@ class DefaultIdempotentKeyResolverTest {
         // C6（IMP-7 危险语义显式契约）：无 request 上下文时 tenant/user/type 均 null，
         // 两个「不同匿名主体」（同一 method/args、都无上下文 → 主体因子不可区分，全塌缩为 null）→ Key 相同。
         // 把"null 作用域塌缩 → 不同匿名主体共用命名空间"钉为契约，后续改动会立刻红灯。
-        // 风险边界：本批无结果回放，危害限于可用性；SEC-011.B 引入持久化 + 回放后，
-        // 此处升级为跨主体结果重放风险，须先堵（补 clientIP 或强制上下文）。
+        // 风险边界（ZS-SEC-011.B 已收口一半）：持久化幂等模式强制登录主体（userId=null 直接 fail-closed 拒绝）
+        // 且主体因子参与持久化键派生，跨主体结果重放风险已在持久化路径堵死；
+        // 本契约只余 Redis 窗口路径（无结果回放，危害限于可用性），权威作用域源抽象仍归 REC-1。
         JoinPoint jp1 = mockJoinPoint(METHOD_DESC, new Object[]{"arg1"});
         JoinPoint jp2 = mockJoinPoint(METHOD_DESC, new Object[]{"arg1"});
 

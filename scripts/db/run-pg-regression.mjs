@@ -15,6 +15,7 @@
  *  11. ZS-JOB-003 消费者幂等 Inbox（唯一键抢占并发语义、租户隔离、状态机硬约束）
  *  12. ZS-JOB-004 人工恢复台账（V20260915.021 迁移重放、DEAD→retry/skip、SKIPPED 终态、双轨审计落地、payload 只读）
  *  13. ZS-OPS-002.B 健康监测聚合 PG 可移植性 + 告警分级/健康态映射（镜像 OutboxHealthMonitorImpl SQL 与 breaches 消费）
+ *  14. ZS-SEC-011.B 持久化幂等（V20260916.101 迁移重放、ON CONFLICT 抢占、8 连接并发兜底、状态机 CHECK、跨会话重放不重复写、>2048 快照完整性）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -38,6 +39,7 @@ const cases = [
   { id: 'ZS-JOB-003 消费者幂等Inbox唯一键抢占', cmd: ['node', 'scripts/db/run-job003-verify.mjs'] },
   { id: 'ZS-JOB-004 人工恢复台账/DEAD跳过/双轨审计', cmd: ['node', 'scripts/db/run-job004-verify.mjs'] },
   { id: 'ZS-OPS-002.B 健康监测聚合PG可移植/告警分级/健康态', cmd: ['node', 'scripts/db/run-ops002b-verify.mjs'] },
+  { id: 'ZS-SEC-011.B 持久化幂等唯一约束/重放', cmd: ['node', 'scripts/db/run-sec011b-verify.mjs'] },
 ];
 
 let failed = false;
