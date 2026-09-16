@@ -129,7 +129,7 @@ public class PersistentIdempotentIntegrationTest extends BaseDbUnitTest {
         IdempotentAspect restartedAspect = new IdempotentAspect(
                 List.of(new DefaultIdempotentKeyResolver()),
                 new IdempotentRedisDAO(new StringRedisTemplate()),
-                providerOf(restartedStore));
+                providerOf(restartedStore), TEST_DIGEST_SECRET);
         OrderExecutor freshExecutor = new OrderExecutor();
         AspectJProxyFactory factory = new AspectJProxyFactory(freshExecutor);
         factory.addAspect(restartedAspect);
@@ -205,7 +205,7 @@ public class PersistentIdempotentIntegrationTest extends BaseDbUnitTest {
         IdempotentAspect aspect = new IdempotentAspect(
                 List.of(new DefaultIdempotentKeyResolver()),
                 new IdempotentRedisDAO(new StringRedisTemplate()),
-                providerOf(directStore));
+                providerOf(directStore), TEST_DIGEST_SECRET);
         OrderExecutor executor = new OrderExecutor();
         AspectJProxyFactory factory = new AspectJProxyFactory(executor);
         factory.addAspect(aspect);
@@ -249,8 +249,10 @@ public class PersistentIdempotentIntegrationTest extends BaseDbUnitTest {
         @Bean
         public IdempotentAspect idempotentAspect(List<IdempotentKeyResolver> keyResolvers,
                                                  ObjectProvider<PersistentIdempotentStore> persistentStoreProvider) {
-            // 持久化路径不触碰 Redis：StringRedisTemplate 仅满足构造签名（无连接、不初始化）
-            return new IdempotentAspect(keyResolvers, new IdempotentRedisDAO(new StringRedisTemplate()), persistentStoreProvider);
+            // 持久化路径不触碰 Redis：StringRedisTemplate 仅满足构造签名（无连接、不初始化）；
+            // 第 4 参为部署期注入的摘要 pepper（r1 P2-C，测试以常量模拟）
+            return new IdempotentAspect(keyResolvers, new IdempotentRedisDAO(new StringRedisTemplate()),
+                    persistentStoreProvider, TEST_DIGEST_SECRET);
         }
 
         @Bean
@@ -311,9 +313,12 @@ public class PersistentIdempotentIntegrationTest extends BaseDbUnitTest {
 
     // ========== Helpers ==========
 
-    /** 与切面同口径的期望摘要（原始业务入参的 keyed SHA-256，codex r0 P2-1 口径） */
+    /** 测试用摘要 pepper（≥32 字符，模拟部署期注入 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET） */
+    private static final String TEST_DIGEST_SECRET = "integration-test-digest-secret-0123456789abcdef";
+
+    /** 与切面同口径的期望摘要（原始业务入参的 keyed SHA-256，codex r0 P2-1 + r1 P2-C 口径） */
     private static String expectedDigest(String req) {
-        return IdempotentAspect.computeArgsDigest(new Object[]{req});
+        return IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{req});
     }
 
     /** 本测试唯一的持久化记录行（clean.sql 保证用例间隔离） */

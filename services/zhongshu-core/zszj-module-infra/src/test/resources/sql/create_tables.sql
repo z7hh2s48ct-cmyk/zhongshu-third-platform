@@ -401,7 +401,8 @@ CREATE TABLE IF NOT EXISTS "infra_persistent_idempotent" (
     "tenant_id" bigint DEFAULT NULL,
     "subject_type" varchar(32) DEFAULT NULL,
     "subject_id" varchar(64) DEFAULT NULL,
-    "action_scope" varchar(256) NOT NULL,
+    -- codex r1 P2-B：与迁移 V20260916.101 同步——Method.toString() 可超 256，放宽 1024；极端超长由切面 boundActionScope 降级
+    "action_scope" varchar(1024) NOT NULL,
     "request_digest" varchar(64) NOT NULL,
     "status" varchar(16) NOT NULL DEFAULT 'RUNNING' CHECK ("status" IN ('RUNNING', 'SUCCESS', 'FAILED')),
     "result_snapshot" text DEFAULT NULL,

@@ -305,6 +305,14 @@ zszj:
     # （浏览器 WS 无法自定义 Header，只能拼 URL 参数），依赖刷新令牌回退放行。此为迁移期临时兼容，
     # 须在 LOGIN-001.B（短时握手票据 + 前端 WS 迁移）完成后改回 false 并删除本键。
     refresh-token-as-access-token-enabled: true
+    # ZS-SEC-011.B 持久化幂等摘要 pepper（keyed SHA-256 密钥，codex r1 P2-C 部署期注入，不硬编码）：
+    # ① 须 ≥32 字符；配置了但长度不足 → 应用启动即失败（fail-fast，明确配置错误不允许带病启动）；
+    # ② 未配置（空）→ 持久化幂等模式（persistent=true）拒绝启用（请求 fail-closed + 启动 WARN 留痕），
+    #    Redis 窗口幂等模式不受影响（其摘要回退 .A 脱敏口径，有损边界已在代码/文档登记）；
+    # ③ pepper 轮换会使存量持久化摘要失效（重放按冲突拒绝、客户端可重试）——轮换须与业务低峰/恢复处置协同。
+    idempotent:
+      digest:
+        secret: "${ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET:}" # 部署期注入（≥32 字符），缺失不静默降级
   api-encrypt:
     enable: false # 是否开启 API 加密。默认关闭，避免低版本 JDK 8（8u120 以下）启动时 bcprov 的 JCE 认证报错
     algorithm: AES # 加密算法，支持 AES、RSA 等

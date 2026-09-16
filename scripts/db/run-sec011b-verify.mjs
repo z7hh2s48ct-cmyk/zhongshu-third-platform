@@ -15,7 +15,8 @@
  *   P4 状态机：RUNNING→SUCCESS（快照+complete_time）+ BOGUS 状态被 CHECK 拒；
  *   P5 跨「进程」重放（独立新连接读回 SUCCESS+全量摘要+快照→复用决策输入齐备）+ 每键恒一行（不重复写）；
  *   P6 失败路径：RUNNING 删除后可重插（失败可重试）/ FAILED 保留挡重插（重放由切面拒绝）；
- *   P7 全量完整性：>2048 字符快照 + 长摘要往返不截断（P2-1 的存储侧对称）。
+ *   P7 全量完整性：>2048 字符快照 + 长摘要往返不截断（P2-1 的存储侧对称）；
+ *   P8 action_scope 超长（600 字符 > 旧 256 上限）可直接落库（codex r1 P2-B 列宽回归）。
  * 任一失败退出非零；缺 Docker 退出码 3。用法：node scripts/db/run-sec011b-verify.mjs
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -30,12 +31,22 @@ const dockerUp = spawnSync('docker', ['version', '--format', '{{.Server.Version}
 if (dockerUp.error || dockerUp.status !== 0) fail(3, `[sec011b] Docker 不可用：验证不得静默跳过`);
 
 const container = `zszj-sec011b-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-const port = 3532 + Math.floor(Math.random() * 600);
+let port = 3532 + Math.floor(Math.random() * 600);
 let cleaned = false;
 const cleanup = () => { if (!cleaned) { cleaned = true; try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { } } };
 process.on('exit', cleanup);
 
-execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=sec011b', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
+// 容器启动带端口冲突重试（连续脚本调用时随机端口可能撞上仍未释放的宿主端口，未捕获抛出会以 Node 崩溃收场）
+let started = false;
+for (let attempt = 0; attempt < 3 && !started; attempt++) {
+  try {
+    execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=sec011b', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
+    started = true;
+  } catch {
+    port = 3532 + Math.floor(Math.random() * 600);
+  }
+}
+if (!started) fail(1, '[sec011b] PG 容器启动失败（含 3 次端口冲突重试）');
 const psql = (user, db, sql) => spawnSync('docker', ['exec', '-i', container, 'psql', '-U', user, '-d', db, '-v', 'ON_ERROR_STOP=1', '-q'], { input: sql, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const psqlOut = (user, db, sql) => spawnSync('docker', ['exec', container, 'psql', '-U', user, '-d', db, '-At', '-c', sql], { encoding: 'utf8' });
 
@@ -43,7 +54,17 @@ let ready = false;
 for (let i = 0; i < 30; i++) { if (psqlOut('postgres', 'postgres', 'SELECT 1').status === 0) { ready = true; break; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); }
 if (!ready) { cleanup(); fail(1, '[sec011b] PG 未就绪'); }
 
-execFileSync('docker', ['exec', container, 'psql', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
+// 建库失败走干净非零退出（execFileSync 抛出会以 Node 崩溃收场，掩盖退出码合同）
+let dbCreated = false;
+for (let attempt = 0; attempt < 3 && !dbCreated; attempt++) {
+  try {
+    execFileSync('docker', ['exec', container, 'psql', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
+    dbCreated = true;
+  } catch {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+}
+if (!dbCreated) { cleanup(); fail(1, '[sec011b] 建库失败（zhongshu，含 3 次重试）'); }
 {
   const setup = readFileSync(join(root, 'services/zhongshu-core/sql/postgresql/env-setup-test.sql'), 'utf8');
   if (psql('postgres', 'zhongshu', setup).status !== 0) { cleanup(); fail(1, '[sec011b] 角色授权失败'); }
@@ -77,9 +98,11 @@ AND column_name IN ('id','idempotent_key','tenant_id','subject_type','subject_id
   const uk = one(`SELECT count(*) FROM pg_constraint WHERE conrelid = 'infra_persistent_idempotent'::regclass AND conname = 'uk_persistent_idempotent_key' AND contype = 'u'`);
   const ck = one(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_persistent_idempotent_status'`);
   const idx = one(`SELECT count(*) FROM pg_indexes WHERE tablename = 'infra_persistent_idempotent' AND indexname = 'idx_persistent_idempotent_create_time'`);
-  record('P1 迁移 V20260916.101 重放 + 结构断言（11 列/uk 唯一/ck 状态 CHECK/create_time 索引）',
-    cols === '11' && uk === '1' && ck.includes('RUNNING') && ck.includes('SUCCESS') && ck.includes('FAILED') && idx === '1',
-    `cols=${cols} uk=${uk} idx=${idx} ck_has_3states=${ck.includes('RUNNING') && ck.includes('SUCCESS') && ck.includes('FAILED')}`);
+  // codex r1 P2-B：action_scope 列宽 1024（Method.toString() 可超 256，22001 溢出会使业务执行前即失败）
+  const scopeLen = one(`SELECT character_maximum_length FROM information_schema.columns WHERE table_name = 'infra_persistent_idempotent' AND column_name = 'action_scope'`);
+  record('P1 迁移 V20260916.101 重放 + 结构断言（11 列/uk 唯一/ck 状态 CHECK/create_time 索引/action_scope 1024）',
+    cols === '11' && uk === '1' && ck.includes('RUNNING') && ck.includes('SUCCESS') && ck.includes('FAILED') && idx === '1' && scopeLen === '1024',
+    `cols=${cols} uk=${uk} idx=${idx} action_scope_len=${scopeLen} ck_has_3states=${ck.includes('RUNNING') && ck.includes('SUCCESS') && ck.includes('FAILED')}`);
 }
 
 // P2 ON CONFLICT 抢占：同键二插 0 行、不报错、原记录保留（败者事务不 aborted 可继续读）
@@ -172,6 +195,17 @@ VALUES ('key-p4-bogus', 1, '2', '100', 'OrderService.createOrder(..)', 'digest-b
   record('P7 全量完整性（>2048 字符快照往返不截断）',
     marked.status === 0 && roundtrip === longSnapshot,
     `len=${roundtrip.length} intact=${roundtrip === longSnapshot}`);
+}
+
+// P8 action_scope 超长落库（codex r1 P2-B：>256 ≤1024 可直接落库；旧 256 上限会使业务执行前即 22001 失败）
+{
+  reset();
+  const longScope = 'L'.repeat(600);
+  const ins = psql('postgres', 'zhongshu', `INSERT INTO infra_persistent_idempotent (idempotent_key, tenant_id, subject_type, subject_id, action_scope, request_digest, status)
+VALUES ('key-p8', 1, '2', '100', '${longScope}', 'digest-p8', 'RUNNING')`);
+  const storedLen = one(`SELECT length(action_scope) FROM infra_persistent_idempotent WHERE idempotent_key = 'key-p8'`);
+  record('P8 action_scope 超长落库（600 字符 > 旧 256 上限、≤1024 列宽完整往返）',
+    ins.status === 0 && storedLen === '600', `insert_exit=${ins.status} len=${storedLen}`);
 }
 
 console.log(JSON.stringify({ pass, fail: failCount }));

@@ -77,8 +77,14 @@ public class IdempotentAspectPersistentModeTest {
 
     private static final String METHOD_DESC = "OrderService.createOrder(..)";
 
+    /**
+     * 测试用摘要 pepper（40 字符 ≥32）：模拟部署期注入（生产经 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET）
+     */
+    static final String TEST_DIGEST_SECRET = "unit-test-digest-secret-0123456789abcdef";
+
     private ListAppender<ILoggingEvent> listAppender;
     private Logger aspectLogger;
+    private Logger jsonUtilsLogger;
 
     /** 可并发复用的业务执行计数器（每个用例自建目标对象） */
     static class CountingService {
@@ -92,17 +98,24 @@ public class IdempotentAspectPersistentModeTest {
 
     @BeforeEach
     public void setUp() {
-        // P2-2 日志捕获：断言损坏快照原文不落日志
-        aspectLogger = (Logger) LoggerFactory.getLogger(IdempotentAspect.class);
-        aspectLogger.setLevel(Level.INFO);
+        // P2-2 日志捕获：断言损坏快照原文不落日志。
+        // codex r1 P2-D：同一 appender 必须同时挂 IdempotentAspect 与 JsonUtils 两个 logger——
+        // 原始泄漏事件由 JsonUtils.parseObject 的内部 logger 发出，只挂切面 logger 时
+        // 实现回退到漏洞版 parseObject 本测试照样全绿（假绿）；对 JsonUtils 挂载后才能真正打红
         listAppender = new ListAppender<>();
         listAppender.start();
+        aspectLogger = (Logger) LoggerFactory.getLogger(IdempotentAspect.class);
+        aspectLogger.setLevel(Level.INFO);
         aspectLogger.addAppender(listAppender);
+        jsonUtilsLogger = (Logger) LoggerFactory.getLogger(cn.zszj.framework.common.util.json.JsonUtils.class);
+        jsonUtilsLogger.setLevel(Level.INFO);
+        jsonUtilsLogger.addAppender(listAppender);
     }
 
     @AfterEach
     public void tearDown() {
         aspectLogger.detachAppender(listAppender);
+        jsonUtilsLogger.detachAppender(listAppender);
         listAppender.stop();
     }
 
@@ -121,7 +134,7 @@ public class IdempotentAspectPersistentModeTest {
         }
 
         // 断言 store 交互：RUNNING 记录（摘要 = 未截断脱敏 MD5）+ markSuccess 携 JSON 快照
-        String expectedDigest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String expectedDigest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         assertEquals(1, store.insertAttempts.size(), "应恰好一次抢锁插入");
         assertEquals(expectedDigest, store.insertAttempts.get(0).getRequestDigest(), "请求摘要应为未截断脱敏表示的 MD5");
         assertEquals(PersistentIdempotentStatus.RUNNING, store.insertAttempts.get(0).getStatus());
@@ -135,7 +148,7 @@ public class IdempotentAspectPersistentModeTest {
         CountingService service = new CountingService();
 
         // 预置：上一次成功记录（同主体同键同摘要 + 快照）——模拟「响应丢失后重放」/「重启后重放」
-        String digest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String digest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -159,7 +172,7 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String digest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String digest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -184,7 +197,7 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String digest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String digest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -215,7 +228,7 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String digest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String digest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -238,7 +251,7 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String digest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String digest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -261,7 +274,7 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String otherDigest = IdempotentAspect.computeArgsDigest(new Object[]{"OTHER-PAYLOAD"});
+        String otherDigest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"OTHER-PAYLOAD"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -334,7 +347,7 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String digest = IdempotentAspect.computeArgsDigest(new Object[]{"A"});
+        String digest = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{"A"});
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
         PersistentIdempotentRecord record = new PersistentIdempotentRecord();
         record.setIdempotentKey(storeKey);
@@ -367,8 +380,8 @@ public class IdempotentAspectPersistentModeTest {
         IdempotentAspect aspect = newAspect(store, new FixedKeyResolver());
         CountingService service = new CountingService();
 
-        String digestA = IdempotentAspect.computeArgsDigest(new Object[]{java.util.Map.of("password", "secret-A", "username", "tom")});
-        String digestB = IdempotentAspect.computeArgsDigest(new Object[]{java.util.Map.of("password", "secret-B", "username", "tom")});
+        String digestA = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{java.util.Map.of("password", "secret-A", "username", "tom")});
+        String digestB = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, new Object[]{java.util.Map.of("password", "secret-B", "username", "tom")});
         assertNotEquals(digestA, digestB, "仅敏感字段不同的入参摘要必须不同（P2-1 根基）");
 
         String storeKey = storeKeyOf(methodOf(CountingService.class, "execute"), new FixedKeyResolver().resolver(null, null), 1L, 100L, 2);
@@ -470,6 +483,48 @@ public class IdempotentAspectPersistentModeTest {
                     "缺 store bean 应 fail-fast 并指明缺失组件，实际: " + ex.getMessage());
         }
         assertEquals(0, service.executions.get());
+    }
+
+    @Test
+    public void persistentWithoutDigestSecret_failClosedWithClearError() throws Throwable {
+        // codex r1 P2-C：未配置 pepper（null）→ 持久化幂等拒绝启用（fail-closed + 明确错误），
+        // 不静默降级到硬编码 pepper；构造期有 WARN 留痕（部署期可发现），Redis 窗口模式不受影响
+        IdempotentAspect aspectWithoutSecret = new IdempotentAspect(List.of(new FixedKeyResolver()),
+                mock(IdempotentRedisDAO.class), providerOf(new MockPersistentStore()), null);
+        CountingService service = new CountingService();
+
+        try (MockedStaticContext ctx = mockSubject(1L, 100L, 2)) {
+            IllegalStateException ex = assertThrows(IllegalStateException.class,
+                    () -> aspectWithoutSecret.aroundPointCut(joinPointOf(new Object[]{"A"}, service), persistentIdempotent(true, true)));
+            assertTrue(ex.getMessage().contains("ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET"),
+                    "错误信息应指明部署合同环境变量，实际: " + ex.getMessage());
+        }
+        assertEquals(0, service.executions.get(), "无 pepper 不得执行持久化业务");
+        assertTrue(capturedLog().contains("persistent=true"),
+                "构造期应有「持久化幂等不可用」WARN 留痕");
+    }
+
+    @Test
+    public void constructorWithShortDigestSecret_failsFast() {
+        // codex r1 P2-C：配置了但 <32 字符 = 弱 pepper（比没有更危险）→ 启动即失败，不允许带病运行
+        assertThrows(IllegalArgumentException.class,
+                () -> new IdempotentAspect(List.of(new FixedKeyResolver()), mock(IdempotentRedisDAO.class),
+                        providerOf(new MockPersistentStore()), "short-secret"),
+                "过短 pepper 应构造期 fail-fast");
+        // 边界：恰好 32 字符合法
+        new IdempotentAspect(List.of(new FixedKeyResolver()), mock(IdempotentRedisDAO.class),
+                providerOf(new MockPersistentStore()), "a".repeat(32));
+    }
+
+    @Test
+    public void digestSecret_isDeploymentBound_rotationInvalidatesStoredDigests() {
+        // codex r1 P2-C 边界钉死：摘要绑定部署期 pepper——同入参不同 pepper 摘要不同（轮换使存量摘要失效，
+        // 重放按冲突拒绝、客户端可重试）；同 pepper 同入参摘要稳定
+        Object[] args = new Object[]{"A"};
+        String digestA = IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, args);
+        String digestB = IdempotentAspect.computeArgsDigest("another-deployment-secret-0123456789abcdef", args);
+        assertNotEquals(digestA, digestB, "pepper 轮换必须使存量摘要失效（否则等同未轮换）");
+        assertEquals(digestA, IdempotentAspect.computeArgsDigest(TEST_DIGEST_SECRET, args), "同 pepper 同入参摘要稳定");
     }
 
     @Test
@@ -614,8 +669,9 @@ public class IdempotentAspectPersistentModeTest {
         return newAspect(store, resolver, mock(IdempotentRedisDAO.class));
     }
 
+    /** 默认携测试 pepper（≥32 字符）：持久化路径要求 keyed 摘要（r1 P2-C） */
     private IdempotentAspect newAspect(PersistentIdempotentStore store, IdempotentKeyResolver resolver, IdempotentRedisDAO redisDAO) {
-        return new IdempotentAspect(List.of(resolver), redisDAO, providerOf(store));
+        return new IdempotentAspect(List.of(resolver), redisDAO, providerOf(store), TEST_DIGEST_SECRET);
     }
 
     static ObjectProvider<PersistentIdempotentStore> providerOf(PersistentIdempotentStore store) {

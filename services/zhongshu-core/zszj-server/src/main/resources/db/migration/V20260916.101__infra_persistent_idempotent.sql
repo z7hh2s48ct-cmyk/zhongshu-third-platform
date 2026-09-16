@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS infra_persistent_idempotent (
     tenant_id int8 NULL,
     subject_type varchar(32) NULL,
     subject_id varchar(64) NULL,
-    action_scope varchar(256) NOT NULL,
+    -- codex r1 P2-B：Method.toString() 含全限定返回/参数类型（两个长参数类型即可达 262+ 字符），256 会 22001 溢出——
+    -- 列宽放宽至 1024；极端超长由切面 boundActionScope 降级为「sha256:<64hex>」定长表示（落库/重放同口径，无截断碰撞）
+    action_scope varchar(1024) NOT NULL,
     request_digest varchar(64) NOT NULL,
     status varchar(16) NOT NULL DEFAULT 'RUNNING',
     result_snapshot text NULL,

@@ -51,6 +51,9 @@ public class PersistentIdempotentAuthorizationTest extends BaseDbUnitTest {
 
     private static final String PERMISSION = "idem:test:execute";
 
+    /** 测试用摘要 pepper（≥32 字符，模拟部署期注入 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET） */
+    private static final String TEST_DIGEST_SECRET = "authorization-test-digest-secret-0123456789abcdef";
+
     @Resource
     private SecuredOrderEntry securedOrderEntry;
 
@@ -137,7 +140,9 @@ public class PersistentIdempotentAuthorizationTest extends BaseDbUnitTest {
         @Bean
         public IdempotentAspect idempotentAspect(List<IdempotentKeyResolver> keyResolvers,
                                                  ObjectProvider<PersistentIdempotentStore> persistentStoreProvider) {
-            return new IdempotentAspect(keyResolvers, new IdempotentRedisDAO(new StringRedisTemplate()), persistentStoreProvider);
+            // 第 4 参为部署期注入的摘要 pepper（r1 P2-C，测试以常量模拟）
+            return new IdempotentAspect(keyResolvers, new IdempotentRedisDAO(new StringRedisTemplate()),
+                    persistentStoreProvider, TEST_DIGEST_SECRET);
         }
 
         @Bean

@@ -60,8 +60,9 @@ import static org.mockito.Mockito.when;
  * 同时保留可定位的方法描述与非敏感字段，并抛出携带正确错误码的 ServiceException。
  *
  * ZS-SEC-011.A：同键异参冲突检测 + 同键同参重复请求检测。
- * ZS-SEC-011.B：重放身份摘要 = 「原始业务入参」的 keyed SHA-256（codex r0 P2-1 修复：无损身份，
- * 摘要输入不落日志/存储，与日志脱敏分属两条管线）；读回失败告警携 key 指纹（.A P2-2 修复）。
+ * ZS-SEC-011.B：重放身份摘要双口径（r1 P2-C）——配置部署期 pepper（≥32 字符）走 keyed SHA-256（r0 P2-1 修复：
+ * 无损身份，摘要输入不落日志/存储，与日志脱敏分属两条管线）；未配置则 Redis 窗口路径回退 .A 脱敏口径
+ * （有损边界登记），持久化模式拒绝启用。读回失败告警携 key 指纹（.A P2-2 修复）。
  *
  * ZS-SEC-011.A 合同测试边界：本测试类验证「窗口锁短时防重」合同——
  * 同键同参重复拒绝、同键异参冲突拒绝、主体/租户隔离。
@@ -89,9 +90,10 @@ public class IdempotentAspectTest {
 
     @BeforeEach
     public void setUp() {
-        // ZS-SEC-011.B：构造器新增 ObjectProvider<PersistentIdempotentStore>（Redis 窗口路径不消费，null 即可）
+        // ZS-SEC-011.B：构造器新增 ObjectProvider<PersistentIdempotentStore>（Redis 窗口路径不消费，null 即可）；
+        // r1 P2-C：第 4 参传 null = 未配置摘要 pepper → 本类全部用例走 .A 口径 legacy 摘要（Redis 窗口模式不受影响）
         idempotentAspect = new IdempotentAspect(List.of(new FixedKeyResolver()), idempotentRedisDAO,
-                IdempotentAspectPersistentModeTest.providerOf(null));
+                IdempotentAspectPersistentModeTest.providerOf(null), null);
         aspectLogger = (Logger) LoggerFactory.getLogger(IdempotentAspect.class);
         aspectLogger.setLevel(Level.INFO);
         listAppender = new ListAppender<>();
@@ -127,15 +129,10 @@ public class IdempotentAspectTest {
                 () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
         assertEquals(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), ex.getCode());
 
-        // C1（codex 011.B r0 P2-1 验证）：钉死传给 DAO 的摘要 = computeArgsDigest（原始业务入参的 keyed SHA-256），
-        // 摘要输入（未脱敏原文）只存在于计算内，不落任何日志/存储；存储侧为不可逆 keyed 摘要
-        String expectedDigest = IdempotentAspect.computeArgsDigest(sensitiveArgs);
+        // C1（IMP-6 验证，r1 P2-C 双管线口径）：本类切面未配置 pepper → Redis 窗口路径走 .A 口径
+        // legacy 摘要 md5(未截断脱敏表示)；keyed 无损口径由 PersistentModeTest/敏感字段异参用例覆盖
+        String expectedDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(sensitiveArgs));
         verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(expectedDigest), eq(1L), eq(TimeUnit.SECONDS));
-        // C1（IMP-6 → P2-1 强化验证）：存储侧摘要不得等价于「未脱敏原文的裸 MD5/SHA-256」——
-        // 带应用内 pepper 的 keyed 摘要使离线穷举失效（拿到摘要也需先获得代码内 pepper）
-        String rawJson = cn.zszj.framework.common.util.json.JsonUtils.toJsonString(sensitiveArgs);
-        assertNotEquals(cn.hutool.crypto.SecureUtil.sha256(rawJson), expectedDigest,
-                "存储摘要必须是 keyed（HMAC），不得为可离线穷举的裸 SHA-256(raw)");
         // C1（日志呈现管线）：脱敏只用于日志——拒绝日志串不得含明文秘密（摘要管线与日志脱敏分属两条管线）
         String sanitized = LogSanitizeUtils.sanitizeArgs(sensitiveArgs);
         assertFalse(sanitized.contains(SECRET_PASSWORD), "日志呈现串不得含明文 password（IMP-6）");
@@ -186,9 +183,9 @@ public class IdempotentAspectTest {
         when(joinPoint.getArgs()).thenReturn(argsB);
 
         // 模拟：setIfAbsent 返回 false（key 已存在），getDigest 返回不同的摘要（stored=argA）
-        // codex 011.B r0 P2-1：摘要 = 原始业务入参的 keyed SHA-256（无损身份）
-        String argsDigestB = IdempotentAspect.computeArgsDigest(argsB);
-        String storedDigestA = IdempotentAspect.computeArgsDigest(new Object[]{"argA"});
+        // r1 P2-C：未配置 pepper → .A 口径 legacy 摘要
+        String argsDigestB = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(argsB));
+        String storedDigestA = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(new Object[]{"argA"}));
         when(idempotentRedisDAO.setIfAbsent(anyString(), eq(argsDigestB), anyLong(), any())).thenReturn(false);
         when(idempotentRedisDAO.getDigest(anyString())).thenReturn(storedDigestA);
 
@@ -217,8 +214,8 @@ public class IdempotentAspectTest {
         when(joinPoint.getArgs()).thenReturn(argsA);
 
         // 模拟：setIfAbsent 返回 false，getDigest 返回相同的摘要
-        // codex 011.B r0 P2-1：摘要 = 原始业务入参的 keyed SHA-256（无损身份）
-        String argsDigestA = IdempotentAspect.computeArgsDigest(argsA);
+        // r1 P2-C：未配置 pepper → .A 口径 legacy 摘要
+        String argsDigestA = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(argsA));
         when(idempotentRedisDAO.setIfAbsent(anyString(), eq(argsDigestA), anyLong(), any())).thenReturn(false);
         when(idempotentRedisDAO.getDigest(anyString())).thenReturn(argsDigestA);
 
@@ -296,7 +293,7 @@ public class IdempotentAspectTest {
         // 用真实解析器构造独立切面（不复用 setUp 里 FixedKeyResolver 的切面）
         IdempotentAspect realAspect = new IdempotentAspect(
                 List.of(new DefaultIdempotentKeyResolver()), idempotentRedisDAO,
-                IdempotentAspectPersistentModeTest.providerOf(null));
+                IdempotentAspectPersistentModeTest.providerOf(null), null);
 
         try (MockedStatic<ServletUtils> servletMs = mockStatic(ServletUtils.class);
              MockedStatic<WebFrameworkUtils> webMs = mockStatic(WebFrameworkUtils.class)) {
@@ -307,7 +304,7 @@ public class IdempotentAspectTest {
 
         // 真实解析器算出的 Key（固定主体上下文 → 唯一确定），与切面内部解析结果必然一致
         String expectedKey = new DefaultIdempotentKeyResolver().resolver(joinPoint, idempotent);
-        String argsDigest = IdempotentAspect.computeArgsDigest(args);
+        String argsDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(args));
             // 同 Key 已存在 → setIfAbsent 返回 false；默认路径 storedDigest 必等于 argsDigest
             when(idempotentRedisDAO.setIfAbsent(eq(expectedKey), eq(argsDigest), anyLong(), any())).thenReturn(false);
             when(idempotentRedisDAO.getDigest(eq(expectedKey))).thenReturn(argsDigest);
@@ -342,9 +339,9 @@ public class IdempotentAspectTest {
         Object[] argsA = new Object[]{base + "-tail-A"};
         Object[] argsB = new Object[]{base + "-tail-B"};
 
-        // 先证明两条入参的摘要确实不同（修复的根基）
-        String digestA = IdempotentAspect.computeArgsDigest(argsA);
-        String digestB = IdempotentAspect.computeArgsDigest(argsB);
+        // 先证明两条入参的摘要确实不同（修复的根基；legacy 口径同样未截断）
+        String digestA = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(argsA));
+        String digestB = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(argsB));
         assertNotEquals(digestA, digestB, "超长异尾入参摘要不得碰撞（P2-1 根基）");
 
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
@@ -365,19 +362,23 @@ public class IdempotentAspectTest {
 
     @Test
     public void testAroundPointCut_argsDifferOnlyInSensitiveField_conflictNotRepeat() throws Throwable {
-        // codex 011.B r0 P2-1 回归（有损身份）：此前摘要输入是脱敏表示，仅 password 不同的两个请求同摘要 →
-        // 第二个被当「同键同参重复」；修复后摘要走「原始业务入参」，必须按「同键异参冲突」拒绝。
+        // codex 011.B r0 P2-1 回归（有损身份）+ r1 P2-C keyed 口径：配置 pepper 后摘要走「原始业务入参」的
+        // keyed SHA-256——仅 password 不同的两个请求摘要必不同，第二个按「同键异参冲突」拒绝而非重复。
+        // （未配置 pepper 的 Redis 路径回退 .A 有损口径，边界登记：后果限定为重复按 900 拒绝，无结果复用）
+        IdempotentAspect keyedAspect = new IdempotentAspect(List.of(new FixedKeyResolver()), idempotentRedisDAO,
+                IdempotentAspectPersistentModeTest.providerOf(null),
+                IdempotentAspectPersistentModeTest.TEST_DIGEST_SECRET);
         Idempotent idempotent = mock(Idempotent.class);
         doReturn(FixedKeyResolver.class).when(idempotent).keyResolver();
         when(idempotent.timeout()).thenReturn(5);
         when(idempotent.timeUnit()).thenReturn(TimeUnit.SECONDS);
 
-        // 仅敏感字段不同（脱敏后都会变 ***，此前摘要恒同）
+        // 仅敏感字段不同（脱敏后都会变 ***，有损口径下摘要恒同）
         Object[] argsA = new Object[]{Map.of("password", "old-secret-A", "username", SAFE_USERNAME)};
         Object[] argsB = new Object[]{Map.of("password", "new-secret-B", "username", SAFE_USERNAME)};
-        String digestA = IdempotentAspect.computeArgsDigest(argsA);
-        String digestB = IdempotentAspect.computeArgsDigest(argsB);
-        assertNotEquals(digestA, digestB, "仅敏感字段不同的入参摘要必须不同（无损身份，P2-1 根基）");
+        String digestA = IdempotentAspect.computeArgsDigest(IdempotentAspectPersistentModeTest.TEST_DIGEST_SECRET, argsA);
+        String digestB = IdempotentAspect.computeArgsDigest(IdempotentAspectPersistentModeTest.TEST_DIGEST_SECRET, argsB);
+        assertNotEquals(digestA, digestB, "仅敏感字段不同的入参在 keyed 口径下摘要必须不同（无损身份，P2-1 根基）");
 
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
         when(joinPoint.getSignature()).thenReturn(new FixedSignature(METHOD_DESC));
@@ -386,9 +387,48 @@ public class IdempotentAspectTest {
         when(idempotentRedisDAO.getDigest(anyString())).thenReturn(digestA);
 
         ServiceException ex = assertThrows(ServiceException.class,
-                () -> idempotentAspect.aroundPointCut(joinPoint, idempotent));
+                () -> keyedAspect.aroundPointCut(joinPoint, idempotent));
         assertTrue(ex.getMessage().contains("幂等键冲突"),
                 "仅敏感字段不同的第二请求应按冲突拒绝而非重复，实际: " + ex.getMessage());
+    }
+
+    @Test
+    public void computeArgsDigest_fallbackPath_servletArgsStayExcluded() throws Exception {
+        // codex r1 P2-A 回归（摘要降级路径重引入 servlet 入参）：入参含「不可 JSON 化 DTO + HttpServletResponse」时，
+        // 原文序列化必失败走降级口径——降级必须复用「过滤后」数组，绝不能重新序列化 servlet 对象
+        //（否则 Jackson 触发 getWriter()/getOutputStream()，可能在业务执行前破坏后续二进制响应）。
+        HttpServletResponse response = spy(new ContainerLikeResponse());
+        Object[] args = new Object[]{new BoomDto(), response};
+
+        String digest = IdempotentAspect.computeArgsDigest(IdempotentAspectPersistentModeTest.TEST_DIGEST_SECRET, args);
+
+        assertEquals(64, digest.length(), "keyed SHA-256 摘要应为 64 hex");
+        verify(response, never()).getWriter();
+        verify(response, never()).getOutputStream();
+    }
+
+    /** getter 抛异常的 DTO：Jackson 序列化必失败（驱动摘要走降级路径） */
+    static class BoomDto {
+        public String getPayload() {
+            throw new IllegalStateException("serialize-me-not");
+        }
+    }
+
+    @Test
+    public void boundActionScope_shortKept_longDigestBounded_noTruncationCollision() {
+        // codex r1 P2-B：action_scope 有界化——≤1024 原样保留（可观测）；超长降级定长摘要表示（带 marker，无截断碰撞）
+        String shortScope = "cn.zszj.app.OrderService.createOrder(java.lang.String)";
+        assertEquals(shortScope, IdempotentAspect.boundActionScope(shortScope), "短 scope 原样落库");
+
+        String longScope = "cn.zszj.app.OrderService.execute(" + "x".repeat(2000) + ")";
+        String bounded = IdempotentAspect.boundActionScope(longScope);
+        assertTrue(bounded.startsWith("sha256:"), "超长 scope 应降级为摘要表示（带 marker）");
+        assertEquals(71, bounded.length(), "降级表示应为定长 sha256:<64hex>");
+        assertEquals(bounded, IdempotentAspect.boundActionScope(longScope), "同 scope 降级结果稳定（重放一致）");
+
+        String otherLongScope = "cn.zszj.app.OrderService.execute(" + "y".repeat(2000) + ")";
+        assertNotEquals(bounded, IdempotentAspect.boundActionScope(otherLongScope),
+                "不同超长 scope 摘要不同（无截断碰撞）");
     }
 
     @Test
@@ -397,7 +437,7 @@ public class IdempotentAspectTest {
         // Redis 读回摘要失败分支的 warn 日志此前直接落 key 原文；修复后只落 md5 指纹（可关联、不可逆）。
         IdempotentKeyResolver secretKeyResolver = (joinPoint, idempotent) -> SECRET_TOKEN;
         IdempotentAspect secretAspect = new IdempotentAspect(List.of(secretKeyResolver), idempotentRedisDAO,
-                IdempotentAspectPersistentModeTest.providerOf(null));
+                IdempotentAspectPersistentModeTest.providerOf(null), null);
 
         Idempotent idempotent = mock(Idempotent.class);
         doReturn(secretKeyResolver.getClass()).when(idempotent).keyResolver();
@@ -446,9 +486,9 @@ public class IdempotentAspectTest {
         Object result = idempotentAspect.aroundPointCut(joinPoint, idempotent);
         assertEquals("OK", result);
 
-        // C1：摘要应仅由「排除 servlet 对象后」的业务入参计算——含 servlet 的口径与此不同（RED），排除后一致（GREEN）
         // C1：摘要应仅由「排除 servlet 对象后」的业务入参计算（摘要管线同样按类型排除，防序列化副作用）
-        String expectedDigestExcludingServlet = IdempotentAspect.computeArgsDigest(new Object[]{businessArg});
+        // （本类切面未配置 pepper → .A 口径 legacy 摘要，r1 P2-C）
+        String expectedDigestExcludingServlet = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(new Object[]{businessArg}));
         verify(idempotentRedisDAO).setIfAbsent(anyString(), eq(expectedDigestExcludingServlet), eq(5L), eq(TimeUnit.SECONDS));
         // C2（codex r2 P2 修正）：直接钉死摘要计算绝不触碰响应的 writer/输出流。
         // Spring 6.2 的 MockHttpServletResponse 中 getWriter()/getOutputStream() 访问标志相互独立（不互斥抛异常），

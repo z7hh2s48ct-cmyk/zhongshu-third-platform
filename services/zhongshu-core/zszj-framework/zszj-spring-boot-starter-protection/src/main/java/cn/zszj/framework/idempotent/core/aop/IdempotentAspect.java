@@ -94,6 +94,11 @@ public class IdempotentAspect {
     private static final String CONFLICT_MESSAGE = "幂等键冲突：相同幂等键携带了不同请求内容";
 
     /**
+     * 摘要 pepper 最小长度（codex 011.B r1 P2-C）：低于该长度视为弱密钥，配置了即启动失败（fail-fast）
+     */
+    static final int MIN_DIGEST_SECRET_LENGTH = 32;
+
+    /**
      * IdempotentKeyResolver 集合
      */
     private final Map<Class<? extends IdempotentKeyResolver>, IdempotentKeyResolver> keyResolvers;
@@ -106,11 +111,44 @@ public class IdempotentAspect {
      */
     private final ObjectProvider<PersistentIdempotentStore> persistentStoreProvider;
 
+    /**
+     * 摘要 pepper（codex 011.B r1 P2-C）：部署期注入（zszj.security.idempotent.digest.secret，
+     * 环境变量 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET，≥{@link #MIN_DIGEST_SECRET_LENGTH} 字符），不硬编码。
+     * <ul>
+     *     <li>配置了但长度不足 → 构造即抛（fail-fast，明确的配置错误不允许带病启动）；</li>
+     *     <li>未配置（null）→ 持久化幂等模式拒绝启用（请求 fail-closed + 构造 WARN 留痕），
+     *         <b>不静默降级</b>到硬编码 pepper；Redis 窗口模式不受影响，摘要回退 .A 脱敏口径（legacy，有损边界已登记）。</li>
+     * </ul>
+     */
+    private final String digestSecret;
+
     public IdempotentAspect(List<IdempotentKeyResolver> keyResolvers, IdempotentRedisDAO idempotentRedisDAO,
-                            ObjectProvider<PersistentIdempotentStore> persistentStoreProvider) {
+                            ObjectProvider<PersistentIdempotentStore> persistentStoreProvider, String digestSecret) {
         this.keyResolvers = CollectionUtils.convertMap(keyResolvers, IdempotentKeyResolver::getClass);
         this.idempotentRedisDAO = idempotentRedisDAO;
         this.persistentStoreProvider = persistentStoreProvider;
+        if (digestSecret != null && !digestSecret.isEmpty()) {
+            if (digestSecret.length() < MIN_DIGEST_SECRET_LENGTH) {
+                // fail-fast：弱 pepper 比没有更危险（给运维「已加固」的错觉），不允许带病启动
+                throw new IllegalArgumentException("持久化幂等摘要 pepper 过短：zszj.security.idempotent.digest.secret"
+                        + "（环境变量 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET）须 ≥" + MIN_DIGEST_SECRET_LENGTH + " 字符，实际 "
+                        + digestSecret.length());
+            }
+            this.digestSecret = digestSecret;
+        } else {
+            this.digestSecret = null;
+            // 启动 WARN（不静默）：持久化幂等不可用要在部署期被发现，而非首个 persistent 请求报错时
+            log.warn("[IdempotentAspect][未配置 zszj.security.idempotent.digest.secret（环境变量 "
+                    + "ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET，须 ≥{} 字符）：持久化幂等模式（persistent=true）不可用，"
+                    + "Redis 窗口模式不受影响]", MIN_DIGEST_SECRET_LENGTH);
+        }
+    }
+
+    /**
+     * 摘要 pepper 是否可用（决定 keyed 无损摘要与持久化模式可用性）
+     */
+    private boolean digestSecretAvailable() {
+        return digestSecret != null;
     }
 
     @Around(value = "@annotation(idempotent)")
@@ -124,14 +162,22 @@ public class IdempotentAspect {
         // ZS-SEC-011.A：计算参数摘要，用于同键异参冲突检测 / 重放身份比对
         // codex r0 P1：摘要「每请求必算」（含首次放行），摘要管线内部经 serializableArgs 排除 servlet/spring-web 基础设施入参——
         //        序列化基础设施对象（如 HttpServletResponse）会触发 getWriter() 破坏后续二进制输出
-        // codex 011.B r0 P2-1 修复：重放身份改「原始业务入参」的 keyed SHA-256（无损）——
-        //        此前摘要输入是脱敏表示，仅敏感字段不同的两个请求同摘要，第二个会被当重复/复用第一个的结果（有损身份）；
-        //        现原文仅存在于计算内（不落任何日志/存储），存储侧为带 pepper 的 HMAC（不可离线爆破，IMP-6 安全目标以更强形式达成），
-        //        与日志脱敏（LogSanitizeUtils，仅用于呈现）是两条管线。见 {@link #computeArgsDigest}
-        String argsDigest = computeArgsDigest(joinPoint.getArgs());
+        // codex 011.B r0 P2-1 修复 + r1 P2-C 强化：配置了部署期 pepper（≥32 字符）→「原始业务入参」的 keyed SHA-256
+        //        （无损身份 + 不可离线爆破，摘要输入不落任何日志/存储，与日志脱敏分属两条管线）；
+        //        未配置 pepper → Redis 窗口路径回退 .A 脱敏口径（md5(脱敏表示)，有损边界登记：仅敏感字段差异视为同参），
+        //        持久化路径在下方的 persistent 分支直接拒绝启用（不静默降级）
+        String argsDigest = digestSecretAvailable()
+                ? computeArgsDigest(digestSecret, joinPoint.getArgs())
+                : legacySanitizedArgsDigest(joinPoint.getArgs());
 
         // ZS-SEC-011.B：持久化幂等模式（DB 唯一约束 + 业务同事务 + 结果快照复用）
         if (idempotent.persistent()) {
+            if (!digestSecretAvailable()) {
+                // codex 011.B r1 P2-C：无 pepper 不静默降级——持久化幂等携带结果快照且要求不可离线爆破的身份摘要，必须显式启用
+                throw new IllegalStateException("@Idempotent(persistent=true) 需要注入摘要 pepper："
+                        + "zszj.security.idempotent.digest.secret（环境变量 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET，"
+                        + "≥" + MIN_DIGEST_SECRET_LENGTH + " 字符）；未配置则持久化幂等拒绝启用（Redis 窗口模式不受影响）");
+            }
             PersistentIdempotentStore persistentStore = persistentStoreProvider.getIfAvailable();
             if (persistentStore == null) {
                 throw new IllegalStateException("@Idempotent(persistent=true) 需要容器提供 PersistentIdempotentStore bean"
@@ -216,12 +262,15 @@ public class IdempotentAspect {
             throw new ServiceException(GlobalErrorCodeConstants.INTERNAL_SERVER_ERROR.getCode(), "持久化幂等要求登录主体");
         }
         // 操作/方法身份（codex r0 P1）：取目标类 Method 的规范串（声明类+方法+参数类型，与代理实现类名无关、跨进程稳定），
-        // 既并入持久化键派生，也落库并在重放时校验一致——不同操作同业务键天然不同键，
-        // 「取消」不会命中早前「创建」的 SUCCESS 快照
-        java.lang.reflect.Method idempotentMethod = ((MethodSignature) joinPoint.getSignature()).getMethod();
-        String actionScope = idempotentMethod.toString();
+        // 既并入持久化键派生（用全量串，md5 输入无界），也以有界形式落库并在重放时校验一致——
+        // 不同操作同业务键天然不同键，「取消」不会命中早前「创建」的 SUCCESS 快照
+        Method idempotentMethod = ((MethodSignature) joinPoint.getSignature()).getMethod();
+        String actionScopeFull = idempotentMethod.toString();
+        // codex 011.B r1 P2-B：列宽有界（varchar(1024)），超长降级为定长摘要表示（带 marker，无截断碰撞），
+        // 落库与重放同口径（boundActionScope），storeKey 始终用全量串派生
+        String actionScope = boundActionScope(actionScopeFull);
         // 主体因子 + 操作/方法身份强制并入键派生（含 Expression 解析器路径）：不同主体/不同操作同业务键永不共用记录
-        String storeKey = SecureUtil.md5(actionScope + ":" + resolvedKey + ":" + tenantId + ":" + userId + ":" + userType);
+        String storeKey = SecureUtil.md5(actionScopeFull + ":" + resolvedKey + ":" + tenantId + ":" + userId + ":" + userType);
 
         // 快路径：已有记录（顺序重放，含丢响应/重启后重放）——不产生写入
         Optional<PersistentIdempotentRecord> existing = store.findByIdempotentKey(storeKey);
@@ -270,8 +319,9 @@ public class IdempotentAspect {
     private Object replayPersistent(ProceedingJoinPoint joinPoint, Idempotent idempotent, String actionScope, String storeKey,
                                     String argsDigest, PersistentIdempotentRecord record) throws Throwable {
         // 操作/方法身份一致性校验（codex r0 P1 纵深防御）：键已含 actionScope，命中记录却 scope 不符
-        // 只可能是哈希碰撞/记录被篡改——fail-closed 拒绝，绝不返回异操作快照
-        if (!actionScope.equals(record.getActionScope())) {
+        // 只可能是哈希碰撞/记录被篡改——fail-closed 拒绝，绝不返回异操作快照。
+        // codex r1 P2-B：两侧同走 boundActionScope 口径（落库即有界形式），超长方法也能一致比对
+        if (!boundActionScope(((MethodSignature) joinPoint.getSignature()).getMethod().toString()).equals(record.getActionScope())) {
             log.error("[aroundPersistentPointCut][方法({}) 幂等键指纹({}) 记录操作身份不符（期望={} 实际={}），fail-closed 拒绝]",
                     joinPoint.getSignature(), SecureUtil.md5(storeKey), actionScope, record.getActionScope());
             throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), CONFLICT_MESSAGE);
@@ -317,36 +367,70 @@ public class IdempotentAspect {
     }
 
     /**
-     * 摘要 pepper（应用内常量，不入配置/日志/存储）：使存储侧摘要不可离线爆破——
-     * 摘要原文（未脱敏入参 JSON）只存在于计算内，攻击者即便拿到存储中的摘要，
-     * 离线穷举也需先获得本 pepper（需应用代码访问权），IMP-6 的安全目标以更强形式达成
+     * action_scope 列宽上限（codex 011.B r1 P2-B，与迁移 V20260916.101 / H2 create_tables 的 varchar(1024) 一致）
      */
-    private static final byte[] DIGEST_PEPPER = "zszj-idempotent-args-digest-v1".getBytes(StandardCharsets.UTF_8);
+    static final int ACTION_SCOPE_MAX_LENGTH = 1024;
 
     /**
-     * 重放身份摘要（codex 011.B r0 P2-1 修复）：「原始业务入参」（未脱敏、未截断）的 keyed SHA-256。
+     * action_scope 有界化（codex 011.B r1 P2-B）：{@link Method#toString()} 含全限定返回/参数类型，
+     * 超长方法串会超出列宽导致业务执行前即插入失败（SQLSTATE 22001）。
+     * ≤ 上限原样落库（保留可观测性）；超长降级为 {@code sha256:<64hex>} 定长表示——
+     * 带 marker 前缀 + 全量哈希，<b>无截断碰撞</b>；落库与重放（{@link #replayPersistent}）同口径。
+     * 持久化键派生不受影响（始终用全量串，md5 输入无界）。
+     *
+     * @param actionScope 方法规范串（全量）
+     * @return 落库/比对用的有界形式（≤ 71 + 上限）
+     */
+    static String boundActionScope(String actionScope) {
+        if (actionScope.length() <= ACTION_SCOPE_MAX_LENGTH) {
+            return actionScope;
+        }
+        return "sha256:" + SecureUtil.sha256(actionScope);
+    }
+
+    /**
+     * .A 口径摘要（无 pepper 时的 Redis 窗口路径回退）：「未截断脱敏表示」的 MD5。
+     * 有损边界（登记）：password/token 等敏感字段差异被脱敏等价化 → 视为同参；
+     * 后果限定为「重复按 900 拒绝」（无结果复用），持久化路径在无 pepper 时直接拒绝启用，不走此口径。
+     */
+    static String legacySanitizedArgsDigest(Object[] args) {
+        return SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(serializableArgs(args)));
+    }
+
+    /**
+     * 重放身份摘要（codex 011.B r0 P2-1 修复 + r1 P2-C pepper 部署期注入）：「原始业务入参」（未脱敏、未截断）
+     * 的 keyed SHA-256，pepper 为部署期注入的 {@code digestSecret}（≥{@link #MIN_DIGEST_SECRET_LENGTH} 字符，构造期校验）。
      *
      * <p>与日志脱敏是<b>两条管线</b>：{@link LogSanitizeUtils}（掩码、截断）仅用于日志呈现——
      * 其掩码会把 password/token 等敏感字段等价化为 {@code ***}，若摘要走脱敏口径，
-     * 仅敏感字段不同的两个请求会同摘要，第二个会被当重复/复用第一个的结果（有损身份，本修复对象）。
+     * 仅敏感字段不同的两个请求会同摘要，第二个会被当重复/复用第一个的结果（有损身份，r0 P2-1 修复对象）。
      * 本方法序列化<b>原始</b>业务入参做 keyed 摘要，摘要输入不落任何日志/存储，
-     * 落存储的只有不可逆的 HMAC-SHA256（64 hex，{@code request_digest varchar(64)} 恰容）——存储无泄密风险。
+     * 落存储的只有不可逆的 HMAC-SHA256（64 hex，{@code request_digest varchar(64)} 恰容）——存储无泄密风险；
+     * pepper 不再硬编码（r1 P2-C）：持有落库摘要 + 知晓源码不再足以离线枚举低熵凭据，还须持有部署期注入的 pepper。
      *
-     * <p>{@code args} 先经 {@link #serializableArgs} 排除 servlet/spring-web 基础设施入参（防序列化副作用，codex 011.A r0 P1）；
+     * <p>{@code args} 先经 {@link #serializableArgs} 排除 servlet/spring-web 基础设施入参（防序列化副作用，codex 011.A r0 P1）
+     * ——<b>过滤只做一次，主/降级两条路径共用同一过滤后数组</b>（r1 P2-A 修复：降级路径不得重新引入 servlet 入参）；
      * 极端情况下不可 JSON 化的业务入参降级脱敏口径（有损），并只记 errClass 不落原文。
      *
-     * @param args 原始方法入参
+     * @param digestSecret 部署期注入的摘要 pepper（非空，长度由构造期校验）
+     * @param args         原始方法入参
      * @return keyed SHA-256 hex（64 字符）
      */
-    public static String computeArgsDigest(Object[] args) {
+    public static String computeArgsDigest(String digestSecret, Object[] args) {
+        if (digestSecret == null || digestSecret.isEmpty()) {
+            throw new IllegalArgumentException("摘要 pepper 未配置：持久化幂等/keyed 摘要要求 zszj.security.idempotent.digest.secret"
+                    + "（环境变量 ZSZJ_SECURITY_IDEMPOTENT_DIGEST_SECRET，≥" + MIN_DIGEST_SECRET_LENGTH + " 字符）");
+        }
+        // codex r1 P2-A：入参过滤只做一次——主/降级路径共用过滤后数组，降级路径不得重新序列化 servlet 入参
+        Object[] filteredArgs = serializableArgs(args);
         String digestInput;
         try {
-            digestInput = JsonUtils.toJsonString(serializableArgs(args));
+            digestInput = JsonUtils.toJsonString(filteredArgs);
         } catch (Exception ex) {
             log.error("[computeArgsDigest][入参原文序列化失败，摘要降级脱敏口径（有损） errClass={}]", ex.getClass().getName());
-            digestInput = LogSanitizeUtils.sanitizeArgsUntruncated(args);
+            digestInput = LogSanitizeUtils.sanitizeArgsUntruncated(filteredArgs);
         }
-        HMac hmac = new HMac(HmacAlgorithm.HmacSHA256, DIGEST_PEPPER);
+        HMac hmac = new HMac(HmacAlgorithm.HmacSHA256, digestSecret.getBytes(StandardCharsets.UTF_8));
         return hmac.digestHex(digestInput);
     }
 
