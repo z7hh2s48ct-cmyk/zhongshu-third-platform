@@ -163,6 +163,16 @@
 
 > **ZS-JOB-004 后续小卡收口（2026-09-17）**：P2-1/P2-2 循 OPS-001.B/.C 先例同分支 `feat/job-004-p2` 串行交付、合并评审（[codex-ZS-JOB-004-P2.md](codex-ZS-JOB-004-P2.md)，r0 1×P2〔tr-TR locale 下 toLowerCase 折 I 绕过词根过滤，codex 四 locale 编译后方法实测〕→ Locale.ROOT 修复 + tr-TR 回归用例 → r1 **PASS/0 发现**；27/27 + infra -am 455/0 + fast 10/10，合并 main `4643dde6`）。教训登记：安全过滤凡涉大小写折叠必须 Locale.ROOT——默认 locale 依赖在 tr-TR/az-AZ 部署机直接构成绕过面。
 
+## 待处置：环境负载性 flaky 与既有矛盾登记（2026-09-17，B05 Wave4/5 评审期间发现，非阻塞）
+
+> 以下三项在 OPS-002.B / SEC-011.B / FILE-005.B / BRAND-004.C 评审与验证期间多轮复现/发现，均非当期改动引入（隔离复跑全绿或属既有配置矛盾），依「后续处理约定」第 2 条登记立卡跟踪，不阻塞 B05 放行。
+
+| # | 小卡 | 现象与根因 | 复现证据 | 收敛方向 | 状态 |
+|---|---|---|---|---|---|
+| FLAKY-1 | SEC-012.B async streaming 夹具负载敏感 | `SecurityChainJointRegressionTest$AsyncFullContract.streamingEndpointWithTokenStreamsFully` 在多构建并发负载下偶发失败：①`ConcurrentModificationException` at `MockHttpServletResponse.doAddHeaderValue`（Spring `LinkedCaseInsensitiveMap.computeIfAbsent`——async 流式派发期另一线程并发写响应头表，Spring 6.2 test 夹具该场景非线程安全）；②流式断言收到 500（负载下异步时序漂移） | 本会话 4 次全量 `-am` 反应堆构建中复现（OPS-002.B/SEC-011.B/FILE-005.B 期间各 1~2 次）；同用例隔离复跑与模块全量复跑均绿（多次） | 夹具线程安全化（响应头表并发访问防护或独立 response 实例），并向 Spring 上游求证 MockHttpServletResponse 异步派发合同；归 ZS-SEC-012 后续小卡 | ⏳ 待处置（非阻塞） |
+| FLAKY-2 | PG 一次性验证脚本就绪探测竞态家族 | 各 `run-*-verify.mjs` 以 Unix socket 探 `SELECT 1` 就绪——可命中容器 init 期临时 server（entrypoint 随后关闭它），随后 `CREATE DATABASE` 即失败；高负载下另有容器启动/端口分配竞态。OPS-002.B 已修 `run-ops002b-verify`/`run-pg-regression` caseFile（TCP+PGPASSWORD 探最终 server）、SEC-011.B 已修 `run-sec011b` 重试清理 | 本会话 PG 全量回归 5 轮中 4 轮各有一个基线套件闪失（JOB-004/DB-018/DB-007 各 1~2 次，逐套件隔离复跑全绿）；codex 对 init-server 竞态聚焦复现实锤 | 全部 `run-*-verify.mjs` 统一就绪探测为 TCP+PGPASSWORD（机械替换）+ 容器启动重试统一化；归 ZS-DB-019 后续小卡（ZS-DB-019.B 已登记家族的机制化收敛） | ⏳ 待处置（非阻塞） |
+| CFG-1 | local profile Quartz 配置语义矛盾 | `application-local.yaml` 在 `spring.autoconfigure.exclude` 整体排除 `QuartzAutoConfiguration`——`spring.quartz.auto-startup` 在 local 形同虚设（Scheduler Bean 恒缺失，sync/trigger 一律 501「定时任务-已禁用」）；与 ENG-006 交付的「auto-startup 默认 false 可显式开启」语义矛盾 | BRAND-004.C 运行期证明脚本须以命令行覆盖 exclude 清单才能激活 Quartz（不改产品 yaml 语义，如实登记） | 择一：排除清单改为保留 QuartzAutoConfiguration + `auto-startup: false` 门控（与 ENG-006 对齐），或登记「local 恒无 Scheduler」为既定合同并修正 ENG-006 记录表述；归 ZS-JOB-001/ENG-006 后续复核 | ⏳ 待处置（非阻塞） |
+
 ## B04 文件与审计专项评审状态
 
 | 任务 | 提交 | 状态 | 评审文档 | 结论摘要 |
