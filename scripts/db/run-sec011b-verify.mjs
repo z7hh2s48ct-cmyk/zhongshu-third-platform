@@ -43,6 +43,8 @@ for (let attempt = 0; attempt < 3 && !started; attempt++) {
     execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=sec011b', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
     started = true;
   } catch {
+    // codex r2 P2：端口绑定失败时 docker 已创建同名容器（created 态）——不先移除，后续重试必因容器名冲突失败
+    try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { }
     port = 3532 + Math.floor(Math.random() * 600);
   }
 }
