@@ -24,20 +24,36 @@ const dockerUp = spawnSync('docker', ['version', '--format', '{{.Server.Version}
 if (dockerUp.error || dockerUp.status !== 0) fail(3, `[db007] Docker 不可用：验证不得静默跳过`);
 
 const container = `zszj-db007-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-const port = 2632 + Math.floor(Math.random() * 700);
+let port = 2632 + Math.floor(Math.random() * 700);
 let cleaned = false;
 const cleanup = () => { if (!cleaned) { cleaned = true; try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { } } };
 process.on('exit', cleanup);
 
-execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=db007', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
+// 容器启动带端口冲突重试 + 就绪探测走 TCP+PGPASSWORD 探「最终 server」（FLAKY-2 收敛：
+// 循 run-ops002b/run-sec011b/run-file005b 同款——socket 探测可命中 init 临时 server，绑定失败须先移除同名容器再换端口）
+let started = false;
+for (let attempt = 0; attempt < 3 && !started; attempt++) {
+  try {
+    execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=db007', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
+    started = true;
+  } catch {
+    try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { }
+    port = 2632 + Math.floor(Math.random() * 700);
+  }
+}
+if (!started) fail(1, '[db007] PG 容器启动失败（含 3 次端口冲突重试）');
 const psql = (user, db, sql) => spawnSync('docker', ['exec', '-i', container, 'psql', '-U', user, '-d', db, '-v', 'ON_ERROR_STOP=1', '-q'], { input: sql, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const psqlOut = (user, db, sql) => spawnSync('docker', ['exec', container, 'psql', '-U', user, '-d', db, '-At', '-c', sql], { encoding: 'utf8' });
 
 let ready = false;
-for (let i = 0; i < 30; i++) { if (psqlOut('postgres', 'postgres', 'SELECT 1').status === 0) { ready = true; break; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); }
+for (let i = 0; i < 60; i++) {
+  const probe = spawnSync('docker', ['exec', '-e', 'PGPASSWORD=db007', container, 'psql', '-h', '127.0.0.1', '-p', '5432', '-U', 'postgres', '-d', 'postgres', '-At', '-c', 'SELECT 1'], { encoding: 'utf8' });
+  if (probe.status === 0) { ready = true; break; }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+}
 if (!ready) { cleanup(); fail(1, '[db007] PG 未就绪'); }
 
-execFileSync('docker', ['exec', container, 'psql', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
+execFileSync('docker', ['exec', '-e', 'PGPASSWORD=db007', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
 {
   const setup = readFileSync(join(root, 'services/zhongshu-core/sql/postgresql/env-setup-test.sql'), 'utf8');
   if (psql('postgres', 'zhongshu', setup).status !== 0) { cleanup(); fail(1, '[db007] 角色授权失败'); }
