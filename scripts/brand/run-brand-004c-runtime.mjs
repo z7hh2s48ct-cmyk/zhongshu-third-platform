@@ -365,17 +365,32 @@ for (let i = 0; i < 30; i++) {
 check('C6', '无滞留执行中的触发（QRTZ_FIRED_TRIGGERS 回收为空）', firedCount === '0', `fired=${firedCount}`);
 
 // ---------------------------------------------------------------------------
-// 步骤 5：未注册/旧式 handler 受控拒绝（不放开越权）+ Outbox 恢复/重放
+// 步骤 5：登记侧两层受控拒绝（不放开越权）+ Outbox 恢复/重放
 // ---------------------------------------------------------------------------
 console.log('[runtime] 步骤 5/6 受控拒绝与 Outbox 恢复');
-const createLegacy = await api('POST', '/admin-api/infra/job/create', {
+// 登记侧受控拒绝是两层串行（JobServiceImpl#validateJobHandlerExists：先 Bean 存在性/类型，
+// 后白名单）。两层各自独立取证（codex r0 P2-1）：
+//   层 1 对照：yudaoDemoJob 非 Spring Bean → JOB_HANDLER_BEAN_NOT_EXISTS(1_001_001_006)——
+//             即使白名单层被整个移除，本用例仍绿，故不能单凭它证明白名单生效；
+//   层 2 主用例：demoJob 是真实容器 Bean（system 模块 @Component DemoJob）但不在白名单 →
+//             JOB_HANDLER_NOT_WHITELISTED(1_001_009_005)——唯此用例能锤定白名单层自身生效。
+const CODE_BEAN_NOT_EXISTS = 1001001006; // 1_001_001_006
+const CODE_NOT_WHITELISTED = 1001009005; // 1_001_009_005
+const createNoBean = await api('POST', '/admin-api/infra/job/create', {
   token: adminToken,
   body: { name: '旧式演示任务', handlerName: 'yudaoDemoJob', handlerParam: '', cronExpression: '0 0 0 * * ?', retryCount: 0, retryInterval: 0, monitorTimeout: 0 },
 });
-check('D1', '旧式/未注册 handler 名登记被受控拒绝（白名单+Bean 存在性，非静默放行）', createLegacy.body?.code !== 0, `code=${createLegacy.body?.code}`);
-check('D2', '被拒后任务表与 QRTZ 均无该 handler（无越权登记）',
-  psqlOut(`SELECT count(*) FROM infra_job WHERE handler_name = 'yudaoDemoJob'`) === '0' && psqlOut(`SELECT count(*) FROM QRTZ_JOB_DETAILS`) === '3',
-  `job=${psqlOut(`SELECT count(*) FROM infra_job WHERE handler_name = 'yudaoDemoJob'`)} qrtz=${psqlOut(`SELECT count(*) FROM QRTZ_JOB_DETAILS`)}`);
+check('D1', '层1对照：未注册 handler（非 Bean）被 Bean 存在性层拒绝（JOB_HANDLER_BEAN_NOT_EXISTS）',
+  createNoBean.body?.code === CODE_BEAN_NOT_EXISTS, `code=${createNoBean.body?.code} expected=${CODE_BEAN_NOT_EXISTS}`);
+const createWhitelist = await api('POST', '/admin-api/infra/job/create', {
+  token: adminToken,
+  body: { name: '白名单外真实任务', handlerName: 'demoJob', handlerParam: '', cronExpression: '0 0 0 * * ?', retryCount: 0, retryInterval: 0, monitorTimeout: 0 },
+});
+check('D3', '层2主用例：真实 Bean（demoJob）被白名单排除 → 登记被拒（JOB_HANDLER_NOT_WHITELISTED）',
+  createWhitelist.body?.code === CODE_NOT_WHITELISTED, `code=${createWhitelist.body?.code} expected=${CODE_NOT_WHITELISTED}`);
+check('D2', '两例被拒后任务表与 QRTZ 均无新增 handler（无越权登记）',
+  psqlOut(`SELECT count(*) FROM infra_job WHERE handler_name IN ('yudaoDemoJob', 'demoJob')`) === '0' && psqlOut(`SELECT count(*) FROM QRTZ_JOB_DETAILS`) === '3',
+  `job=${psqlOut(`SELECT count(*) FROM infra_job WHERE handler_name IN ('yudaoDemoJob', 'demoJob')`)} qrtz=${psqlOut(`SELECT count(*) FROM QRTZ_JOB_DETAILS`)}`);
 
 const health = await api('GET', '/admin-api/infra/outbox-event/health', { token: adminToken });
 check('E1', '预置事件经健康端点可见（DEAD≥2 且积压≥1，无静默丢失）',
@@ -398,9 +413,12 @@ const retryAgain = await api('PUT', '/admin-api/infra/outbox-event/retry', {
 });
 check('E3', '同事件二次重试被拒（非 DEAD 不可恢复，重复消费无重复副作用）', retryAgain.body?.code !== 0,
   `code=${retryAgain.body?.code}`);
-check('E4', '被拒后台账/审计仍各恰 1 行（无重复留痕副作用）',
-  psqlOut(`SELECT count(*) FROM outbox_recovery_log WHERE event_id = ${evtDeadA}`) === '1' && auditCount === '1',
-  `log=${psqlOut(`SELECT count(*) FROM outbox_recovery_log WHERE event_id = ${evtDeadA}`)} audit=${psqlOut(`SELECT count(*) FROM audit_event WHERE event_type = 'OUTBOX_EVENT_RETRIED' AND biz_id = '${evtDeadA}'`)}`);
+// codex r0 P2-2：审计计数必须在被拒的二次重试「之后」重查并进断言谓词——
+// 若被拒请求额外写了审计事件，此处计数变 2 即打红（先查后断会假绿）
+const auditCountAfterRetryAgain = psqlOut(`SELECT count(*) FROM audit_event WHERE event_type = 'OUTBOX_EVENT_RETRIED' AND biz_id = '${evtDeadA}'`);
+check('E4', '被拒后台账/审计仍各恰 1 行（重复恢复无重复留痕副作用）',
+  psqlOut(`SELECT count(*) FROM outbox_recovery_log WHERE event_id = ${evtDeadA}`) === '1' && auditCountAfterRetryAgain === '1',
+  `log=${psqlOut(`SELECT count(*) FROM outbox_recovery_log WHERE event_id = ${evtDeadA}`)} audit=${auditCountAfterRetryAgain}`);
 
 const skip = await api('PUT', '/admin-api/infra/outbox-event/skip', {
   token: adminToken,

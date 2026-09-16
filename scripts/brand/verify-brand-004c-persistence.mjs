@@ -12,10 +12,11 @@
  *   3. Outbox/Inbox：状态机硬约束（PENDING/DISPATCHED/DEAD/SKIPPED）、领取栅栏
  *      列（claim_token 等）、恢复台账与审计常量、受控拒绝错误码锚点齐全；相关
  *      SQL 字面量与 AuditEventTypes 常量无旧名。
- *   4. MSG/序列化：Redis Stream key 为类 SimpleName 动态派生（无硬编码 topic
- *      字面量）、消费组 = spring.application.name = zszj-server、yaml key-prefix
- *      无旧名；Jackson 多态类名落库面（@JsonTypeInfo(Id.CLASS)）实现类 FQCN
- *      必须全新包根，且 JsonUtils 无全局 default typing。
+ *   4. MSG/序列化：Redis Stream key 为类 SimpleName 动态派生、消费组 = spring.application.name
+ *      = zszj-server、yaml key-prefix 无旧名；子类对 getChannel()/getStreamKey() 的路由覆写返回值
+ *      必须过旧名判定（codex r0 P2-4）；Jackson 多态类名落库面（@JsonTypeInfo(Id.CLASS)）按
+ *      「package 声明 + 类型声明（嵌套类 $ 二进制名）」推导实际持久化 FQCN，必须全新包根
+ *      （codex r0 P2-3，目录推导在包声明漂移时假绿），且 JsonUtils 无全局 default typing。
  *   5. 旧名判定循 .B 模式清单（verify-brand-004b-storage.mjs 的
  *      OLD_NAME_PATTERNS），另加包形（cn.iocoder./cn.yudao.）增强；只对提取出的
  *      标识/字面量判定，不重复 G3 全仓文本扫描、不误伤已登记来源署名。
@@ -260,11 +261,47 @@ export function extractJsonTypeInfoInterfaces(text, source) {
   return /@JsonTypeInfo\s*\(\s*use\s*=\s*JsonTypeInfo\.Id\.CLASS/.test(text) ? [source] : [];
 }
 
-/** 从 java 文件路径推导 FQCN（…/src/main/java/cn/zszj/…/X.java → cn.zszj.…）。 */
-export function fqcnFromPath(relJavaPath) {
-  const m = relJavaPath.replaceAll('\\', '/').match(/src\/(?:main|test)\/java\/(.+)\.java$/);
-  if (!m) return null;
-  return m[1].split('/').join('.');
+/**
+ * 从 Java 源码文本推导「实际持久化的 FQCN」（codex r0 P2-3）：以 package 声明 + 类型声明为准，
+ * 不信任文件目录（目录与包声明不一致时，目录推导会假绿）；嵌套类按二进制名 `Outer$Inner`
+ * （@class 落库即二进制名）。返回 results（待判定清单）与 problem（package/类型声明缺失时
+ * fail-loud，不得静默放过）。
+ */
+export function deriveImplFqcns(text, source, iface) {
+  const pkgMatch = text.match(/^[ \t]*package\s+([A-Za-z_][\w.]*)\s*;/m);
+  const topLevelMatch = text.match(/\b(?:class|interface|enum|record)\s+([A-Za-z0-9_]+)/);
+  if (!pkgMatch) return { results: [], problem: { source, check: 'java-package-decl-missing', why: `多态实现文件缺 package 声明，无法推导持久化 FQCN：${source}` } };
+  if (!topLevelMatch) return { results: [], problem: { source, check: 'java-type-decl-missing', why: `多态实现文件缺类型声明，无法推导持久化 FQCN：${source}` } };
+  const results = [];
+  const implRe = new RegExp(`class\\s+([A-Za-z0-9_]+)[^{;]*\\bimplements\\s+[\\w.,<> \\t]*\\b${iface}\\b`, 'g');
+  let m;
+  while ((m = implRe.exec(text))) {
+    const cls = m[1];
+    const fqcn = cls === topLevelMatch[1]
+      ? `${pkgMatch[1]}.${cls}`
+      : `${pkgMatch[1]}.${topLevelMatch[1]}$${cls}`;
+    results.push({ source, field: 'json-typinfo-impl-fqcn', value: fqcn });
+  }
+  return { results, problem: null };
+}
+
+/**
+ * 消息子类路由覆写提取（codex r0 P2-4）：getChannel()/getStreamKey() 的非默认实现返回值
+ * 才是真实路由/持久化键名。策略=允许覆写但覆写返回的字面量必须过旧名判定；
+ * 无覆写=类 SimpleName 动态派生（默认合同），无需判定。
+ */
+export function extractMessageRouteOverrides(text, source) {
+  const literals = [];
+  const re = /get(?:Channel|StreamKey)\s*\(\s*\)\s*\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const litRe = /(['"])((?:(?!\1).)+)\1/g;
+    let l;
+    while ((l = litRe.exec(m[1]))) {
+      literals.push({ source, field: 'message-route-override', value: l[2] });
+    }
+  }
+  return literals;
 }
 
 export function hasDefaultTyping(text) {
@@ -341,7 +378,7 @@ export function runInventory() {
     jobSeeds: { scannedFiles: 0, handlers: [], beans: 0 },
     quartz: { sqlFilesScanned: 0, qrtzSeedRows: 0, jobBuilderRefs: 0 },
     outboxInbox: { migrationFiles: 0, sqlLiterals: 0, auditConstants: 0 },
-    msg: { streamSubclasses: 0, yamlKeyPrefixes: 0, jsonTypeInfoImplFqcns: [] },
+    msg: { streamSubclasses: 0, routeOverrides: 0, yamlKeyPrefixes: 0, jsonTypeInfoImplFqcns: [] },
     sqlPackageShapedScanned: 0,
   };
   const violations = [];
@@ -421,31 +458,40 @@ export function runInventory() {
   violations.push(...auditConstants.flatMap((c) => judgeValue(c.source, c.field, c.value)));
 
   // ④ MSG/序列化
+  const jsonTypeInfoImplFqcns = [];
+  const fqcnDeriveProblems = [];
   for (const rel of listGitFiles((f) => inCoreJava(f))) {
     const text = readRepoFile(rel);
     if (text === null) continue;
     const subs = extractRedisMessageSubclasses(text, rel);
     inventory.msg.streamSubclasses += subs.length;
     violations.push(...subs.flatMap((s) => judgeValue(s.source, s.field, s.value)));
+    // 路由覆写（codex r0 P2-4）：子类覆写 getChannel/getStreamKey 的返回字面量必须过旧名判定
+    if (subs.length) {
+      const overrides = extractMessageRouteOverrides(text, rel);
+      inventory.msg.routeOverrides += overrides.length;
+      violations.push(...overrides.flatMap((o) => judgeValue(o.source, o.field, o.value)));
+    }
     if (extractJsonTypeInfoInterfaces(text, rel).length) {
-      // 该文件是多态接口：找实现类 FQCN 判定（类名落库面的新包根合同）
+      // 该文件是多态接口：找实现类，按 package 声明 + 类型声明推导「实际持久化 FQCN」判定
       const ifaceMatch = text.match(/interface\s+([A-Za-z0-9_]+)/);
       const iface = ifaceMatch ? ifaceMatch[1] : null;
       if (iface) {
         for (const implRel of listGitFiles((f) => inCoreJava(f))) {
           const implText = readRepoFile(implRel);
           if (implText === null) continue;
-          if (new RegExp(`implements\\s+[\\w.,<> \\t]*\\b${iface}\\b`).test(implText)) {
-            const fqcn = fqcnFromPath(implRel);
-            if (fqcn) {
-              inventory.msg.jsonTypeInfoImplFqcns.push(fqcn);
-              violations.push(...judgeValue(implRel, 'json-typinfo-impl-fqcn', fqcn));
-            }
+          if (!new RegExp(`implements\\s+[\\w.,<> \\t]*\\b${iface}\\b`).test(implText)) continue;
+          const { results, problem } = deriveImplFqcns(implText, implRel, iface);
+          if (problem) { fqcnDeriveProblems.push(problem); continue; }
+          for (const r of results) {
+            jsonTypeInfoImplFqcns.push(r.value);
+            violations.push(...judgeValue(r.source, r.field, r.value));
           }
         }
       }
     }
   }
+  inventory.msg.jsonTypeInfoImplFqcns = jsonTypeInfoImplFqcns;
   const yamlPrefixes = [];
   for (const rel of listGitFiles((f) => /application.*\.yaml$/.test(f) && f.startsWith('services/zhongshu-core/zszj-server/src/main/resources/'))) {
     const text = readRepoFile(rel);
@@ -456,7 +502,7 @@ export function runInventory() {
   }
   inventory.msg.yamlKeyPrefixes = yamlPrefixes.length;
 
-  return { inventory, violations: [...violations, ...qrtzViolations], beanNames, auditConstants, quartzJobClasses, contractSeedHandlers };
+  return { inventory, violations: [...violations, ...qrtzViolations], beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, fqcnDeriveProblems };
 }
 
 // ---------------------------------------------------------------------------
@@ -517,9 +563,32 @@ export function injectionSelfTest() {
       expectValue: 'yudao_wx',
     },
     {
-      name: 'json-typinfo-impl-fqcn',
-      extract: () => judgeValue('injected', 'json-typinfo-impl-fqcn', 'cn.iocoder.yudao.module.pay.framework.pay.core.client.db.DBPayClientConfig'),
-      expectValue: null, // judgeValue 直接判定：命中 ≥1
+      // codex r0 P2-3 变异反证：package 声明与目录不一致时，持久化 FQCN 必须按 package 声明
+      // 推导（目录推导会假绿），带旧包根的声明必须被打红
+      name: 'json-typinfo-package-mismatch-fqcn',
+      extract: () => {
+        const { results } = deriveImplFqcns(
+          'package cn.iocoder.yudao.module.infra.framework.file.core.client.db;\n\npublic class DBFileClientConfig implements FileClientConfig {\n}',
+          'any/dir/DBFileClientConfig.java', 'FileClientConfig');
+        return results.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // codex r0 P2-3 嵌套类：持久化 FQCN 按「package + Outer$Inner」二进制名推导
+      name: 'json-typinfo-nested-class-binary-name',
+      extract: () => deriveImplFqcns(
+        'package cn.zszj.module.x;\npublic class Outer {\n  public static class Inner implements FileClientConfig {\n  }\n}',
+        'any/dir/Outer.java', 'FileClientConfig').results,
+      expectDerived: 'cn.zszj.module.x.Outer$Inner', // 值形状断言（非旧名判定）
+    },
+    {
+      // codex r0 P2-4 变异反证：子类覆写 getChannel 返回旧路由名，必须被提取并打红
+      name: 'message-route-override-old-name',
+      extract: () => extractMessageRouteOverrides(
+        'public class X extends AbstractRedisChannelMessage {\n  @Override\n  public String getChannel() { return "yudao_channel"; }\n}', 'injected'),
+      expectValue: 'yudao_channel',
     },
   ];
   const results = [];
@@ -527,14 +596,19 @@ export function injectionSelfTest() {
   for (const s of samples) {
     const extracted = s.extract();
     let hits;
-    if (s.expectValue === null) {
+    let ok;
+    if (s.expectDerived) {
+      // 值形状断言：推导出的 FQCN 必须等于预期二进制名（派生正确性，非旧名判定）
+      ok = Array.isArray(extracted) && extracted.some((k) => k.value === s.expectDerived);
+      hits = ok ? 1 : 0;
+    } else if (s.expectValue === null) {
       hits = extracted.length;
+      ok = hits >= (s.minHits ?? 1);
     } else {
       hits = extracted.filter((k) => k.value === s.expectValue)
         .flatMap((k) => judgeValue(k.source, k.field, k.value)).length;
+      ok = hits >= (s.minHits ?? 1);
     }
-    const minHits = s.minHits ?? 1;
-    const ok = hits >= minHits;
     results.push({ sample: s.name, extracted: Array.isArray(extracted) ? extracted.length : 1, oldNameHits: hits, pass: ok });
     if (!ok) failed = true;
   }
@@ -552,7 +626,7 @@ export function injectionSelfTest() {
 const invokedDirectly = process.argv[1] && process.argv[1].replaceAll('\\', '/').endsWith('scripts/brand/verify-brand-004c-persistence.mjs');
 if (invokedDirectly) {
   try {
-    const { inventory, violations, beanNames, auditConstants, quartzJobClasses, contractSeedHandlers } = runInventory();
+    const { inventory, violations, beanNames, auditConstants, quartzJobClasses, contractSeedHandlers, fqcnDeriveProblems } = runInventory();
     const appYamlText = readRepoFile('services/zhongshu-core/zszj-server/src/main/resources/application.yaml') ?? '';
     const jsonUtilsRel = listGitFiles((f) => f.endsWith('util/json/JsonUtils.java'))[0] ?? null;
     const jsonUtilsText = jsonUtilsRel ? readRepoFile(jsonUtilsRel) : null;
@@ -566,7 +640,7 @@ if (invokedDirectly) {
         hasHandlerWhitelistKey: /handler-whitelist:/.test(appYamlText),
       },
       jsonUtilsText,
-    });
+    }).concat(fqcnDeriveProblems);
     const selfTest = injectionSelfTest();
 
     const report = {
@@ -575,7 +649,7 @@ if (invokedDirectly) {
         jobSeeds: { scannedFiles: inventory.jobSeeds.scannedFiles, handlerCount: inventory.jobSeeds.handlers.length, handlers: inventory.jobSeeds.handlers.map((h) => h.value), beanCount: beanNames.length },
         quartz: { sqlFilesScanned: inventory.sqlPackageShapedScanned, qrtzSeedRows: 0, jobBuilderRefs: inventory.quartz.jobBuilderRefs },
         outboxInbox: inventory.outboxInbox,
-        msg: { streamSubclasses: inventory.msg.streamSubclasses, yamlKeyPrefixes: inventory.msg.yamlKeyPrefixes, jsonTypeInfoImplFqcns: inventory.msg.jsonTypeInfoImplFqcns },
+        msg: { streamSubclasses: inventory.msg.streamSubclasses, routeOverrides: inventory.msg.routeOverrides, yamlKeyPrefixes: inventory.msg.yamlKeyPrefixes, jsonTypeInfoImplFqcns: inventory.msg.jsonTypeInfoImplFqcns },
       } : inventory,
       oldNameViolations: violations,
       namingContractProblems: contractProblems,
@@ -587,7 +661,7 @@ if (invokedDirectly) {
       `jobSeeds=${inventory.jobSeeds.handlers.length} jobBeans=${beanNames.length} `
       + `qrtzSeedRows=0 sqlFiles=${inventory.sqlPackageShapedScanned} `
       + `outboxMigrations=${inventory.outboxInbox.migrationFiles} auditConstants=${inventory.outboxInbox.auditConstants} `
-      + `streamSubclasses=${inventory.msg.streamSubclasses} yamlKeyPrefixes=${inventory.msg.yamlKeyPrefixes} `
+      + `streamSubclasses=${inventory.msg.streamSubclasses} routeOverrides=${inventory.msg.routeOverrides} yamlKeyPrefixes=${inventory.msg.yamlKeyPrefixes} `
       + `jsonTypeInfoImpls=${inventory.msg.jsonTypeInfoImplFqcns.length} `
       + `oldNameViolations=${violations.length} contractProblems=${contractProblems.length} `
       + `injectionSelfTest=${selfTest.pass ? 'PASS' : 'FAIL'} => ${report.pass ? 'PASS' : 'FAIL'}`,
