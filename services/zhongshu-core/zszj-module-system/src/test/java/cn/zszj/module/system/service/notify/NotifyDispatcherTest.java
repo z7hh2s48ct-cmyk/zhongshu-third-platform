@@ -8,6 +8,8 @@ import cn.zszj.module.infra.framework.outbox.OutboxEventMessage.OutboxActorType;
 import cn.zszj.module.system.api.user.AdminUserApi;
 import cn.zszj.module.system.api.user.dto.AdminUserRespDTO;
 import cn.zszj.module.system.dal.dataobject.notify.NotifyTemplateDO;
+import cn.zszj.module.system.service.notify.channel.NotifyChannelSendServiceImpl;
+import cn.zszj.module.system.service.notify.channel.NotifyChannelSenderRegistry;
 import cn.zszj.module.system.service.notify.dispatch.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,9 +40,13 @@ import static org.mockito.Mockito.when;
 /**
  * {@link NotifyDispatcher} 单元测试（ZS-MSG-001，H2）。
  *
- * <p>覆盖 17 个用例：幂等重试 / 多收件人 / 禁用模板 / 无渠道(持久化+幂等) / 非INBOX渠道 / 停用收件人 /
+ * <p>覆盖 17 个用例：幂等重试 / 多收件人 / 禁用模板 / 无渠道(持久化+幂等) / 非INBOX渠道未配置 / 停用收件人 /
  * 租户上下文缺失 / 模板不存在 / 参数缺失 / 成功+Outbox / 事务回滚 / eventId空 / recipients空 /
  * 成功重试副作用抑制 / 失败状态重试幂等 / 收件人查询技术异常回滚不占键 / null参数归一化。
+ *
+ * <p>ZS-MSG-004 契约变更：非 INBOX 渠道不再一律 NO_CHANNEL——本测试上下文无 {@code NotifyChannelSender}
+ * 实现（B05 生产常态，真实渠道受 D-10 门禁），指定 SMS/EMAIL/PUSH → CHANNEL_NOT_CONFIGURED 明确阻断
+ * （区别于「未指定渠道」的 NO_CHANNEL）；配置齐备的渠道路径见 {@code NotifyDispatcherChannelTest}。
  *
  * <p>循 JOB-002 OutboxEventPortTest 先例：H2 + BaseDbUnitTest + @Import 显式装配
  * （含 {@link JdbcReliableEventPort} 以提供 ReliableEventPort）+ 注入 DataSource/PlatformTransactionManager
@@ -56,7 +62,8 @@ import static org.mockito.Mockito.when;
  * 行为，故 RECIPIENT_TENANT_MISMATCH 为预留状态（无触发路径），「用户不存在或跨租户」合并到
  * RECIPIENT_INVALID（adminUserApi 返回 null）；租户上下文缺失循 JOB-002 fail-closed 先例抛异常。
  */
-@Import({NotifyDispatcherImpl.class, AdminUserNotifyRecipientContextResolver.class, JdbcReliableEventPort.class})
+@Import({NotifyDispatcherImpl.class, AdminUserNotifyRecipientContextResolver.class, JdbcReliableEventPort.class,
+        NotifyChannelSenderRegistry.class, NotifyChannelSendServiceImpl.class})
 public class NotifyDispatcherTest extends BaseDbUnitTest {
 
     @Resource
@@ -176,14 +183,18 @@ public class NotifyDispatcherTest extends BaseDbUnitTest {
     }
 
     @Test
-    void test_渠道非INBOX_返回NO_CHANNEL() {
+    void test_渠道非INBOX_未配置发送器_返回CHANNEL_NOT_CONFIGURED() {
+        // ZS-MSG-004 契约变更：指定非 INBOX 渠道且无 NotifyChannelSender 实现（本上下文无实现）→
+        // CHANNEL_NOT_CONFIGURED 明确阻断（区别于「未指定渠道」的 NO_CHANNEL），不建渠道发送台账
         String eventId = "EVT_" + UUID.randomUUID();
         NotifyCommand cmd = command(eventId, NotifyRecipient.admin(ADMIN_USER_ID), Set.of(NotifyChannel.SMS));
         List<NotifyDispatchResult> results = transactionTemplate.execute(s -> notifyDispatcher.dispatch(cmd));
         assertThat(results).hasSize(1);
-        assertThat(results.get(0).getStatus()).isEqualTo(NotifyDispatchStatus.NO_CHANNEL);
+        assertThat(results.get(0).getStatus()).isEqualTo(NotifyDispatchStatus.CHANNEL_NOT_CONFIGURED);
         assertThat(countSendLogs()).isEqualTo(1);
         assertThat(countOutboxEvents()).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM system_notify_channel_send", Long.class)).isZero();
     }
 
     @Test

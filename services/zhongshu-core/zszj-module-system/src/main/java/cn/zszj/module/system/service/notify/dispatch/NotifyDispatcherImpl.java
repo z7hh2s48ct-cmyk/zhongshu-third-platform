@@ -4,11 +4,14 @@ import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.module.infra.framework.outbox.OutboxEventMessage;
 import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
+import cn.zszj.module.system.dal.dataobject.notify.NotifyChannelSendDO;
 import cn.zszj.module.system.dal.dataobject.notify.NotifySendLogDO;
 import cn.zszj.module.system.dal.dataobject.notify.NotifyTemplateDO;
 import cn.zszj.module.system.dal.mysql.notify.NotifySendLogMapper;
 import cn.zszj.module.system.service.notify.NotifyMessageService;
 import cn.zszj.module.system.service.notify.NotifyTemplateService;
+import cn.zszj.module.system.service.notify.channel.NotifyChannelSendService;
+import cn.zszj.module.system.service.notify.channel.NotifyChannelSenderRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
@@ -45,9 +48,15 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
  *   <li><b>明确状态</b>：非 SUCCESS 状态返回 {@link NotifyDispatchStatus}，不抛异常、不返回 null；
  *       所有状态（含无渠道）均写入 {@code system_notify_send_log}（可追溯、可按事件回查）；</li>
  *   <li><b>Outbox 集成</b>：SUCCESS 状态追加 {@code OutboxEventMessage{eventType=NOTIFY_DISPATCHED}}，
- *       供 MSG-002（业务待办生命周期）与 MSG-004（渠道发送状态/回执对账）消费；</li>
+ *       供 MSG-002（业务待办生命周期）消费；</li>
+ *   <li><b>渠道投递管道（ZS-MSG-004）</b>：非 INBOX 渠道经 {@link NotifyChannelSenderRegistry} 查找发送器——
+ *       无实现（B05 生产常态，真实渠道受 D-10 门禁）→ {@link NotifyDispatchStatus#CHANNEL_NOT_CONFIGURED}
+ *       明确阻断（区别于「未指定渠道」的 NO_CHANNEL，不静默丢弃）；有实现 → SUCCESS 且同事务建渠道发送台账
+ *       （{@link NotifyChannelSendService}，PENDING + 追加 {@code NOTIFY_CHANNEL_SEND} 事件），渠道侧
+ *       「待发送/已受理/送达/失败/未知」生命周期由台账独立承载（与站内消息状态分开）；</li>
  *   <li><b>收件人上下文</b>：委托 {@link NotifyRecipientContextResolver}（B05 只解析 ADMIN，不查任职关系）；
- *       仅「不存在/停用」归业务状态，技术查询异常向上抛触发回滚可重试（不占用幂等键）；</li>
+ *       仅「不存在/停用」归业务状态，技术查询异常向上抛触发回滚可重试（不占用幂等键）；联系方式随上下文
+ *       携带（ZS-MSG-004），缺失由渠道发送台账以 RECIPIENT_CONTACT_MISSING 明确阻断；</li>
  *   <li><b>租户上下文强制</b>：循 JOB-002 outbox_event fail-closed 先例，{@link TenantContextHolder} 缺失即
  *       抛异常拒绝派发（系统级错误，非业务状态）；{@link NotifyDispatchStatus#RECIPIENT_TENANT_MISMATCH}
  *       为预留状态（待 AdminUserRespDTO 暴露 tenantId 或 MSG-001.B 任职路由后启用显式比对）。</li>
@@ -76,6 +85,12 @@ public class NotifyDispatcherImpl implements NotifyDispatcher {
     private NotifyRecipientContextResolver recipientContextResolver;
     @Resource
     private ReliableEventPort reliableEventPort;
+    /** 渠道发送器注册器（ZS-MSG-004）：无实现 = 渠道未配置 → CHANNEL_NOT_CONFIGURED 明确阻断 */
+    @Resource
+    private NotifyChannelSenderRegistry channelSenderRegistry;
+    /** 渠道发送生命周期服务（ZS-MSG-004）：MANDATORY 加入派发事务，台账与投递事件同生共死 */
+    @Resource
+    private NotifyChannelSendService channelSendService;
     /** claim-first 保存点管理所需（与 MyBatis 同一事务连接，经 DataSourceUtils 绑定）。 */
     @Resource
     private DataSource dataSource;
@@ -153,7 +168,8 @@ public class NotifyDispatcherImpl implements NotifyDispatcher {
 
     /**
      * 单收件人 × 单渠道派发（claim-first）：
-     * 预检 → 判定状态（无副作用）→ 原子抢位（写日志）→ 仅抢到键且 SUCCESS 才建消息 + Outbox → 回填。
+     * 预检 → 判定状态（无副作用）→ 原子抢位（写日志）→ 仅抢到键且 SUCCESS 才执行副作用（INBOX 建消息 /
+     * 渠道建发送台账 + Outbox）→ 回填。
      */
     private NotifyDispatchResult dispatchOne(NotifyCommand command, NotifyRecipient recipient, NotifyChannel channel,
                                              NotifyTemplateDO template, TemplateCheckResult templateCheck,
@@ -166,17 +182,20 @@ public class NotifyDispatcherImpl implements NotifyDispatcher {
             return duplicateResult(command, recipient, channel, existing, "幂等键已存在，返回既有结果");
         }
 
-        // 2. 判定状态（均无副作用）：渠道 → 模板 → 收件人上下文
+        // 2. 判定状态（均无副作用）：渠道可用性 → 模板 → 收件人上下文
         NotifyDispatchStatus status;
         String reason;
-        if (channel != NotifyChannel.INBOX) {
-            status = NotifyDispatchStatus.NO_CHANNEL;
-            reason = "B05 只支持 INBOX 渠道";
+        NotifyRecipientContext ctx = null;
+        if (channel != NotifyChannel.INBOX && !channelSenderRegistry.find(channel).isPresent()) {
+            // ZS-MSG-004：指定了非 INBOX 渠道但容器无发送器实现（B05 生产常态，真实渠道受 D-10 门禁）
+            // → 明确阻断（区别于「未指定渠道」的 NO_CHANNEL），不建台账、不入投递管道、不静默丢弃
+            status = NotifyDispatchStatus.CHANNEL_NOT_CONFIGURED;
+            reason = "渠道未配置发送器（NotifyChannelSender SPI 无实现）";
         } else if (templateCheck != null) {
             status = templateCheck.status();
             reason = templateCheck.reason();
         } else {
-            NotifyRecipientContext ctx = recipientContextResolver.resolve(recipient);
+            ctx = recipientContextResolver.resolve(recipient);
             if (ctx.isValid()) {
                 status = NotifyDispatchStatus.SUCCESS;
                 reason = null;
@@ -202,15 +221,40 @@ public class NotifyDispatcherImpl implements NotifyDispatcher {
             return toResult(command, recipient, channel, status, reason, logDO.getId(), null, null);
         }
 
-        // 5. SUCCESS 且已抢到键：执行副作用（建消息 + Outbox），随后回填日志关联 ID
+        // 5. SUCCESS 且已抢到键：执行副作用，随后回填日志关联 ID
         String content = notifyTemplateService.formatNotifyTemplateContent(template.getContent(), params);
-        Long messageId = notifyMessageService.createNotifyMessage(
-                recipient.getId(), recipient.getType().getValue(), template, content, params);
-        long outboxEventId = reliableEventPort.append(buildOutboxMessage(command, recipient, channel, messageId));
-
-        notifySendLogMapper.fillDispatchSideEffects(logDO.getId(), messageId, outboxEventId);
+        if (channel == NotifyChannel.INBOX) {
+            Long messageId = notifyMessageService.createNotifyMessage(
+                    recipient.getId(), recipient.getType().getValue(), template, content, params);
+            long outboxEventId = reliableEventPort.append(buildOutboxMessage(command, recipient, channel, messageId));
+            notifySendLogMapper.fillDispatchSideEffects(logDO.getId(), messageId, outboxEventId);
+            return toResult(command, recipient, channel, NotifyDispatchStatus.SUCCESS, null,
+                    logDO.getId(), messageId, outboxEventId);
+        }
+        // ZS-MSG-004 渠道路径：建渠道发送台账（PENDING，同事务追加 NOTIFY_CHANNEL_SEND 事件）；
+        // 联系方式缺失由台账以 RECIPIENT_CONTACT_MISSING 明确阻断（不入投递管道）
+        String contact = resolveChannelContact(channel, ctx);
+        NotifyChannelSendDO sendRecord = channelSendService.createFromDispatch(
+                command, recipient, channel, contact, content, logDO.getId());
+        notifySendLogMapper.fillDispatchSideEffects(logDO.getId(), null, sendRecord.getOutboxEventId());
         return toResult(command, recipient, channel, NotifyDispatchStatus.SUCCESS, null,
-                logDO.getId(), messageId, outboxEventId);
+                logDO.getId(), null, sendRecord.getOutboxEventId());
+    }
+
+    /** 按渠道取联系方式（ZS-MSG-004）：SMS→手机号，EMAIL→邮箱；PUSH 暂无联系方式语义（返回 null，
+     *  与缺失同归 RECIPIENT_CONTACT_MISSING 明确阻断，待 D-10 后定义设备令牌语义）。 */
+    static String resolveChannelContact(NotifyChannel channel, NotifyRecipientContext ctx) {
+        if (ctx == null) {
+            return null;
+        }
+        switch (channel) {
+            case SMS:
+                return ctx.getContactMobile();
+            case EMAIL:
+                return ctx.getContactEmail();
+            default:
+                return null;
+        }
     }
 
     /** 无渠道（命令未指定任何渠道）：以哨兵渠道持久化 NO_CHANNEL，可查询、幂等，不建消息、不入 Outbox。 */

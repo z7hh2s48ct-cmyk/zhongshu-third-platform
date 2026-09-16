@@ -64,7 +64,9 @@ public class AdminUserNotifyRecipientContextResolver implements NotifyRecipientC
         if (Objects.equals(user.getStatus(), CommonStatusEnum.DISABLE.getStatus())) {
             return NotifyRecipientContext.invalid(recipient, NotifyDispatchStatus.RECIPIENT_INVALID, "用户已停用");
         }
-        return NotifyRecipientContext.valid(recipient, currentTenantId);
+        // ZS-MSG-004：同一 RespDTO 顺带携带联系方式（不增加查询）；缺失不是收件人无效，
+        // 由渠道发送台账以 RECIPIENT_CONTACT_MISSING 明确阻断
+        return NotifyRecipientContext.validWithContacts(recipient, currentTenantId, user.getMobile(), user.getEmail());
     }
 
 }

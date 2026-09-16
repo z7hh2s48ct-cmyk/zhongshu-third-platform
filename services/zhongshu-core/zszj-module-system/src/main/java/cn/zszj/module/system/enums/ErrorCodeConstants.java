@@ -225,4 +225,9 @@ public interface ErrorCodeConstants {
     ErrorCode NOTIFY_TODO_WRITE_FAILED = new ErrorCode(1_002_030_005, "业务待办写入失败");
     ErrorCode NOTIFY_TODO_TENANT_REQUIRED = new ErrorCode(1_002_030_006, "业务待办缺少租户上下文，拒绝写入");
     ErrorCode NOTIFY_TODO_FIELD_REQUIRED = new ErrorCode(1_002_030_007, "业务待办缺少必填字段：{}");
+
+    // ========== 渠道发送生命周期 1-002-031-000（ZS-MSG-004） ==========
+    ErrorCode NOTIFY_CHANNEL_SEND_NOT_FOUND = new ErrorCode(1_002_031_001, "渠道发送台账记录不存在");
+    ErrorCode NOTIFY_CHANNEL_SEND_TENANT_REQUIRED = new ErrorCode(1_002_031_002, "渠道发送处理缺少租户上下文，拒绝执行");
+    ErrorCode NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID = new ErrorCode(1_002_031_003, "当前状态({})不允许人工重试（受理/送达状态由回执与回查推进）");
 }
