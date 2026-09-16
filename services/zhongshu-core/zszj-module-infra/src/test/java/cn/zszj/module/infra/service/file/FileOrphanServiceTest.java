@@ -276,6 +276,50 @@ public class FileOrphanServiceTest extends BaseDbUnitTest {
         assertTrue(objectStore.containsKey("asset/orphan-old.bin"), "拒绝路径不产生任何删除");
     }
 
+    // ========== ⑤b2（codex r2 P1-A）junction 嵌套根：词汇视角不得被物理解析「洗白」==========
+
+    @Test
+    public void junctionNestedRoot_lexicalViewRefuses_evenWhenPhysicalDisjoint() throws Exception {
+        seedOrphanObject("asset/orphan-old.bin", 30);
+        // 配置 B 根 = A 树内的 junction（指向物理不相交的 elsewhere）：toRealPath 后 B=C:/…/elsewhere
+        // 与 A 物理互斥，但 Windows Files.walk 默认下钻 junction——A 清点会洗进 B 的物理文件。
+        // 修复前（仅物理解析）放行 → 误删；修复后词汇嵌套（alias 在 A 树内）即拒绝（双视角任一可疑即拒）
+        Path elsewhereRoot = Files.createDirectories(tempRoot.resolve("elsewhere"));
+        Path alias = createAliasLink(masterRoot.resolve("alias"), elsewhereRoot);
+        assumeTrue(alias != null && Files.exists(alias), "环境不支持符号链接/junction 创建，跳过 junction 嵌套用例");
+        seedFileConfig(2L, "junction-nested-local", alias.toString(), false);
+
+        ServiceException forwardEx = assertThrows(ServiceException.class,
+                () -> orphanService.preview(MASTER_CONFIG_ID, ""));
+        assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), forwardEx.getCode());
+        ServiceException reverseEx = assertThrows(ServiceException.class,
+                () -> orphanService.preview(2L, ""));
+        assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), reverseEx.getCode());
+        assertTrue(objectStore.containsKey("asset/orphan-old.bin"), "拒绝路径不产生任何删除");
+    }
+
+    // ========== ⑤b3（codex r2 P1-B）alias/../.. 形状：校验先做 client 同款词汇规范化 ==========
+
+    @Test
+    public void dotDotAliasRoot_lexicalNormalizationFirst_refuses() throws Exception {
+        seedOrphanObject("asset/orphan-old.bin", 30);
+        // 配置 B 根 = <A>/link-out/..（link-out 指向物理不相交的 elsewhere）：
+        // 修复前直接 toRealPath → 解析链接得 elsewhere（物理与 A 互斥）→ 放行；
+        // 但 client getFilePath 先 toAbsolutePath().normalize()——「..」词汇抵消 link-out，
+        // I/O 实际根就是 A 本身 → 误删。修复后校验先做同款词汇规范化（得 A）→ toRealPath（得 A），
+        // 词汇/物理双双命中 A → 拒绝（校验的根 == I/O 实际用的根）
+        Path elsewhereRoot = Files.createDirectories(tempRoot.resolve("elsewhere"));
+        Path linkOut = createAliasLink(masterRoot.resolve("link-out"), elsewhereRoot);
+        assumeTrue(linkOut != null && Files.exists(linkOut), "环境不支持符号链接/junction 创建，跳过 alias/.. 用例");
+        String dotDotBase = masterRoot.resolve("link-out").resolve("..").toString();
+        seedFileConfig(2L, "dotdot-local", dotDotBase, false);
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> orphanService.preview(MASTER_CONFIG_ID, ""));
+        assertEquals(FILE_ORPHAN_SHARED_STORAGE_REFUSED.getCode(), ex.getCode());
+        assertTrue(objectStore.containsKey("asset/orphan-old.bin"));
+    }
+
     // ========== ⑤c（codex r1 P1-B）尾分隔符根：边界判定不失配 ==========
 
     @Test

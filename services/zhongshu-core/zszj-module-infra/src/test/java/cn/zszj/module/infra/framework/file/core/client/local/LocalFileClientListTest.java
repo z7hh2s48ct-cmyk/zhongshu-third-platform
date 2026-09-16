@@ -4,11 +4,13 @@ import cn.zszj.module.infra.framework.file.core.client.FileObjectEntry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * ZS-FILE-005.B：LocalFileClient 对象清点（孤儿对象「预览」的存储侧能力）。
@@ -21,8 +23,12 @@ public class LocalFileClientListTest {
     Path tempDir;
 
     private LocalFileClient newClient() {
+        return newClient(tempDir);
+    }
+
+    private LocalFileClient newClient(Path basePath) {
         LocalFileClientConfig config = new LocalFileClientConfig();
-        config.setBasePath(tempDir.toString());
+        config.setBasePath(basePath.toString());
         config.setDomain("http://localhost:48080");
         LocalFileClient client = new LocalFileClient(1L, config);
         client.init();
@@ -52,10 +58,56 @@ public class LocalFileClientListTest {
         assertEquals(2, bounded.size(), "清点受 maxEntries 有界");
     }
 
+    /**
+     * codex r2 第三形状自查：树内【游离】junction（不是任何配置的清点根）指向外部物理目录——
+     * Windows 上 Files.walk 默认下钻 junction，外部文件会被洗进本配置清点清单（引用查不到 → 误删）。
+     * listObjects 必须不下钻别名目录（少清点永远安全）。
+     */
+    @Test
+    public void listObjects_skipsAliasDirectories_insideTree() throws Exception {
+        // 清点根独立成目录；外部目标在根之外（模拟「他配置物理目录」）
+        Path root = Files.createDirectories(tempDir.resolve("root"));
+        Path external = Files.createDirectories(tempDir.resolve("external"));
+        Files.write(external.resolve("secret.bin"), "x".getBytes());
+        Files.createDirectories(root.resolve("base-tree")); // 链接父目录须先存在
+        Path alias = createAliasLink(root.resolve("base-tree").resolve("alias-inner"), external);
+        assumeTrue(alias != null && Files.exists(alias), "环境不支持符号链接/junction 创建，跳过别名目录用例");
+        LocalFileClient client = newClient(root);
+        client.upload("a".getBytes(), "base-tree/real.bin", "application/octet-stream");
+
+        List<String> paths = client.listObjects("", 100).stream()
+                .map(FileObjectEntry::getPath).toList();
+
+        assertTrue(paths.contains("base-tree/real.bin"), "真实文件正常清点");
+        assertTrue(paths.stream().noneMatch(p -> p.startsWith("base-tree/alias-inner/")),
+                "树内别名目录不得下钻（外部物理文件不进清单）");
+        assertTrue(paths.stream().noneMatch(p -> p.contains("secret.bin")),
+                "外部物理文件不得以任何路径进入本配置清单");
+    }
+
     @Test
     public void listObjects_emptyStorage_returnsEmpty() {
         LocalFileClient client = newClient();
         assertTrue(client.listObjects("", 100).isEmpty());
+    }
+
+    /** 别名链接创建：优先符号链接，Windows 无特权退回目录 junction（mklink /J），均不可用返回 null */
+    private Path createAliasLink(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            // fallthrough 到 junction
+        }
+        try {
+            Process p = new ProcessBuilder("cmd", "/c", "mklink", "/J",
+                    link.toString(), target.toString()).start();
+            if (p.waitFor() == 0 && Files.exists(link)) {
+                return link;
+            }
+        } catch (Exception ex) {
+            // 非 Windows/无 cmd
+        }
+        return null;
     }
 
     /**

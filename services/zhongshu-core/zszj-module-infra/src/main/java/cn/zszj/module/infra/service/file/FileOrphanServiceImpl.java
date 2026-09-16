@@ -180,8 +180,16 @@ public class FileOrphanServiceImpl implements FileOrphanService {
     }
 
     /**
-     * 存储根隔离核验（codex r0 P1-1，保守拒绝）：所选配置为 local 类型时，任何其他 local 配置的
-     * 存储根与之【相等或嵌套】（大小写折叠比较）即拒绝；配置无法解析/不可定位同样拒绝。
+     * 存储根隔离核验（codex r0 P1-1 + r1 P1-A/P1-B + r2 P1-A/P1-B，保守拒绝方向）：
+     * 所选配置为 local 类型时，任何其他 local 配置的存储根与之【相等或嵌套】即拒绝。
+     * codex r2 根治：隔离判定必须【词汇视角】与【物理视角】同时证明不共享——
+     * 词汇视角 = client 实际 I/O 使用的根（{@code toAbsolutePath().normalize()}，与
+     * LocalFileClient.getFilePath 同一变换，不解链接；Windows Files.walk 默认遍历 junction，
+     * 词汇嵌套的 alias junction 会被外层清点洗进内层物理文件）；物理视角 = toRealPath 解析
+     * 别名后的真实根（同一目录不同别名共享）。两视角任一判「共享/嵌套」即拒绝，
+     * 只有双视角都互斥才放行；校验路径先词汇规范化再 toRealPath（r2 P1-B：保证
+     * 「校验的根 == I/O 实际用的根」——否则 {@code alias/..} 形状经物理解析被洗到别处）。
+     * 配置无法解析/不可定位/物理解析失败（不存在/IO/环）同样拒绝（无法证明隔离即拒绝）。
      */
     private void ensureStorageRootIsolated(Long configId) {
         FileConfigDO selected = configId != null
@@ -196,8 +204,8 @@ public class FileOrphanServiceImpl implements FileOrphanService {
             // s3/ftp/sftp 不支持清点（034），本检查不适用
             return;
         }
-        String selfRoot = localRootOf(selected);
-        if (selfRoot == null) {
+        LocalRootViews selfViews = localRootViewsOf(selected);
+        if (selfViews == null) {
             throw exception(FILE_ORPHAN_SHARED_STORAGE_REFUSED, selected.getName());
         }
         List<FileConfigDO> others = fileConfigMapper.selectList().stream()
@@ -205,34 +213,68 @@ public class FileOrphanServiceImpl implements FileOrphanService {
                         && FileStorageEnum.LOCAL.getStorage().equals(c.getStorage()))
                 .toList();
         for (FileConfigDO other : others) {
-            String otherRoot = localRootOf(other);
+            LocalRootViews otherViews = localRootViewsOf(other);
             // 他配置根不可解析同样拒绝（无法证明不共享）
-            if (otherRoot == null || sharesPhysicalRoot(selfRoot, otherRoot)) {
+            if (otherViews == null
+                    || sharesPhysicalRoot(selfViews.lexical, otherViews.lexical)
+                    || sharesPhysicalRoot(selfViews.physical, otherViews.physical)) {
                 throw exception(FILE_ORPHAN_SHARED_STORAGE_REFUSED, other.getName());
             }
         }
     }
 
     /**
-     * local 配置的存储根——解析【物理真实路径】（codex r1 P1-A）：{@code toRealPath} 解析
-     * junction/symlink 别名到同一物理目录，字符串规范化发现不了的别名共享得以命中；
-     * 统一正斜杠 + 大小写折叠 + 尾分隔符剥离（codex r1 P1-B：根如 {@code C:\} 规范化后
-     * 仍带尾分隔符，追加边界会得到 {@code c://} 使包含判定失效）。
-     * 解析失败（不存在/IO 错误）返回 null——无法证明隔离即拒绝（循 036 保守口径）。
+     * local 配置存储根的【双视角】规范化：词汇视角（client I/O 实际使用的根）与
+     * 物理视角（toRealPath 解析别名后的真实根）。任一解析失败/设备形态（{@code \\?\}、
+     * {@code \\.\}——subst/UNC 等无法安全比较的形态）返回 null（保守拒绝）。
      */
-    private String localRootOf(FileConfigDO config) {
+    private LocalRootViews localRootViewsOf(FileConfigDO config) {
         try {
             LocalFileClientConfig localConfig = asLocalConfig(config);
             if (localConfig == null || StrUtil.isEmpty(localConfig.getBasePath())) {
                 return null;
             }
+            // r2 P1-B：先做与 LocalFileClient.getFilePath 完全相同的词汇规范化（不解链接），
+            // 再解析物理别名——保证「校验的根 == I/O 实际用的根」
+            java.nio.file.Path lexicalPath = Paths.get(localConfig.getBasePath()).toAbsolutePath().normalize();
+            String lexical = toCanonicalRoot(lexicalPath);
+            if (isDeviceForm(lexical)) {
+                return null;
+            }
             // toRealPath 要求路径真实存在：未创建的存储根同样拒绝（无物可清点，拒绝无损失且保守）
-            return toCanonicalRoot(Paths.get(localConfig.getBasePath()).toRealPath());
+            String physical = toCanonicalRoot(lexicalPath.toRealPath());
+            if (isDeviceForm(physical)) {
+                return null;
+            }
+            return new LocalRootViews(lexical, physical);
         } catch (Exception ex) {
-            log.warn("[localRootOf][配置({}) 存储根解析失败，按共享拒绝处理: {}]",
+            log.warn("[localRootViewsOf][配置({}) 存储根解析失败，按共享拒绝处理: {}]",
                     config.getId(), ex.getClass().getSimpleName());
             return null;
         }
+    }
+
+    /**
+     * Windows 设备形态路径（{@code \\?\} 前缀 / 设备命名空间 {@code \\.\}，subst/UNC 解析的
+     * 可能产物）：字符串比较无法安全判定物理同一性 → 保守拒绝。
+     */
+    private static boolean isDeviceForm(String canonicalRoot) {
+        return canonicalRoot.startsWith("//?/") || canonicalRoot.startsWith("//./");
+    }
+
+    /**
+     * 双视角根（词汇 + 物理）
+     */
+    private static final class LocalRootViews {
+
+        private final String lexical;
+        private final String physical;
+
+        private LocalRootViews(String lexical, String physical) {
+            this.lexical = lexical;
+            this.physical = physical;
+        }
+
     }
 
     /**
@@ -258,8 +300,8 @@ public class FileOrphanServiceImpl implements FileOrphanService {
     }
 
     /**
-     * 物理根共享判定：相等，或一方是另一方的前缀目录（嵌套——外层清点会覆盖内层全部对象）。
-     * 入参合同（{@link #toCanonicalRoot}）：无尾分隔符——边界分隔符只补不加，
+     * 根共享判定（对单一视角）：相等，或一方是另一方的前缀目录（嵌套——外层清点会覆盖内层
+     * 全部对象）。入参合同（{@link #toCanonicalRoot}）：无尾分隔符——边界分隔符只补不加，
      * 杜绝 {@code c://} 式失配（P1-B）；任一方为文件系统根 {@code /} 时视为共享（包罗一切）。
      * 包内可见供单测固化合同。
      */

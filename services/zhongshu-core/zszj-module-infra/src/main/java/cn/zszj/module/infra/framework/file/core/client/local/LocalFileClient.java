@@ -86,8 +86,15 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
     }
 
     /**
-     * ZS-FILE-005.B：对象清点——目录遍历返回相对路径（正斜杠）、按 path 稳定排序、受 maxEntries 有界，
-     * lastModified 取文件修改时间（孤儿保留期判定锚点）。仅清点常规文件，不解析符号链接。
+     * ZS-FILE-005.B：对象清点——目录遍历返回相对路径（正斜杠）、受 maxEntries 有界、结果按 path
+     * 排序返回，lastModified 取文件修改时间（孤儿保留期判定锚点）。
+     *
+     * <p>codex r2 第三形状自查：Windows 上 junction 属 reparse 目录而 NIO 不视其为符号链接，
+     * 目录遍历默认即下钻——树内游离 junction 会把【他配置物理目录】的对象以本配置相对路径
+     * 洗进清点清单（引用查不到 → 误删）。故清点在【真实路径空间】进行（根先 toRealPath，
+     * 其下子目录逐个比对「自身物理解析 vs 自身词汇路径」）：不一致即为别名（junction/symlink），
+     * 一律不下钻；物理解析失败（断链/环/权限）同样按别名跳过——少清点永远安全（fail-safe 少删）。
+     * 遍历序为「父目录字典序 DFS」，截断取清点序前 N 个（确定性依赖树形态，分前缀续扫合同不变）。</p>
      */
     @Override
     public java.util.List<cn.zszj.module.infra.framework.file.core.client.FileObjectEntry> listObjects(
@@ -96,29 +103,82 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
         if (!java.nio.file.Files.exists(basePath)) {
             return java.util.List.of();
         }
-        try (java.util.stream.Stream<Path> stream = java.nio.file.Files.walk(basePath)) {
-            return stream.filter(java.nio.file.Files::isRegularFile)
-                    .map(basePath::relativize)
-                    .map(p -> p.toString().replace(java.io.File.separatorChar, '/'))
-                    .filter(p -> p.startsWith(prefix))
-                    .sorted()
-                    .limit(maxEntries)
-                    .map(p -> {
-                        try {
-                            java.nio.file.attribute.BasicFileAttributes attrs = java.nio.file.Files.readAttributes(
-                                    basePath.resolve(p), java.nio.file.attribute.BasicFileAttributes.class);
-                            return new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(
-                                    p, attrs.size(),
-                                    java.time.LocalDateTime.ofInstant(attrs.lastModifiedTime().toInstant(),
-                                            java.time.ZoneId.systemDefault()));
-                        } catch (java.io.IOException ex) {
-                            // 条目属性读取失败保守降级：lastModified 置空（服务层对 null 保守跳过，不清理）
-                            return new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(p, null, null);
+        Path baseReal;
+        try {
+            baseReal = basePath.toRealPath();
+        } catch (java.io.IOException ex) {
+            // 根不可解析（断链/环/权限）：无法安全清点 → 空清单（服务层隔离检查对该配置已 036 拒绝）
+            return java.util.List.of();
+        }
+        java.util.ArrayDeque<Path> pendingDirs = new java.util.ArrayDeque<>();
+        pendingDirs.push(baseReal);
+        java.util.List<Path> files = new java.util.ArrayList<>();
+        try {
+            while (!pendingDirs.isEmpty() && files.size() < maxEntries) {
+                Path dir = pendingDirs.pop();
+                java.util.List<Path> children = new java.util.ArrayList<>();
+                try (java.nio.file.DirectoryStream<Path> stream = java.nio.file.Files.newDirectoryStream(dir)) {
+                    for (Path child : stream) {
+                        children.add(child);
+                    }
+                }
+                children.sort(java.util.Comparator.comparing(p -> p.getFileName().toString()));
+                for (Path child : children) {
+                    if (java.nio.file.Files.isDirectory(child)) {
+                        if (isAliasDirectory(child)) {
+                            continue; // 别名目录不下钻（无法安全判定其物理归属 → 保守少清点）
                         }
-                    })
-                    .toList();
+                        pendingDirs.push(child);
+                    } else if (java.nio.file.Files.isRegularFile(child)) {
+                        // 前缀过滤在收集期生效：maxEntries 界定的是【匹配前缀的条目数】，
+                        // 前缀外文件不挤占配额（P2-2 续扫合同：分前缀清点可推进）
+                        String rel = baseReal.relativize(child).toString().replace(java.io.File.separatorChar, '/');
+                        if (!rel.startsWith(prefix)) {
+                            continue;
+                        }
+                        files.add(child);
+                        if (files.size() >= maxEntries) {
+                            break;
+                        }
+                    }
+                }
+            }
         } catch (java.io.IOException ex) {
             throw new IllegalStateException("对象清点失败: " + ex.getMessage(), ex);
+        }
+        java.util.List<cn.zszj.module.infra.framework.file.core.client.FileObjectEntry> entries =
+                new java.util.ArrayList<>(files.size());
+        for (Path file : files) {
+            String rel = baseReal.relativize(file).toString().replace(java.io.File.separatorChar, '/');
+            try {
+                java.nio.file.attribute.BasicFileAttributes attrs = java.nio.file.Files.readAttributes(
+                        file, java.nio.file.attribute.BasicFileAttributes.class);
+                entries.add(new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(
+                        rel, attrs.size(),
+                        java.time.LocalDateTime.ofInstant(attrs.lastModifiedTime().toInstant(),
+                                java.time.ZoneId.systemDefault())));
+            } catch (java.io.IOException ex) {
+                // 条目属性读取失败保守降级：lastModified 置空（服务层对 null 保守跳过，不清理）
+                entries.add(new cn.zszj.module.infra.framework.file.core.client.FileObjectEntry(rel, null, null));
+            }
+        }
+        entries.sort(java.util.Comparator.comparing(
+                cn.zszj.module.infra.framework.file.core.client.FileObjectEntry::getPath));
+        return entries;
+    }
+
+    /**
+     * 别名目录判定（codex r2）：目录的「自身物理解析（toRealPath）」与「自身词汇路径」不一致即为
+     * junction/symlink 别名（真实子目录两者相同——父目录已在真实空间）；物理解析失败
+     * （断链/环/权限）同样按别名处理（不下钻）。大小写不敏感比较规避盘符/目录拼写差异的误报
+     * （误报方向是少清点，保守可接受）。
+     */
+    private static boolean isAliasDirectory(Path dir) {
+        try {
+            return !dir.toRealPath().toString().replace('\\', '/')
+                    .equalsIgnoreCase(dir.toString().replace('\\', '/'));
+        } catch (java.io.IOException ex) {
+            return true;
         }
     }
 
