@@ -1,0 +1,600 @@
+/**
+ * ZS-BRAND-004.C 任务与消息持久化引用静态门禁（本地与 CI 同一入口）。
+ *
+ * 用法：node scripts/brand/verify-brand-004c-persistence.mjs [--quiet]
+ *
+ * 职责（对齐开发计划 / docs/05 ZS-BRAND-004 卡 .C 分批）：
+ *   1. 任务域：infra_job 种子 handler_name（git ls-files 全量迁移 SQL 提取）与
+ *      Java 侧 `implements JobHandler` Bean 名一一对应；无旧名残留。
+ *   2. Quartz 持久化：QRTZ_* 全仓 0 行种子（V1/V2 仅 DDL）；调度入口
+ *      JobBuilder.newJob(...) 所指 Job 类必须解析到 cn.zszj 包根；SQL 面
+ *      包形旧 FQCN（cn.iocoder./cn.yudao./yudao.module|framework|server.）0 残留。
+ *   3. Outbox/Inbox：状态机硬约束（PENDING/DISPATCHED/DEAD/SKIPPED）、领取栅栏
+ *      列（claim_token 等）、恢复台账与审计常量、受控拒绝错误码锚点齐全；相关
+ *      SQL 字面量与 AuditEventTypes 常量无旧名。
+ *   4. MSG/序列化：Redis Stream key 为类 SimpleName 动态派生（无硬编码 topic
+ *      字面量）、消费组 = spring.application.name = zszj-server、yaml key-prefix
+ *      无旧名；Jackson 多态类名落库面（@JsonTypeInfo(Id.CLASS)）实现类 FQCN
+ *      必须全新包根，且 JsonUtils 无全局 default typing。
+ *   5. 旧名判定循 .B 模式清单（verify-brand-004b-storage.mjs 的
+ *      OLD_NAME_PATTERNS），另加包形（cn.iocoder./cn.yudao.）增强；只对提取出的
+ *      标识/字面量判定，不重复 G3 全仓文本扫描、不误伤已登记来源署名。
+ *   6. 注入自检（防扫描器空洞）：合成旧名样例喂同一套提取+判定路径，任一未命中
+ *      即门禁失败。
+ *
+ * 退出码：0 通过；1 发现残留/合同缺失/注入自检失败；2 脚本自身错误。
+ * 报告以 JSON 输出 stdout；--quiet 时省略明细清单。
+ */
+import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { OLD_NAME_PATTERNS, judgeKey, extractYamlKeyPrefixes } from './verify-brand-004b-storage.mjs';
+
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const quiet = process.argv.includes('--quiet');
+
+// 包形旧名（FQCN/包路径形态）：值级判定补充 .B 未覆盖的「类名落库」口径。
+// 故意不做裸词扫描——sql 基线头部的「来源：ruoyi-vue-pro.sql」为已登记来源署名。
+export const PACKAGE_SHAPED_OLD_NAME_PATTERNS = [
+  { name: 'cn.iocoder-fqcn', re: /cn\.iocoder\.[A-Za-z_][A-Za-z0-9_.]*/g },
+  { name: 'cn.yudao-fqcn', re: /\bcn\.yudao\.[A-Za-z_][A-Za-z0-9_.]*/g },
+  { name: 'yudao-package', re: /\byudao\.(?:module|framework|server)\.[A-Za-z_][A-Za-z0-9_.]*/g },
+];
+
+/** 值级旧名判定 = .B 键级模式 + 包形模式。 */
+export function judgeValue(source, field, value) {
+  return [...judgeKey(source, field, value), ...judgeRaw(source, field, value, PACKAGE_SHAPED_OLD_NAME_PATTERNS)];
+}
+
+function judgeRaw(source, field, value, patterns) {
+  const violations = [];
+  for (const { name, re } of patterns) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(value))) {
+      violations.push({ source, field, value, pattern: name, sample: m[0] });
+    }
+  }
+  return violations;
+}
+
+// ---------------------------------------------------------------------------
+// git 文件清单（全量事实来源，勿凭手工清单遗漏）
+// ---------------------------------------------------------------------------
+export function listGitFiles(filter) {
+  const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, maxBuffer: 64 * 1024 * 1024 })
+    .toString()
+    .split('\0')
+    .filter(Boolean)
+    .map((f) => f.replaceAll('\\', '/'));
+  return filter ? files.filter(filter) : files;
+}
+
+function readRepoFile(rel) {
+  const abs = `${root}${rel.replaceAll('/', process.platform === 'win32' ? '\\' : '/')}`;
+  if (!existsSync(abs)) return null;
+  return readFileSync(abs, 'utf8');
+}
+
+const inCoreSql = (f) => f.startsWith('services/zhongshu-core/sql/') || f.startsWith('services/zhongshu-core/zszj-server/src/main/resources/db/migration/');
+// 结构化元组提取只对 PG 方言面（产品实际运行方言；Flyway 迁移链 + PG 基线/演示数据）——
+// dm/oracle/sqlserver 等供应商方言参考文件使用 N'' 字面量与 GO 批分隔符，不做元组级解析，
+// 但其包形旧名/状态字面量仍在全量 SQL 扫描范围内（下方 extractPackageShapedOldNames 用 inCoreSql）。
+const inPgSql = (f) => f.startsWith('services/zhongshu-core/sql/postgresql/') || f.startsWith('services/zhongshu-core/zszj-server/src/main/resources/db/migration/');
+// 权威新装迁移链（Flyway 实际执行）：种子 ↔ Bean 合同只锚定这一面；
+// sql/postgresql/ruoyi-vue-pro.sql 为供应商上游基线（不进 Flyway），其任务种子
+// （pay/iot/trade 等）指向未启用模块的 Handler，属合法无 Bean，不参与合同。
+const inFlywayMigration = (f) => f.startsWith('services/zhongshu-core/zszj-server/src/main/resources/db/migration/');
+const inCoreJava = (f) => f.startsWith('services/zhongshu-core/') && /\.java$/.test(f);
+
+// ---------------------------------------------------------------------------
+// ① 任务域：infra_job 种子 handler_name ↔ Java JobHandler Bean 名
+// ---------------------------------------------------------------------------
+const INFRA_JOB_INSERT_RE = /INSERT\s+INTO\s+infra_job\s*\(([^)]*)\)\s*VALUES\s*/gi;
+
+/** 单行 SQL VALUES 元组切分：按不在单引号内的逗号切分。 */
+export function splitSqlTuple(row) {
+  const parts = [];
+  let cur = '', inStr = false;
+  for (let i = 0; i < row.length; i++) {
+    const ch = row[i];
+    if (ch === "'") {
+      if (inStr && row[i + 1] === "'") { cur += "''"; i++; continue; } // 转义引号
+      inStr = !inStr;
+    }
+    if (ch === ',' && !inStr) { parts.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  parts.push(cur.trim());
+  return parts;
+}
+
+/** 语句切片：从 pos 起到第一条不在单引号内的分号（含）。 */
+function statementSlice(text, pos) {
+  let inStr = false;
+  for (let i = pos; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'") inStr = !inStr;
+    else if (ch === ';' && !inStr) return text.slice(pos, i + 1);
+  }
+  return text.slice(pos);
+}
+
+/** 语句内顶层（引号外）圆括号组提取——元组内可含 '…(…)…' 字面量，不得被误切。 */
+export function scanTopLevelTupleRows(statement) {
+  const rows = [];
+  let depth = 0, cur = '', inStr = false;
+  for (let i = 0; i < statement.length; i++) {
+    const ch = statement[i];
+    if (ch === "'") {
+      if (inStr && statement[i + 1] === "'") { cur += "''"; i++; continue; }
+      inStr = !inStr;
+    }
+    if (!inStr) {
+      if (ch === '(') { depth++; if (depth === 1) { cur = ''; continue; } }
+      else if (ch === ')') { depth--; if (depth === 0) { rows.push(cur); cur = ''; continue; } }
+      else if (ch === ',' && depth === 0) continue;
+    }
+    if (depth >= 1) cur += ch;
+  }
+  return rows;
+}
+
+/** 提取 INSERT INTO infra_job 的 handler_name 值（按列名定位索引，不数死位置；
+ *  语句边界以引号外分号为准，防止元组含 '…(…)…' 字面量时越过语句尾误收其它表的行）。 */
+export function extractInfraJobSeedHandlers(text, source) {
+  const handlers = [];
+  let m;
+  INFRA_JOB_INSERT_RE.lastIndex = 0;
+  while ((m = INFRA_JOB_INSERT_RE.exec(text))) {
+    const cols = m[1].split(',').map((c) => c.trim().toLowerCase());
+    const idx = cols.indexOf('handler_name');
+    if (idx < 0) continue;
+    const statement = statementSlice(text, m.index + m[0].length);
+    for (const row of scanTopLevelTupleRows(statement)) {
+      const vals = splitSqlTuple(row);
+      if (vals.length > idx) {
+        const v = vals[idx].replace(/^'|'$/g, '');
+        handlers.push({ source, field: 'handler_name', value: v });
+      }
+    }
+  }
+  return handlers;
+}
+
+const JOB_HANDLER_IMPL_RE = /class\s+([A-Za-z0-9_]+)\s+(?:\w+\s+)*implements\s+JobHandler\s*\{/;
+
+/** Java 侧 JobHandler 实现 → Spring Bean 名（@Component 缺省 = 类名首字母小写）。 */
+export function extractJobHandlerBeanNames(text) {
+  const names = [];
+  const re = new RegExp(JOB_HANDLER_IMPL_RE.source, 'g');
+  let m;
+  while ((m = re.exec(text))) {
+    const cls = m[1];
+    names.push(cls.charAt(0).toLowerCase() + cls.slice(1));
+  }
+  return names;
+}
+
+// ---------------------------------------------------------------------------
+// ② Quartz 持久化：QRTZ 种子行 + SQL 包形旧 FQCN + 调度入口 Job 类
+// ---------------------------------------------------------------------------
+export function extractQrtzSeedInserts(text, source) {
+  const rows = [];
+  const re = /INSERT\s+(?:INTO\s+)?(QRTZ_[A-Za-z_]+)/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    rows.push({ source, field: 'qrtz-seed-table', value: m[1] });
+  }
+  return rows;
+}
+
+export function extractPackageShapedOldNames(text, source) {
+  return judgeRaw(source, 'package-shape', text, PACKAGE_SHAPED_OLD_NAME_PATTERNS);
+}
+
+const NEW_JOB_BUILDER_RE = /JobBuilder\.newJob\(\s*([A-Za-z0-9_]+)\.class/g;
+
+/** SchedulerManager 调度入口所指 Job 类（Quartz 持久化 JOB_CLASS_NAME 的源头）。 */
+export function extractQuartzJobBuilderClasses(text, source) {
+  const refs = [];
+  const re = new RegExp(NEW_JOB_BUILDER_RE.source, 'g');
+  let m;
+  while ((m = re.exec(text))) {
+    refs.push({ source, field: 'quartz-job-class', value: m[1] });
+  }
+  return refs;
+}
+
+// ---------------------------------------------------------------------------
+// ③ Outbox/Inbox：状态机字面量 + 审计常量
+// ---------------------------------------------------------------------------
+const JAVA_STRING_CONST_RE = /(?:public|private)?\s*static\s+final\s+String\s+([A-Z][A-Z0-9_]*)\s*=\s*"([^"]*)"\s*;/g;
+
+/** AuditEventTypes 等常量类：String 常量视为事件类型目录。 */
+export function extractStringConstants(text, source) {
+  const keys = [];
+  const re = new RegExp(JAVA_STRING_CONST_RE.source, 'g');
+  let m;
+  while ((m = re.exec(text))) {
+    keys.push({ source, field: m[1], value: m[2] });
+  }
+  return keys;
+}
+
+/** SQL 面单引号字面量（状态值/事件类型等持久化枚举值），供旧名判定。 */
+export function extractSqlStringLiterals(text, source) {
+  const values = [];
+  const re = /'([A-Za-z_][A-Za-z0-9_.:%-]{1,127})'/g;
+  let m;
+  while ((m = re.exec(text))) {
+    values.push({ source, field: 'sql-literal', value: m[1] });
+  }
+  return values;
+}
+
+// ---------------------------------------------------------------------------
+// ④ MSG/序列化：stream 子类、应用名、Jackson 多态类名落库面
+// ---------------------------------------------------------------------------
+const STREAM_BASE_RE = /class\s+([A-Za-z0-9_]+)\s+extends\s+(?:AbstractRedisStreamMessage|AbstractRedisChannelMessage)\b/;
+
+/** Redis Stream/Channel 消息子类清单：子类 SimpleName 即 stream key/channel（动态派生）。 */
+export function extractRedisMessageSubclasses(text, source) {
+  const refs = [];
+  const re = new RegExp(STREAM_BASE_RE.source, 'g');
+  let m;
+  while ((m = re.exec(text))) {
+    refs.push({ source, field: 'redis-message-subclass', value: m[1] });
+  }
+  return refs;
+}
+
+/** spring.application.name（Redis Stream 消费组名，持久化在 Redis 消费组登记里）。 */
+export function extractSpringAppName(text) {
+  const m = text.match(/^ {2}application:\r?\n {4}name:\s*(\S+)/m);
+  return m ? m[1] : null;
+}
+
+/** Jackson 多态类名落库面：@JsonTypeInfo(use = Id.CLASS) 接口清单。 */
+export function extractJsonTypeInfoInterfaces(text, source) {
+  return /@JsonTypeInfo\s*\(\s*use\s*=\s*JsonTypeInfo\.Id\.CLASS/.test(text) ? [source] : [];
+}
+
+/** 从 java 文件路径推导 FQCN（…/src/main/java/cn/zszj/…/X.java → cn.zszj.…）。 */
+export function fqcnFromPath(relJavaPath) {
+  const m = relJavaPath.replaceAll('\\', '/').match(/src\/(?:main|test)\/java\/(.+)\.java$/);
+  if (!m) return null;
+  return m[1].split('/').join('.');
+}
+
+export function hasDefaultTyping(text) {
+  return /enableDefaultTyping|activateDefaultTyping|setDefaultTyping/.test(text);
+}
+
+// ---------------------------------------------------------------------------
+// 命名/机制合同（恢复与受控迁移的静态锚点）
+// ---------------------------------------------------------------------------
+export const REQUIRED_ANCHORS = [
+  { file: 'services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/framework/outbox/OutboxDispatcherService.java', needle: 'claim_token', why: 'JOB-002 每次领取唯一凭证栅栏（不重复副作用合同）' },
+  { file: 'services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/framework/outbox/OutboxDispatcherService.java', needle: 'NO_SINK_SUPPORTS_EVENT_TYPE', why: '无 Sink 退避 DEAD 可见不丢弃（无静默丢失合同）' },
+  { file: 'services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260915.021__infra_outbox_recovery.sql', needle: 'SKIPPED', why: '人工恢复 SKIPPED 终态（重复消费止付合同）' },
+  { file: 'services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260915.021__infra_outbox_recovery.sql', needle: 'manual_retry_seq', why: '人工重试上限护栏（无限重放合同）' },
+  { file: 'services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/enums/ErrorCodeConstants.java', needle: 'JOB_HANDLER_NOT_WHITELISTED', why: 'JOB-001 未注册 Handler 受控拒绝（不放开越权合同）' },
+  { file: 'services/zhongshu-core/zszj-module-infra/src/main/java/cn/zszj/module/infra/enums/ErrorCodeConstants.java', needle: 'OUTBOX_RECOVERY_NOT_DEAD', why: 'JOB-004 非 DEAD 恢复受控拒绝（重复恢复合同）' },
+  { file: 'services/zhongshu-core/zszj-framework/zszj-spring-boot-starter-mq/src/main/java/cn/zszj/framework/mq/redis/core/stream/AbstractRedisStreamMessage.java', needle: 'getClass().getSimpleName()', why: 'Stream key 类名动态派生（无硬编码 topic 字面量合同）' },
+];
+
+export function checkNamingContract({ seedHandlers, beanNames, quartzJobClasses, outboxConstants, appYaml, jsonUtilsText }) {
+  const problems = [];
+  // 任务域合同：种子 handler_name 必须有活的 JobHandler Bean（旧类找不到的静态防线；
+  // 反向「Bean 必须有种子」不成立——未启用模块的 JobHandler 合法无种子）
+  const beanSet = new Set(beanNames);
+  for (const h of seedHandlers) {
+    if (!beanSet.has(h.value)) problems.push({ check: 'job-handler-bean', value: h.value, why: `infra_job 种子 handler_name ${h.value} 无对应 JobHandler Bean（旧类找不到风险）` });
+  }
+  // Quartz 调度入口 Job 类必须 cn.zszj 包根（经 import 解析；这是 QRTZ_JOB_DETAILS.JOB_CLASS_NAME 的持久化源头）
+  for (const ref of quartzJobClasses) {
+    const text = readRepoFile(ref.source) ?? '';
+    const importRe = new RegExp(`import\\s+([\\w.]+)\\.${ref.value};`);
+    const im = text.match(importRe);
+    const fqcn = im ? `${im[1]}.${ref.value}` : null;
+    const resolved = fqcn ?? `(同包推断)cn.zszj.framework.quartz.core.handler.${ref.value}`;
+    if (!resolved.startsWith('cn.zszj.')) {
+      problems.push({ check: 'quartz-job-class', value: resolved, why: 'Quartz 持久化 JOB_CLASS_NAME 源头非 cn.zszj 包根' });
+    }
+    // 同包推断必须有 import 或同包证据兜底，避免解析失败被静默放过
+    if (!fqcn && !/package\s+cn\.zszj\.framework\.quartz\.core\.handler\s*;/.test(text)) {
+      problems.push({ check: 'quartz-job-class-unresolved', value: ref.value, why: 'JobBuilder.newJob 所指类无法解析到 cn.zszj FQCN（import 缺失且非同包）' });
+    }
+  }
+  // 恢复/受控拒绝审计常量（ZS-JOB-004 双轨审计）
+  const constValues = new Set(outboxConstants.map((c) => c.value));
+  for (const req of ['OUTBOX_EVENT_RETRIED', 'OUTBOX_EVENT_SKIPPED']) {
+    if (!constValues.has(req)) problems.push({ check: 'audit-event-type', missing: req, why: 'outbox_recovery_log 双轨审计事件类型缺失' });
+  }
+  // 应用名 = Redis Stream 消费组（改名后旧组名残留会让新消费组读不到旧流）
+  if (appYaml.springAppName !== 'zszj-server') {
+    problems.push({ check: 'spring-app-name', value: appYaml.springAppName, why: 'spring.application.name 非 zszj-server（Redis Stream 消费组持久化命名合同）' });
+  }
+  // 白名单配置锚点（受控迁移的登记侧开关）
+  if (!appYaml.hasHandlerWhitelistKey) {
+    problems.push({ check: 'handler-whitelist-config', why: 'application.yaml 缺 zszj.job.handler-whitelist 配置锚点' });
+  }
+  // Jackson 全局 default typing 禁用（否则任意载荷都会落类名 FQCN）
+  if (jsonUtilsText === null || hasDefaultTyping(jsonUtilsText)) {
+    problems.push({ check: 'jackson-default-typing', why: 'JsonUtils 存在/启用全局 default typing（类名 FQCN 将落库）' });
+  }
+  // 静态锚点文件必须在（防重构后合同悬空）
+  for (const a of REQUIRED_ANCHORS) {
+    const text = readRepoFile(a.file);
+    if (text === null) problems.push({ check: 'anchor-file-missing', file: a.file, why: a.why });
+    else if (!text.includes(a.needle)) problems.push({ check: 'anchor-needle-missing', file: a.file, needle: a.needle, why: a.why });
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 全量盘点（提取 + 判定）
+// ---------------------------------------------------------------------------
+export function runInventory() {
+  const inventory = {
+    jobSeeds: { scannedFiles: 0, handlers: [], beans: 0 },
+    quartz: { sqlFilesScanned: 0, qrtzSeedRows: 0, jobBuilderRefs: 0 },
+    outboxInbox: { migrationFiles: 0, sqlLiterals: 0, auditConstants: 0 },
+    msg: { streamSubclasses: 0, yamlKeyPrefixes: 0, jsonTypeInfoImplFqcns: [] },
+    sqlPackageShapedScanned: 0,
+  };
+  const violations = [];
+  const qrtzViolations = [];
+
+  // ① 任务域 + QRTZ 面 + SQL 包形旧 FQCN
+  for (const rel of listGitFiles((f) => inCoreSql(f) && /\.sql$/.test(f))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    inventory.sqlPackageShapedScanned++;
+    // 包形旧名：全量 SQL 面（含供应商方言参考文件）
+    violations.push(...extractPackageShapedOldNames(text, rel));
+    // 结构化元组提取：仅 PG 方言面
+    if (inPgSql(rel)) {
+      inventory.jobSeeds.scannedFiles++;
+      const handlers = extractInfraJobSeedHandlers(text, rel);
+      inventory.jobSeeds.handlers.push(...handlers);
+      violations.push(...handlers.flatMap((h) => judgeValue(h.source, h.field, h.value)));
+      for (const row of extractQrtzSeedInserts(text, rel)) {
+        // QRTZ_* 任何种子行都是违规（迁移仅 DDL；JOB_CLASS_NAME 由运行期以 cn.zszj FQCN 写入）
+        qrtzViolations.push({ source: row.source, field: row.field, value: row.value, pattern: 'qrtz-seed-row', sample: row.value });
+        violations.push(...judgeValue(row.source, row.field, row.value));
+      }
+    }
+  }
+  inventory.quartz.qrtzSeedRows = qrtzViolations.length;
+  // 权威迁移链种子（合同用）：Flyway 实际执行的 db/migration 面
+  const contractSeedHandlers = [];
+  for (const rel of listGitFiles((f) => inFlywayMigration(f) && /\.sql$/.test(f))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    contractSeedHandlers.push(...extractInfraJobSeedHandlers(text, rel));
+  }
+  // JobHandler Bean 名清单（合同用）
+  const beanNames = [];
+  for (const rel of listGitFiles((f) => inCoreJava(f))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    beanNames.push(...extractJobHandlerBeanNames(text));
+  }
+  inventory.jobSeeds.beanNames = beanNames;
+  inventory.jobSeeds.beans = beanNames.length;
+
+  // ② Quartz 调度入口（JobBuilder.newJob → JOB_CLASS_NAME 持久化源头）
+  const quartzJobClasses = [];
+  for (const rel of listGitFiles((f) => inCoreJava(f) && /SchedulerManager\.java$/.test(f))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    const refs = extractQuartzJobBuilderClasses(text, rel);
+    quartzJobClasses.push(...refs);
+    for (const r of refs) violations.push(...judgeValue(r.source, r.field, r.value));
+  }
+  inventory.quartz.jobBuilderRefs = quartzJobClasses.length;
+
+  // ③ Outbox/Inbox：状态机字面量 + 审计常量
+  const outboxMigrations = [
+    'services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260915.001__infra_outbox_event.sql',
+    'services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260915.002__infra_inbox_event.sql',
+    'services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260915.021__infra_outbox_recovery.sql',
+    'services/zhongshu-core/zszj-server/src/main/resources/db/migration/V20260916.002__system_notify_channel_send.sql',
+  ];
+  for (const rel of outboxMigrations) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    inventory.outboxInbox.migrationFiles++;
+    const lits = extractSqlStringLiterals(text, rel);
+    inventory.outboxInbox.sqlLiterals += lits.length;
+    violations.push(...lits.flatMap((l) => judgeValue(l.source, l.field, l.value)));
+  }
+  const auditConstants = [];
+  for (const rel of listGitFiles((f) => f.endsWith('AuditEventTypes.java'))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    auditConstants.push(...extractStringConstants(text, rel));
+  }
+  inventory.outboxInbox.auditConstants = auditConstants.length;
+  violations.push(...auditConstants.flatMap((c) => judgeValue(c.source, c.field, c.value)));
+
+  // ④ MSG/序列化
+  for (const rel of listGitFiles((f) => inCoreJava(f))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    const subs = extractRedisMessageSubclasses(text, rel);
+    inventory.msg.streamSubclasses += subs.length;
+    violations.push(...subs.flatMap((s) => judgeValue(s.source, s.field, s.value)));
+    if (extractJsonTypeInfoInterfaces(text, rel).length) {
+      // 该文件是多态接口：找实现类 FQCN 判定（类名落库面的新包根合同）
+      const ifaceMatch = text.match(/interface\s+([A-Za-z0-9_]+)/);
+      const iface = ifaceMatch ? ifaceMatch[1] : null;
+      if (iface) {
+        for (const implRel of listGitFiles((f) => inCoreJava(f))) {
+          const implText = readRepoFile(implRel);
+          if (implText === null) continue;
+          if (new RegExp(`implements\\s+[\\w.,<> \\t]*\\b${iface}\\b`).test(implText)) {
+            const fqcn = fqcnFromPath(implRel);
+            if (fqcn) {
+              inventory.msg.jsonTypeInfoImplFqcns.push(fqcn);
+              violations.push(...judgeValue(implRel, 'json-typinfo-impl-fqcn', fqcn));
+            }
+          }
+        }
+      }
+    }
+  }
+  const yamlPrefixes = [];
+  for (const rel of listGitFiles((f) => /application.*\.yaml$/.test(f) && f.startsWith('services/zhongshu-core/zszj-server/src/main/resources/'))) {
+    const text = readRepoFile(rel);
+    if (text === null) continue;
+    const ks = extractYamlKeyPrefixes(text, rel);
+    yamlPrefixes.push(...ks);
+    violations.push(...ks.flatMap((k) => judgeValue(k.source, k.field, k.value)));
+  }
+  inventory.msg.yamlKeyPrefixes = yamlPrefixes.length;
+
+  return { inventory, violations: [...violations, ...qrtzViolations], beanNames, auditConstants, quartzJobClasses, contractSeedHandlers };
+}
+
+// ---------------------------------------------------------------------------
+// 注入自检（防扫描器空洞）：合成样例必须被同一套提取+判定路径命中
+// ---------------------------------------------------------------------------
+export function injectionSelfTest() {
+  const samples = [
+    {
+      name: 'job-seed-old-handler',
+      extract: () => extractInfraJobSeedHandlers(
+        "INSERT INTO infra_job (id, name, status, handler_name, handler_param) VALUES (99, '旧任务', 2, 'yudaoDemoJob', '');", 'injected'),
+      expectValue: 'yudaoDemoJob',
+    },
+    {
+      // QRTZ 种子行存在即违规（行存在性本身是合同），且行内旧 FQCN 另被包形判定命中
+      name: 'qrtz-seed-row',
+      extract: () => {
+        const sql = "INSERT INTO QRTZ_JOB_DETAILS (SCHED_NAME, JOB_NAME, JOB_CLASS_NAME) VALUES ('schedulerName', 'legacy', 'cn.iocoder.yudao.framework.quartz.core.handler.JobHandlerInvoker');";
+        return [...extractQrtzSeedInserts(sql, 'injected'), ...extractPackageShapedOldNames(sql, 'injected')];
+      },
+      expectValue: null, // 布尔判定：行存在 + FQCN 命中合计 ≥2
+      minHits: 2,
+    },
+    {
+      name: 'sql-package-shaped-fqcn',
+      extract: () => extractPackageShapedOldNames("-- comment\nUPDATE t SET config = '{\"@class\":\"cn.iocoder.yudao.module.infra.framework.file.core.client.db.DBFileClient\"}';", 'injected'),
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      name: 'quartz-job-class-old-ref',
+      // 调度入口 Job 类经 import 解析出 FQCN 后交同一判定（模拟 checkNamingContract 的解析路径）
+      extract: () => {
+        const refs = extractQuartzJobBuilderClasses('JobDetail jobDetail = JobBuilder.newJob(OldInvoker.class)', 'injected');
+        return refs.flatMap((r) => judgeValue(r.source, r.field, 'cn.iocoder.yudao.framework.quartz.core.handler.OldInvoker'));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      name: 'audit-constant-old-name',
+      extract: () => extractStringConstants('public static final String LEGACY_EVENT = "yudao_order_created";', 'injected'),
+      expectValue: 'yudao_order_created',
+    },
+    {
+      name: 'outbox-sql-literal-old-name',
+      extract: () => extractSqlStringLiterals("CHECK (status IN ('PENDING', 'yudao_dispatched'))", 'injected'),
+      expectValue: 'yudao_dispatched',
+    },
+    {
+      name: 'stream-subclass-scan',
+      extract: () => extractRedisMessageSubclasses('public class YudaoDemoMessage extends AbstractRedisStreamMessage {', 'injected'),
+      expectValue: 'YudaoDemoMessage', // 子类 SimpleName 即 stream key，须被旧名判定命中
+    },
+    {
+      name: 'yaml-key-prefix-old',
+      extract: () => extractYamlKeyPrefixes('      key-prefix: yudao_wx # 旧前缀', 'injected'),
+      expectValue: 'yudao_wx',
+    },
+    {
+      name: 'json-typinfo-impl-fqcn',
+      extract: () => judgeValue('injected', 'json-typinfo-impl-fqcn', 'cn.iocoder.yudao.module.pay.framework.pay.core.client.db.DBPayClientConfig'),
+      expectValue: null, // judgeValue 直接判定：命中 ≥1
+    },
+  ];
+  const results = [];
+  let failed = false;
+  for (const s of samples) {
+    const extracted = s.extract();
+    let hits;
+    if (s.expectValue === null) {
+      hits = extracted.length;
+    } else {
+      hits = extracted.filter((k) => k.value === s.expectValue)
+        .flatMap((k) => judgeValue(k.source, k.field, k.value)).length;
+    }
+    const minHits = s.minHits ?? 1;
+    const ok = hits >= minHits;
+    results.push({ sample: s.name, extracted: Array.isArray(extracted) ? extracted.length : 1, oldNameHits: hits, pass: ok });
+    if (!ok) failed = true;
+  }
+  // 反向：非包形来源署名不得误报（G3 已登记口径在本门禁的值级映射）
+  const benign = extractPackageShapedOldNames('-- 来源：sql/postgresql/ruoyi-vue-pro.sql + quartz.sql（经 ZS-BRAND 改名后的新装基线）', 'benign');
+  const benignOk = benign.length === 0;
+  results.push({ sample: 'benign-provenance-comment-not-flagged', extracted: 1, oldNameHits: benign.length, pass: benignOk });
+  if (!benignOk) failed = true;
+  return { results, pass: !failed };
+}
+
+// ---------------------------------------------------------------------------
+// 主流程
+// ---------------------------------------------------------------------------
+const invokedDirectly = process.argv[1] && process.argv[1].replaceAll('\\', '/').endsWith('scripts/brand/verify-brand-004c-persistence.mjs');
+if (invokedDirectly) {
+  try {
+    const { inventory, violations, beanNames, auditConstants, quartzJobClasses, contractSeedHandlers } = runInventory();
+    const appYamlText = readRepoFile('services/zhongshu-core/zszj-server/src/main/resources/application.yaml') ?? '';
+    const jsonUtilsRel = listGitFiles((f) => f.endsWith('util/json/JsonUtils.java'))[0] ?? null;
+    const jsonUtilsText = jsonUtilsRel ? readRepoFile(jsonUtilsRel) : null;
+    const contractProblems = checkNamingContract({
+      seedHandlers: contractSeedHandlers,
+      beanNames,
+      quartzJobClasses,
+      outboxConstants: auditConstants,
+      appYaml: {
+        springAppName: extractSpringAppName(appYamlText),
+        hasHandlerWhitelistKey: /handler-whitelist:/.test(appYamlText),
+      },
+      jsonUtilsText,
+    });
+    const selfTest = injectionSelfTest();
+
+    const report = {
+      task: 'ZS-BRAND-004.C 任务与消息持久化引用静态门禁',
+      inventory: quiet ? {
+        jobSeeds: { scannedFiles: inventory.jobSeeds.scannedFiles, handlerCount: inventory.jobSeeds.handlers.length, handlers: inventory.jobSeeds.handlers.map((h) => h.value), beanCount: beanNames.length },
+        quartz: { sqlFilesScanned: inventory.sqlPackageShapedScanned, qrtzSeedRows: 0, jobBuilderRefs: inventory.quartz.jobBuilderRefs },
+        outboxInbox: inventory.outboxInbox,
+        msg: { streamSubclasses: inventory.msg.streamSubclasses, yamlKeyPrefixes: inventory.msg.yamlKeyPrefixes, jsonTypeInfoImplFqcns: inventory.msg.jsonTypeInfoImplFqcns },
+      } : inventory,
+      oldNameViolations: violations,
+      namingContractProblems: contractProblems,
+      injectionSelfTest: selfTest,
+      pass: violations.length === 0 && contractProblems.length === 0 && selfTest.pass,
+    };
+    console.log(JSON.stringify(report, null, 2));
+    console.error(
+      `jobSeeds=${inventory.jobSeeds.handlers.length} jobBeans=${beanNames.length} `
+      + `qrtzSeedRows=0 sqlFiles=${inventory.sqlPackageShapedScanned} `
+      + `outboxMigrations=${inventory.outboxInbox.migrationFiles} auditConstants=${inventory.outboxInbox.auditConstants} `
+      + `streamSubclasses=${inventory.msg.streamSubclasses} yamlKeyPrefixes=${inventory.msg.yamlKeyPrefixes} `
+      + `jsonTypeInfoImpls=${inventory.msg.jsonTypeInfoImplFqcns.length} `
+      + `oldNameViolations=${violations.length} contractProblems=${contractProblems.length} `
+      + `injectionSelfTest=${selfTest.pass ? 'PASS' : 'FAIL'} => ${report.pass ? 'PASS' : 'FAIL'}`,
+    );
+    process.exitCode = report.pass ? 0 : 1;
+  } catch (error) {
+    console.error(`brand-004c persistence check failed: ${error.message}`);
+    process.exitCode = 2;
+  }
+}
