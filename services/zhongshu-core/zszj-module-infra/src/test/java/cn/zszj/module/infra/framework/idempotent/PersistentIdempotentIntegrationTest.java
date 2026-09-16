@@ -311,9 +311,9 @@ public class PersistentIdempotentIntegrationTest extends BaseDbUnitTest {
 
     // ========== Helpers ==========
 
-    /** 与切面同口径的期望摘要（未截断脱敏表示的 MD5，P2-1 口径） */
+    /** 与切面同口径的期望摘要（原始业务入参的 keyed SHA-256，codex r0 P2-1 口径） */
     private static String expectedDigest(String req) {
-        return SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(new Object[]{req}));
+        return IdempotentAspect.computeArgsDigest(new Object[]{req});
     }
 
     /** 本测试唯一的持久化记录行（clean.sql 保证用例间隔离） */

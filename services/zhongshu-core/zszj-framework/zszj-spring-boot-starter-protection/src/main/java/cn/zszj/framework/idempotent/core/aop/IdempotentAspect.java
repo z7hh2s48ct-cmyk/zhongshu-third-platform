@@ -2,6 +2,8 @@ package cn.zszj.framework.idempotent.core.aop;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.SecureUtil;
+import cn.hutool.crypto.digest.HMac;
+import cn.hutool.crypto.digest.HmacAlgorithm;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
@@ -15,6 +17,7 @@ import cn.zszj.framework.idempotent.core.persistent.PersistentIdempotentStatus;
 import cn.zszj.framework.idempotent.core.persistent.PersistentIdempotentStore;
 import cn.zszj.framework.idempotent.core.redis.IdempotentRedisDAO;
 import cn.zszj.framework.web.core.util.WebFrameworkUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
@@ -29,7 +32,9 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.util.Assert;
 
+import java.lang.reflect.Method;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -46,9 +51,10 @@ import java.util.Optional;
  *
  * ZS-SEC-011.B（持久化幂等 + HTTP 重试联验）：
  * <ul>
- *     <li><b>Key/Value 职责切分</b>：参数摘要改「未截断脱敏表示」的 MD5（codex 011.A P2-1 修复），
- *         Default/User 解析器 Key 去除 argsStr（REC-2 收编）——同键异参冲突在默认路径可达；
- *         读回摘要失败的告警只落 Key 的 md5 指纹，不落原值（codex 011.A P2-2 修复）；</li>
+ *     <li><b>Key/Value 职责切分</b>：Default/User 解析器 Key 去除 argsStr（REC-2 收编）——同键异参冲突在默认路径可达；
+ *         读回摘要失败的告警只落 Key 的 md5 指纹，不落原值（codex 011.A P2-2 修复）；
+ *         重放身份摘要为「原始业务入参」的 keyed SHA-256（{@link #computeArgsDigest}，codex 011.B r0 P2-1 修复：
+ *         无损身份，仅敏感字段不同的请求按冲突拒绝；摘要输入不落日志/存储，与日志脱敏分属两条管线）；</li>
  *     <li><b>persistent=true 持久化幂等</b>：INSERT RUNNING → 业务 → markSuccess 与业务<b>同事务</b>提交
  *         （{@link PersistentIdempotentStore} 实现方强制 MANDATORY 参与），丢响应重放返回原结果快照、
  *         重启不重复写、业务回滚无残留记录；并发由 DB 唯一约束单层兜底（本模式不走 Redis，无双层竞态）。</li>
@@ -57,9 +63,11 @@ import java.util.Optional;
  * 持久化模式使用约束（不满足即 fail-closed，不静默降级）：
  * ① 注解方法必须在业务事务内被调用（无事务 → store 抛 IllegalTransactionStateException）；
  * ② 必须有登录主体（userId 非空）——持久化记录携带结果快照，匿名塌缩即跨主体结果重放；
- * ③ 主体因子（tenant/userId/userType）强制并入持久化键派生（含 Expression 解析器路径，
- *    堵其无主体作用域的跨主体撞键）；持久化键一律 md5 定长 32，无截断碰撞；
- * ④ 结果快照按声明返回类型反序列化：HTTP JSON 形状不变；Java 直调泛型元素退化的边界如实登记；
+ * ③ 操作/方法身份 + 主体因子（tenant/userId/userType）强制并入持久化键派生（含 Expression 解析器路径，
+ *    codex 011.B r0 P1 修复：不同操作同业务键天然不同键，「取消」不会命中「创建」的快照；
+ *    重放时还校验记录 actionScope 一致）；持久化键一律 md5 定长 32，无截断碰撞；
+ * ④ 结果快照按声明返回类型反序列化（走无日志路径，损坏快照原文不落日志——codex 011.B r0 P2-2）：
+ *    HTTP JSON 形状不变；Java 直调泛型元素退化的边界如实登记；
  *    快照缺失/损坏重放退化为「状态级复用」（900 拒绝），绝不重执行业务。
  *
  * ZS-SEC-011.A 已知缺口（本批 spec §4 文件清单仅含 DefaultIdempotentKeyResolver，以下登记不留白，挂后续任务）：
@@ -113,15 +121,14 @@ public class IdempotentAspect {
         // 解析 Key
         String key = keyResolver.resolver(joinPoint, idempotent);
 
-        // ZS-SEC-011.A：计算参数摘要，用于同键异参冲突检测
-        // IMP-6：摘要输入改为「脱敏后」入参，避免未脱敏原文（含密码/令牌）MD5 后落 Redis value 被离线爆破（SEC-007 在 Redis 侧的对称缺口）；
-        //        敏感字段差异被视为同参，对幂等语义无害
-        // ZS-SEC-011.B（codex r0 P2-1 修复）：摘要输入用「未截断」脱敏表示——日志口径的 2048 截断会让
-        //        等长、仅第 2048 字符后不同的入参产生相同 MD5（等长异尾碰撞），破坏冲突检测
-        // codex r0 P1：摘要「每请求必算」（含首次放行），须先经 serializableArgs 排除 servlet/spring-web 基础设施入参——
-        //        LogSanitizeUtils 内部用 Jackson valueToTree 序列化会调用全部 getter，对 HttpServletResponse 触发 getWriter()，
-        //        提前选定响应字符输出模式，破坏后续 ServletUtils.writeAttachment 等二进制输出（抛 IllegalStateException）
-        String argsDigest = SecureUtil.md5(LogSanitizeUtils.sanitizeArgsUntruncated(serializableArgs(joinPoint.getArgs())));
+        // ZS-SEC-011.A：计算参数摘要，用于同键异参冲突检测 / 重放身份比对
+        // codex r0 P1：摘要「每请求必算」（含首次放行），摘要管线内部经 serializableArgs 排除 servlet/spring-web 基础设施入参——
+        //        序列化基础设施对象（如 HttpServletResponse）会触发 getWriter() 破坏后续二进制输出
+        // codex 011.B r0 P2-1 修复：重放身份改「原始业务入参」的 keyed SHA-256（无损）——
+        //        此前摘要输入是脱敏表示，仅敏感字段不同的两个请求同摘要，第二个会被当重复/复用第一个的结果（有损身份）；
+        //        现原文仅存在于计算内（不落任何日志/存储），存储侧为带 pepper 的 HMAC（不可离线爆破，IMP-6 安全目标以更强形式达成），
+        //        与日志脱敏（LogSanitizeUtils，仅用于呈现）是两条管线。见 {@link #computeArgsDigest}
+        String argsDigest = computeArgsDigest(joinPoint.getArgs());
 
         // ZS-SEC-011.B：持久化幂等模式（DB 唯一约束 + 业务同事务 + 结果快照复用）
         if (idempotent.persistent()) {
@@ -208,9 +215,13 @@ public class IdempotentAspect {
                     joinPoint.getSignature(), tenantId, userType);
             throw new ServiceException(GlobalErrorCodeConstants.INTERNAL_SERVER_ERROR.getCode(), "持久化幂等要求登录主体");
         }
-        // 主体因子强制并入键派生（含 Expression 解析器路径）：不同主体同业务键永不共用记录（不误用他人结果）
-        String storeKey = SecureUtil.md5(resolvedKey + ":" + tenantId + ":" + userId + ":" + userType);
-        String actionScope = joinPoint.getSignature().toString();
+        // 操作/方法身份（codex r0 P1）：取目标类 Method 的规范串（声明类+方法+参数类型，与代理实现类名无关、跨进程稳定），
+        // 既并入持久化键派生，也落库并在重放时校验一致——不同操作同业务键天然不同键，
+        // 「取消」不会命中早前「创建」的 SUCCESS 快照
+        java.lang.reflect.Method idempotentMethod = ((MethodSignature) joinPoint.getSignature()).getMethod();
+        String actionScope = idempotentMethod.toString();
+        // 主体因子 + 操作/方法身份强制并入键派生（含 Expression 解析器路径）：不同主体/不同操作同业务键永不共用记录
+        String storeKey = SecureUtil.md5(actionScope + ":" + resolvedKey + ":" + tenantId + ":" + userId + ":" + userType);
 
         // 快路径：已有记录（顺序重放，含丢响应/重启后重放）——不产生写入
         Optional<PersistentIdempotentRecord> existing = store.findByIdempotentKey(storeKey);
@@ -235,7 +246,7 @@ public class IdempotentAspect {
             }
         }
         if (existing.isPresent()) {
-            return replayPersistent(joinPoint, idempotent, storeKey, argsDigest, existing.get());
+            return replayPersistent(joinPoint, idempotent, actionScope, storeKey, argsDigest, existing.get());
         }
 
         // 执行业务：markSuccess（或失败删/留）与业务同事务，随调用方提交/回滚同生共死
@@ -256,8 +267,15 @@ public class IdempotentAspect {
     /**
      * 持久化重放分类：摘要不等 → 冲突；SUCCESS+快照 → 复用原结果；其余（SUCCESS 无快照 / RUNNING / FAILED）→ 状态级拒绝
      */
-    private Object replayPersistent(ProceedingJoinPoint joinPoint, Idempotent idempotent, String storeKey,
+    private Object replayPersistent(ProceedingJoinPoint joinPoint, Idempotent idempotent, String actionScope, String storeKey,
                                     String argsDigest, PersistentIdempotentRecord record) throws Throwable {
+        // 操作/方法身份一致性校验（codex r0 P1 纵深防御）：键已含 actionScope，命中记录却 scope 不符
+        // 只可能是哈希碰撞/记录被篡改——fail-closed 拒绝，绝不返回异操作快照
+        if (!actionScope.equals(record.getActionScope())) {
+            log.error("[aroundPersistentPointCut][方法({}) 幂等键指纹({}) 记录操作身份不符（期望={} 实际={}），fail-closed 拒绝]",
+                    joinPoint.getSignature(), SecureUtil.md5(storeKey), actionScope, record.getActionScope());
+            throw new ServiceException(GlobalErrorCodeConstants.REPEATED_REQUESTS.getCode(), CONFLICT_MESSAGE);
+        }
         if (!argsDigest.equals(record.getRequestDigest())) {
             log.warn("[aroundPersistentPointCut][方法({}) 幂等键指纹({}) 同键异参冲突]",
                     joinPoint.getSignature(), SecureUtil.md5(storeKey));
@@ -268,9 +286,12 @@ public class IdempotentAspect {
             if (snapshot != null) {
                 try {
                     Type returnType = ((MethodSignature) joinPoint.getSignature()).getMethod().getGenericReturnType();
-                    return JsonUtils.parseObject(snapshot, returnType);
+                    // codex r0 P2-2：必须走「无日志」反序列化路径——JsonUtils.parseObject(String, Type) 失败时
+                    // 会先把整个输入（快照原文，可能含凭据/个人数据）打进内部日志再抛，外层 catch 挡不住；
+                    // 故直接用 ObjectMapper.readValue，失败仅保留 errClass 级元数据（状态降级 900，绝不重执行业务）
+                    ObjectMapper objectMapper = JsonUtils.getObjectMapper();
+                    return objectMapper.readValue(snapshot, objectMapper.getTypeFactory().constructType(returnType));
                 } catch (Exception ex) {
-                    // 快照损坏：降级状态级复用，绝不重执行业务
                     log.error("[aroundPersistentPointCut][方法({}) 幂等键指纹({}) 结果快照解析失败，降级状态级复用 errClass={}]",
                             joinPoint.getSignature(), SecureUtil.md5(storeKey), ex.getClass().getName());
                 }
@@ -293,6 +314,40 @@ public class IdempotentAspect {
             log.error("[snapshotResult][结果快照序列化失败 errClass={}，重放将退化为状态级复用]", ex.getClass().getName());
             return null;
         }
+    }
+
+    /**
+     * 摘要 pepper（应用内常量，不入配置/日志/存储）：使存储侧摘要不可离线爆破——
+     * 摘要原文（未脱敏入参 JSON）只存在于计算内，攻击者即便拿到存储中的摘要，
+     * 离线穷举也需先获得本 pepper（需应用代码访问权），IMP-6 的安全目标以更强形式达成
+     */
+    private static final byte[] DIGEST_PEPPER = "zszj-idempotent-args-digest-v1".getBytes(StandardCharsets.UTF_8);
+
+    /**
+     * 重放身份摘要（codex 011.B r0 P2-1 修复）：「原始业务入参」（未脱敏、未截断）的 keyed SHA-256。
+     *
+     * <p>与日志脱敏是<b>两条管线</b>：{@link LogSanitizeUtils}（掩码、截断）仅用于日志呈现——
+     * 其掩码会把 password/token 等敏感字段等价化为 {@code ***}，若摘要走脱敏口径，
+     * 仅敏感字段不同的两个请求会同摘要，第二个会被当重复/复用第一个的结果（有损身份，本修复对象）。
+     * 本方法序列化<b>原始</b>业务入参做 keyed 摘要，摘要输入不落任何日志/存储，
+     * 落存储的只有不可逆的 HMAC-SHA256（64 hex，{@code request_digest varchar(64)} 恰容）——存储无泄密风险。
+     *
+     * <p>{@code args} 先经 {@link #serializableArgs} 排除 servlet/spring-web 基础设施入参（防序列化副作用，codex 011.A r0 P1）；
+     * 极端情况下不可 JSON 化的业务入参降级脱敏口径（有损），并只记 errClass 不落原文。
+     *
+     * @param args 原始方法入参
+     * @return keyed SHA-256 hex（64 字符）
+     */
+    public static String computeArgsDigest(Object[] args) {
+        String digestInput;
+        try {
+            digestInput = JsonUtils.toJsonString(serializableArgs(args));
+        } catch (Exception ex) {
+            log.error("[computeArgsDigest][入参原文序列化失败，摘要降级脱敏口径（有损） errClass={}]", ex.getClass().getName());
+            digestInput = LogSanitizeUtils.sanitizeArgsUntruncated(args);
+        }
+        HMac hmac = new HMac(HmacAlgorithm.HmacSHA256, DIGEST_PEPPER);
+        return hmac.digestHex(digestInput);
     }
 
     /**

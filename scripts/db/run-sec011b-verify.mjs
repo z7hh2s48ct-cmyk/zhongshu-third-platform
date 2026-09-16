@@ -133,16 +133,18 @@ VALUES ('key-p4-bogus', 1, '2', '100', 'OrderService.createOrder(..)', 'digest-b
 // P5 跨「进程」重放：独立新连接读回 SUCCESS + 全量摘要 + 快照（复用决策输入齐备），每键恒一行（不重复写）
 {
   reset();
-  insertRunning('key-p5', 'digest-p5');
+  // codex 011.B r0 P2-1 后摘要为 keyed SHA-256（64 hex），验证 varchar(64) 列恰好容纳不截断
+  const digest64 = 'a'.repeat(32) + 'b'.repeat(32);
+  insertRunning('key-p5', digest64);
   markSuccess('key-p5', '"result-A"');
   // 独立 docker exec = 独立后端会话（模拟进程重启后的重放方）：决策输入 = 状态 + 摘要 + 快照
   const replayRead = psqlOut('postgres', 'zhongshu', `SELECT status || '#' || request_digest || '#' || result_snapshot FROM infra_persistent_idempotent WHERE idempotent_key = 'key-p5'`);
-  const dupInsert = insertRunning('key-p5', 'digest-p5'); // 重放方也抢锁：唯一约束仍只放一行
+  const dupInsert = insertRunning('key-p5', digest64); // 重放方也抢锁：唯一约束仍只放一行
   const rows = one(`SELECT count(*) FROM infra_persistent_idempotent WHERE idempotent_key = 'key-p5'`);
-  const digestLong = one(`SELECT length(request_digest) FROM infra_persistent_idempotent WHERE idempotent_key = 'key-p5'`);
-  record('P5 跨进程重放不重复写（独立会话读回 SUCCESS+摘要+快照 + 重插仍 1 行）',
-    replayRead.stdout.trim() === 'SUCCESS#digest-p5#"result-A"' && dupInsert.length === 0 && rows === '1' && Number(digestLong) > 0,
-    `replay=${replayRead.stdout.trim()} dup_wins=${dupInsert.length} rows=${rows}`);
+  const digestLen = one(`SELECT length(request_digest) FROM infra_persistent_idempotent WHERE idempotent_key = 'key-p5'`);
+  record('P5 跨进程重放不重复写（独立会话读回 SUCCESS+摘要+快照 + 重插仍 1 行 + 64 位 keyed 摘要不截断）',
+    replayRead.stdout.trim() === `SUCCESS#${digest64}#"result-A"` && dupInsert.length === 0 && rows === '1' && Number(digestLen) === 64,
+    `replay=${replayRead.stdout.trim().slice(0, 20)}... dup_wins=${dupInsert.length} rows=${rows} digest_len=${digestLen}`);
 }
 
 // P6 失败路径：RUNNING 删除后可重插（失败可重试）/ FAILED 保留挡重插（重放由切面拒绝）
