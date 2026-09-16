@@ -95,6 +95,12 @@
             <optional>true</optional>
         </dependency>
 
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId> <!-- ZS-OPS-002.B：OutboxQueueHealthIndicator 直接使用 HealthIndicator/Health API；optional 不强加下游，运行期由 zszj-server 提供 -->
+            <optional>true</optional>
+        </dependency>
+
         <!-- 三方云服务相关 -->
         <dependency>
             <groupId>commons-net</groupId>
