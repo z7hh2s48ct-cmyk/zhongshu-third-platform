@@ -158,8 +158,10 @@
 
 | # | 小卡 | 缺陷 | 文件:行 | 状态 |
 |---|---|---|---|---|
-| JOB-004-P2-1 | 脱敏异常名来源白名单收敛 | 逐段验证白名单已拦畸形限定名（`a..bException`/`a.1Exception`），但合法 Java 限定名+Throwable 后缀（如 `password_real_secret_123Exception`）仍可通过——极窄来源信任残留（派发器 `describeThrowable` 恒写真实异常 SimpleName，非受控字符串来源触发面窄）。收敛方向：异常名来源白名单 / 敏感词根集二次过滤 | `OutboxRecoveryServiceImpl.java`（`isControlledExceptionName`/`isQualifiedJavaName` 脱敏白名单） | ⏳ 待处置（非阻塞） |
-| JOB-004-P2-2 | 并发恢复确定性锁阻塞观测测试 | `OutboxRecoveryServiceTest` 并发用例 `bReadStaleCount.await(250ms)` 返回值被忽略，无法保证「实现被移除时必然 RED」的确定性锁阻塞观测（P1 FOR UPDATE 行锁实现已 RESOLVED，本项为测试强度改进）。收敛方向：以 JDBC 执行钩子/可观测同步点构造 H2 确定性锁阻塞，超时判失败 | `OutboxRecoveryServiceTest.java`（并发恢复用例） | ⏳ 待处置（非阻塞） |
+| JOB-004-P2-1 | 脱敏异常名来源白名单收敛 | 逐段验证白名单已拦畸形限定名（`a..bException`/`a.1Exception`），但合法 Java 限定名+Throwable 后缀（如 `password_real_secret_123Exception`）仍可通过——极窄来源信任残留（派发器 `describeThrowable` 恒写真实异常 SimpleName，非受控字符串来源触发面窄）。收敛方向：异常名来源白名单 / 敏感词根集二次过滤 | `OutboxRecoveryServiceImpl.java`（`isControlledExceptionName`/`isQualifiedJavaName` 脱敏白名单） | ✅ 已处置（2026-09-17，凭据词根集二次过滤 `58ff5dbd`+Locale.ROOT `d4f9af6a`，合并 `4643dde6`；详见 [codex-ZS-JOB-004-P2.md](codex-ZS-JOB-004-P2.md)） |
+| JOB-004-P2-2 | 并发恢复确定性锁阻塞观测测试 | `OutboxRecoveryServiceTest` 并发用例 `bReadStaleCount.await(250ms)` 返回值被忽略，无法保证「实现被移除时必然 RED」的确定性锁阻塞观测（P1 FOR UPDATE 行锁实现已 RESOLVED，本项为测试强度改进）。收敛方向：以 JDBC 执行钩子/可观测同步点构造 H2 确定性锁阻塞，超时判失败 | `OutboxRecoveryServiceTest.java`（并发恢复用例） | ✅ 已处置（2026-09-17，断言 0b「await 必须超时返回 false」随 `58ff5dbd` 落地；详见 [codex-ZS-JOB-004-P2.md](codex-ZS-JOB-004-P2.md)） |
+
+> **ZS-JOB-004 后续小卡收口（2026-09-17）**：P2-1/P2-2 循 OPS-001.B/.C 先例同分支 `feat/job-004-p2` 串行交付、合并评审（[codex-ZS-JOB-004-P2.md](codex-ZS-JOB-004-P2.md)，r0 1×P2〔tr-TR locale 下 toLowerCase 折 I 绕过词根过滤，codex 四 locale 编译后方法实测〕→ Locale.ROOT 修复 + tr-TR 回归用例 → r1 **PASS/0 发现**；27/27 + infra -am 455/0 + fast 10/10，合并 main `4643dde6`）。教训登记：安全过滤凡涉大小写折叠必须 Locale.ROOT——默认 locale 依赖在 tr-TR/az-AZ 部署机直接构成绕过面。
 
 ## B04 文件与审计专项评审状态
 
