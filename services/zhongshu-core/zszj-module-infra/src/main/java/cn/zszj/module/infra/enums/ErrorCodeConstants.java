@@ -67,6 +67,11 @@ public interface ErrorCodeConstants {
     // ZS-FILE-005.A：删除中间态与人工对账
     ErrorCode FILE_DELETE_REFERENCED = new ErrorCode(1_001_003_032, "文件存在进行中的交付会话（引用保护），暂不能删除");
     ErrorCode FILE_DELETE_IN_PROGRESS = new ErrorCode(1_001_003_033, "文件删除正在进行中，请勿重复发起");
+    // ZS-FILE-005.B：自动补偿与孤儿对象清理
+    ErrorCode FILE_ORPHAN_LISTING_NOT_SUPPORTED = new ErrorCode(1_001_003_034, "当前存储不支持对象清点，无法预览/清理孤儿对象");
+    ErrorCode FILE_ORPHAN_CLEANUP_BATCH_EXCEED = new ErrorCode(1_001_003_035, "单次孤儿清理数量（{}）超过上限（{}），请分批授权");
+    ErrorCode FILE_ORPHAN_SHARED_STORAGE_REFUSED = new ErrorCode(1_001_003_036, "存储根与其他文件配置共享或嵌套（{}），孤儿清点/清理被保守拒绝，请先隔离存储根");
+    ErrorCode FILE_ORPHAN_PATH_UNVERIFIABLE = new ErrorCode(1_001_003_037, "孤儿对象路径位于被跳过的别名/不可解析目录下或清点被截断，存在性无法核验，已拒绝清理（防假成功）"); // codex r3 P2
     ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");

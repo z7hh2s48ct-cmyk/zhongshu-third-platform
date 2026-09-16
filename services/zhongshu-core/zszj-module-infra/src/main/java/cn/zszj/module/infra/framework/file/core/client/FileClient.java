@@ -80,6 +80,40 @@ public interface FileClient {
         return java.util.Arrays.copyOfRange(content, from, to);
     }
 
+    /**
+     * 对象清点（ZS-FILE-005.B 孤儿对象「预览」）：返回 path 以 prefix 开头的对象条目，
+     * 按 path 稳定排序、受 maxEntries 有界。
+     *
+     * <p>默认抛 {@link UnsupportedOperationException}——当前仅 local/db 实装；
+     * s3/ftp/sftp 待真实对象存储接入并实测后回填（未经实测的清点实现若前缀/边界有缺陷，
+     * 会直接放大为孤儿误删，保守不支持优于假支持）。</p>
+     *
+     * @param prefix     前缀过滤（空串=全部）
+     * @param maxEntries 返回条目上限
+     * @return 清点条目列表（size/lastModified 允许为 null，服务层对 null 保守跳过）
+     * @throws UnsupportedOperationException 当前存储不支持清点
+     */
+    default java.util.List<FileObjectEntry> listObjects(String prefix, int maxEntries) {
+        throw new UnsupportedOperationException("当前存储不支持对象清点");
+    }
+
+    /**
+     * 对象清点（带不可验证上报，ZS-FILE-005.B codex r3 P2）：在 {@link #listObjects} 条目语义之上，
+     * 额外返回枚举期被跳过（符号链接/别名/解析失败）目录的前缀与被跳过文件路径——
+     * 这些路径下的对象可能真实存在却不出现在条目中，调用方（孤儿清理）必须区分
+     * 「确认不存在」（幂等收敛）与「不可验证」（拒绝，不得假报成功）。
+     *
+     * <p>默认实现无可验证盲区（清点即权威，上报为空列表）；local 实装真实盲区上报。</p>
+     *
+     * @param prefix     前缀过滤（空串=全部）
+     * @param maxEntries 返回条目上限
+     * @return 条目 + 不可验证前缀/路径
+     * @throws UnsupportedOperationException 当前存储不支持清点
+     */
+    default FileListing listObjectsDetailed(String prefix, int maxEntries) {
+        return new FileListing(listObjects(prefix, maxEntries), java.util.List.of(), java.util.List.of());
+    }
+
     // ========== 文件签名，目前仅 S3 支持 ==========
 
     /**

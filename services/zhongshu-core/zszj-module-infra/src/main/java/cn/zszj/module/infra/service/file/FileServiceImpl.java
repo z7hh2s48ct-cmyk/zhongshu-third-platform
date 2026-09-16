@@ -294,10 +294,13 @@ public class FileServiceImpl implements FileService {
 
         // 2 中间态推进（ZS-FILE-005.A，codex r0 P1：先锁定删除意图——兑换/取流侧据 DELETING 拒绝，
         //   使引用检查与兑换串行化）：非 DELETING 态（含存量/历史值）条件推进为 DELETING 可恢复中间态；
-        //   已处于 DELETING（人工对账重试）直接继续；并发双删败者按「删除进行中」拒绝
+        //   已处于 DELETING（人工对账重试）直接继续；并发双删败者按「删除进行中」拒绝。
+        //   ZS-FILE-005.B：同步写入 deleting_time——自动补偿的超时依据（update_time 不可靠，
+        //   update(null, wrapper) 不触发自动填充）
         if (!FileDO.STATUS_DELETING.equals(file.getStatus())) {
             int affected = fileMapper.update(null, new LambdaUpdateWrapper<FileDO>()
                     .set(FileDO::getStatus, FileDO.STATUS_DELETING)
+                    .set(FileDO::getDeletingTime, LocalDateTime.now())
                     .eq(FileDO::getId, id)
                     .ne(FileDO::getStatus, FileDO.STATUS_DELETING));
             if (affected == 0) {
@@ -306,10 +309,12 @@ public class FileServiceImpl implements FileService {
         }
 
         // 3 引用保护（ZS-FILE-005.A）：中间态锁定后复查进行中的交付会话——命中则回退 PUBLISHED 并拒绝，
-        //   不误删仍被引用的对象（转移后新建兑换已被 DELETING 检查拒绝，引用集不再增长）
+        //   不误删仍被引用的对象（转移后新建兑换已被 DELETING 检查拒绝，引用集不再增长）。
+        //   ZS-FILE-005.B：回退同步清空 deleting_time（不残留补偿候选）
         if (CollUtil.isNotEmpty(deliveryTicketMapper.selectActiveRedeemedByFileId(id, LocalDateTime.now()))) {
             fileMapper.update(null, new LambdaUpdateWrapper<FileDO>()
                     .set(FileDO::getStatus, FileDO.STATUS_PUBLISHED)
+                    .set(FileDO::getDeletingTime, null)
                     .eq(FileDO::getId, id)
                     .eq(FileDO::getStatus, FileDO.STATUS_DELETING));
             throw exception(FILE_DELETE_REFERENCED);
@@ -321,12 +326,14 @@ public class FileServiceImpl implements FileService {
         try {
             client.delete(file.getPath());
         } catch (Exception ex) {
-            log.error("[deleteFile][文件({}) 对象删除失败，保留 DELETING 记录待人工对账]", id, ex);
+            log.error("[deleteFile][文件({}) 对象删除失败，保留 DELETING 记录待补偿/人工对账]", id, ex);
             throw ex;
         }
 
-        // 5 对象已删除 → 删除记录
-        fileMapper.deleteById(id);
+        // 5 对象已删除 → 条件化移除记录（ZS-FILE-005.B 硬化：仅 DELETING 态可被移除——
+        //   对象删除与记录移除之间发生引用回退/对账交错的极端场景下，绝不误移除非 DELETING 记录；
+        //   残留记录随后续对账按「确认缺失仅移记录」自愈）
+        fileMapper.deleteByIdIfStillDeleting(id);
     }
 
     @Override
@@ -385,12 +392,13 @@ public class FileServiceImpl implements FileService {
             //（如 SFTP delete 对缺失对象抛 SSH_FX_NO_SUCH_FILE，会使对账路径永久卡死）
             if (isObjectConfirmedAbsent(file)) {
                 log.warn("[reconcileCleanupFile][文件({}) 对象已确认不存在，仅移除 DELETING 记录]", id);
-                fileMapper.deleteById(id);
+                fileMapper.deleteByIdIfStillDeleting(id);
                 return;
             }
             throw ex;
         }
-        fileMapper.deleteById(id);
+        // ZS-FILE-005.B：条件化移除（同 deleteFile 第 5 步——对账/补偿并发下仅 DELETING 态可被移除）
+        fileMapper.deleteByIdIfStillDeleting(id);
     }
 
     /**
@@ -594,7 +602,8 @@ public class FileServiceImpl implements FileService {
 
     // ========== ZS-FILE-003：预签名直传凭证与完成确认 ==========
 
-    private static final String TEMP_PATH_PREFIX = "temp/";
+    /** ZS-FILE-003：临时区前缀（包内可见——ZS-FILE-005.B 孤儿清点复用同一分类） */
+    static final String TEMP_PATH_PREFIX = "temp/";
     private static final long CREDENTIAL_EXPIRE_MINUTES = 30;
 
     @Override

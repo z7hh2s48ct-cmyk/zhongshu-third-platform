@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：347
+# 端点总数：349
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -112,6 +112,7 @@ GET|/admin-api/infra/file-config/page|ADMIN|PERMISSION|infra:file-config:query|i
 GET|/admin-api/infra/file-config/test|ADMIN|PERMISSION|infra:file-config:query|infra|FileConfigController
 GET|/admin-api/infra/file/delivery/chunk|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
 GET|/admin-api/infra/file/get|ADMIN|PERMISSION|infra:file:query|infra|FileController
+GET|/admin-api/infra/file/orphan/preview|ADMIN|PERMISSION|infra:file:query|infra|FileController
 GET|/admin-api/infra/file/page|ADMIN|PERMISSION|infra:file:query|infra|FileController
 GET|/admin-api/infra/file/presigned-url|ADMIN|AUTHENTICATED|-|infra|FileController
 GET|/admin-api/infra/file/reconcile/deleting|ADMIN|PERMISSION|infra:file:query|infra|FileController
@@ -251,6 +252,7 @@ POST|/admin-api/infra/file-config/create|ADMIN|PERMISSION|infra:file-config:crea
 POST|/admin-api/infra/file/delivery/issue|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
 POST|/admin-api/infra/file/delivery/redeem|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
 POST|/admin-api/infra/file/delivery/revoke|ADMIN|AUTHENTICATED|-|infra|FileDeliveryController
+POST|/admin-api/infra/file/orphan/cleanup|ADMIN|PERMISSION|infra:file:delete|infra|FileController
 POST|/admin-api/infra/file/reconcile/cleanup|ADMIN|PERMISSION|infra:file:delete|infra|FileController
 POST|/admin-api/infra/file/upload-complete|ADMIN|PERMISSION|infra:file:create|infra|FileController
 POST|/admin-api/infra/file/upload-credential|ADMIN|PERMISSION|infra:file:create|infra|FileController

@@ -4,7 +4,10 @@ import cn.zszj.module.infra.dal.dataobject.file.FileContentDO;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Mapper
@@ -20,6 +23,45 @@ public interface FileContentMapper extends BaseMapper<FileContentDO> {
         return selectList(new LambdaQueryWrapper<FileContentDO>()
                 .eq(FileContentDO::getConfigId, configId)
                 .eq(FileContentDO::getPath, path));
+    }
+
+    /**
+     * 对象清点摘要（ZS-FILE-005.B 孤儿预览）：按 path 分组取 max(create_time) 作保留期锚点，
+     * 不读取 content 大字段。LIMIT 双方言（H2/PG）可移植。
+     * codex r1 P2：LIKE 带 {@code ESCAPE '\'}——调用方（DBFileClient.escapeLikePrefix）须先把
+     * prefix 中的 {@code \}/{@code %}/{@code _} 以 {@code \} 转义，使前缀按【字面】匹配，
+     * 合法路径字符不被展开为通配符（ESCAPE 字面目标 PG 部署方言）。
+     */
+    @Select("SELECT path AS path, MAX(create_time) AS lastModified FROM infra_file_content "
+            + "WHERE config_id = #{configId} AND deleted = 0 AND path LIKE CONCAT(#{prefix}, '%') ESCAPE '\\' "
+            + "GROUP BY path ORDER BY path LIMIT #{limit}")
+    List<PathSummary> selectPathSummariesByPrefix(@Param("configId") Long configId,
+                                                  @Param("prefix") String prefix,
+                                                  @Param("limit") int limit);
+
+    /**
+     * 清点摘要投影（MyBatis 按属性名装配）
+     */
+    class PathSummary {
+
+        private String path;
+        private LocalDateTime lastModified;
+
+        public String getPath() {
+            return path;
+        }
+
+        public void setPath(String path) {
+            this.path = path;
+        }
+
+        public LocalDateTime getLastModified() {
+            return lastModified;
+        }
+
+        public void setLastModified(LocalDateTime lastModified) {
+            this.lastModified = lastModified;
+        }
     }
 
 }

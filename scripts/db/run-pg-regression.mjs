@@ -16,6 +16,7 @@
  *  12. ZS-JOB-004 人工恢复台账（V20260915.021 迁移重放、DEAD→retry/skip、SKIPPED 终态、双轨审计落地、payload 只读）
  *  13. ZS-OPS-002.B 健康监测聚合 PG 可移植性 + 告警分级/健康态映射（镜像 OutboxHealthMonitorImpl SQL 与 breaches 消费）
  *  14. ZS-SEC-011.B 持久化幂等（V20260916.101 迁移重放、ON CONFLICT 抢占、8 连接并发兜底、状态机 CHECK、跨会话重放不重复写、>2048 快照完整性）
+ *  15. ZS-FILE-005.B 超时补偿（V20260916.102 重放+存量回填、并发领取 CAS 串行化、重复清理不误删、孤儿清点全局核验）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -40,6 +41,7 @@ const cases = [
   { id: 'ZS-JOB-004 人工恢复台账/DEAD跳过/双轨审计', cmd: ['node', 'scripts/db/run-job004-verify.mjs'] },
   { id: 'ZS-OPS-002.B 健康监测聚合PG可移植/告警分级/健康态', cmd: ['node', 'scripts/db/run-ops002b-verify.mjs'] },
   { id: 'ZS-SEC-011.B 持久化幂等唯一约束/重放', cmd: ['node', 'scripts/db/run-sec011b-verify.mjs'] },
+  { id: 'ZS-FILE-005.B 超时补偿CAS串行/孤儿清点/重复清理', cmd: ['node', 'scripts/db/run-file005b-verify.mjs'] },
 ];
 
 let failed = false;

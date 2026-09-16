@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.KeySequence;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 /**
  * 文件表
  * 每次文件上传，都会记录一条记录到该表中
@@ -83,5 +85,12 @@ public class FileDO extends TenantBaseDO {
      * 上传发布即 PUBLISHED（存量行由迁移默认值回填）
      */
     private String status;
+
+    /**
+     * 删除中间态进入时刻（ZS-FILE-005.B）：自动补偿的超时依据与领取租约——
+     * 转移 DELETING 时写入；补偿领取时前推（领取即租约 + 重试退避点）；
+     * 引用保护拒绝回退 PUBLISHED 时清空。迁移 V20260916.102 对存量 DELETING 按 update_time 回填。
+     */
+    private LocalDateTime deletingTime;
 
 }

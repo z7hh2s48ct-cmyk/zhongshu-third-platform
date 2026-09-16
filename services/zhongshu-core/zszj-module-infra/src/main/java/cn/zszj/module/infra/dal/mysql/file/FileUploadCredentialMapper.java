@@ -33,4 +33,17 @@ public interface FileUploadCredentialMapper extends BaseMapperX<FileUploadCreden
         return update(updateObj, wrapper);
     }
 
+    /**
+     * 活跃凭证统计（ZS-FILE-005.B 孤儿核验）：仍在等待上传且未过期的凭证数——
+     * temp/ 对象存在活跃凭证认领即视为在途直传，不得按孤儿清理。
+     * 调用方须以 TenantUtils.executeIgnore 包裹做跨租户全局核验（任意租户在途上传都不可误删）。
+     * codex r0 P1-2：temp_path 按 LOWER 两侧折叠（大小写不敏感文件系统下清点拼写与凭证拼写可能不同）。
+     */
+    default Long selectCountActiveByTempPathIgnoreTenant(String tempPath, java.time.LocalDateTime now) {
+        return selectCount(new LambdaQueryWrapperX<FileUploadCredentialDO>()
+                .apply("LOWER(temp_path) = LOWER({0})", tempPath)
+                .eq(FileUploadCredentialDO::getStatus, FileUploadCredentialDO.STATUS_WAITING_UPLOAD)
+                .gt(FileUploadCredentialDO::getExpiresTime, now));
+    }
+
 }
