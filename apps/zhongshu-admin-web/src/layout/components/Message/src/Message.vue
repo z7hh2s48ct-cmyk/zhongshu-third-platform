@@ -3,6 +3,10 @@ import { formatDate } from '@/utils/formatTime'
 import * as NotifyMessageApi from '@/api/system/notify/message'
 import { useUserStoreWithOut } from '@/store/modules/user'
 import { propTypes } from '@/utils/propTypes'
+import {
+  applyNotifyLandingRoute,
+  notifyLandingUnavailableText
+} from '@/views/system/notify/landing'
 
 defineOptions({ name: 'Message' })
 
@@ -36,6 +40,15 @@ const goMyList = () => {
   push({
     name: 'MyNotifyMessage'
   })
+}
+
+// ZS-MSG-003：点击消息消费落点——服务端二次授权裁决；不可用明确提示，不猜测跳转
+const message = useMessage()
+const goLanding = async (item: NotifyMessageApi.NotifyMessageVO) => {
+  const result = await NotifyMessageApi.resolveNotifyMessageLanding(item.id, 'WEB')
+  if (applyNotifyLandingRoute({ push }, result) === 'unavailable') {
+    message.warning(notifyLandingUnavailableText(result))
+  }
 }
 
 // ========== 初始化 =========
@@ -74,7 +87,7 @@ onBeforeUnmount(() => {
         <ElTabPane label="我的站内信" name="notice">
           <el-scrollbar class="message-list">
             <template v-for="item in list" :key="item.id">
-              <div class="message-item">
+              <div class="message-item" @click="goLanding(item)">
                 <img alt="" class="message-icon" src="@/assets/imgs/avatar.gif" />
                 <div class="message-content">
                   <span class="message-title">
@@ -134,6 +147,8 @@ onBeforeUnmount(() => {
     align-items: center;
     padding: 20px 0;
     border-bottom: 1px solid var(--el-border-color-light);
+    // ZS-MSG-003：消息条目可点击消费落点（服务端裁决不可用时明确提示）
+    cursor: pointer;
 
     &:last-child {
       border: none;

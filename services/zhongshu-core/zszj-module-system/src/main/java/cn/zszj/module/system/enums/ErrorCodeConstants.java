@@ -225,4 +225,9 @@ public interface ErrorCodeConstants {
     ErrorCode NOTIFY_TODO_WRITE_FAILED = new ErrorCode(1_002_030_005, "业务待办写入失败");
     ErrorCode NOTIFY_TODO_TENANT_REQUIRED = new ErrorCode(1_002_030_006, "业务待办缺少租户上下文，拒绝写入");
     ErrorCode NOTIFY_TODO_FIELD_REQUIRED = new ErrorCode(1_002_030_007, "业务待办缺少必填字段：{}");
+
+    // ========== 消息落点 1-002-031-000（ZS-MSG-003） ==========
+    ErrorCode NOTIFY_LANDING_MESSAGE_NOT_FOUND = new ErrorCode(1_002_031_000, "站内信不存在");
+    ErrorCode NOTIFY_LANDING_ACCESS_DENIED = new ErrorCode(1_002_031_001, "不能访问他人的站内信");
+    ErrorCode NOTIFY_LANDING_TENANT_REQUIRED = new ErrorCode(1_002_031_002, "缺少租户上下文，拒绝解析消息落点");
 }

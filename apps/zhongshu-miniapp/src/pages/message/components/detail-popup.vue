@@ -52,6 +52,10 @@
             <text class="text-28rpx text-[#333]">{{ formData.templateContent }}</text>
           </view>
         </view>
+        <!-- ZS-MSG-003：跳转前经服务端落点二次授权；不可用明确提示，不猜测跳转 -->
+        <wd-button block :loading="landingLoading" @click="goLanding">
+          前往处理
+        </wd-button>
       </view>
     </view>
   </wd-popup>
@@ -60,12 +64,19 @@
 <script lang="ts" setup>
 import type { NotifyMessage } from '@/api/system/notify/message'
 import { ref } from 'vue'
+import { resolveNotifyMessageLanding } from '@/api/system/notify/message'
+import { useToast } from '@wot-ui/ui/components/wd-toast'
 import { getDictLabel } from '@/hooks/useDict'
 import { DICT_TYPE } from '@/utils/constants'
 import { formatDateTime } from '@/utils/date'
+import {
+  applyNotifyLandingRoute,
+  notifyLandingUnavailableText,
+} from '../landing'
 
 const visible = ref(false) // 详情弹窗显示状态
 const formData = ref<NotifyMessage>() // 详情数据
+const landingLoading = ref(false) // 落点解析中
 
 /** 打开弹窗 */
 function open(data: NotifyMessage) {
@@ -76,6 +87,26 @@ function open(data: NotifyMessage) {
 /** 关闭弹窗 */
 function close() {
   visible.value = false
+}
+
+/** 前往处理：解析落点（服务端二次授权）→ 导航由既有路由守卫最终判定 */
+const toast = useToast()
+async function goLanding() {
+  if (!formData.value || landingLoading.value) {
+    return
+  }
+  landingLoading.value = true
+  try {
+    const result = await resolveNotifyMessageLanding(formData.value.id, 'MOBILE')
+    if (applyNotifyLandingRoute((url) => {
+      visible.value = false
+      uni.navigateTo({ url })
+    }, result) === 'unavailable') {
+      toast.show(notifyLandingUnavailableText(result))
+    }
+  } finally {
+    landingLoading.value = false
+  }
 }
 
 defineExpose({ open, close })
