@@ -44,7 +44,8 @@ public class NotifyChannelSendEventSink implements OutboxEventSink {
     @Override
     public void deliver(OutboxEventRecord event) {
         long sendId = parseSendId(event);
-        channelSendService.processOutboxDelivery(sendId);
+        // r0 P1：事件身份透传——服务按 (租户, outboxEventId) 定位台账，陈旧/换绑事件被幂等吸收
+        channelSendService.processOutboxDelivery(sendId, event.getEventId());
     }
 
     /** 解析投递句柄 sendId（缺失/非法 → 抛出可见失败，不静默确认 DISPATCHED——循 MSG-002 F3 先例）。 */

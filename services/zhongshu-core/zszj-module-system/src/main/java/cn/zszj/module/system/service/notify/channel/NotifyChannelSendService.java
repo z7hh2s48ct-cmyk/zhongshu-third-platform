@@ -34,12 +34,17 @@ public interface NotifyChannelSendService {
                                            String contact, String content, Long sendLogId);
 
     /**
-     * 处理一轮 Outbox 投递（Sink 入口）：
-     * PENDING → 提交渠道；UNKNOWN → 先回查（确认未发出才重发）；ACCEPTED/DELIVERED/FAILED → 幂等吸收。
+     * 处理一轮 Outbox 投递（Sink 入口；r0 P1 事件身份吸收）：
+     * 按 (租户, outboxEventId) 定位台账——定位不到即<b>陈旧/未知事件</b>（人工重试已换绑新事件、或外来事件）
+     * 幂等吸收，绝不提交；命中则按台账状态处理：PENDING → 提交渠道、UNKNOWN → 先回查（确认未发出才重发）、
+     * ACCEPTED/DELIVERED/FAILED → 幂等吸收。
      *
+     * @param sendId        投递句柄（载荷 sendId）
+     * @param outboxEventId 本次投递的 Outbox 事件 ID（台账 outbox_event_id 与之不等即陈旧事件——
+     *                      人工重试换绑后，旧事件的重投在此被吸收，不产生重叠提交）
      * @throws NotifyChannelSendRetryableException 提交未知/仍未知/技术异常——触发 Outbox 失败退避重投
      */
-    void processOutboxDelivery(long sendId);
+    void processOutboxDelivery(long sendId, long outboxEventId);
 
     /**
      * 应用渠道回执（回执校验 + 状态推进；重复回执幂等吸收且计数可追踪；回执永不触发发件）。
@@ -47,10 +52,14 @@ public interface NotifyChannelSendService {
     NotifyChannelReceiptResult applyReceipt(NotifyChannelReceiptCmd cmd);
 
     /**
-     * 人工重试：PENDING/FAILED/UNKNOWN → PENDING（复位并留痕操作者/原因/次数），并追加新投递事件；
+     * 人工重试：FAILED/UNKNOWN/PENDING → PENDING（复位并留痕操作者/原因/次数），并追加新投递事件；
      * ACCEPTED/DELIVERED 拒绝（受理/送达由回执与回查推进，人工重发会造成重复发件）。
      *
-     * @throws cn.zszj.framework.common.exception.ServiceException 记录不存在 / 状态不允许
+     * <p>r0 P2/P3 处置：复位为<b>旧事件 ID 条件 CAS</b>（expectedOldEventId，并发双击仅一次成功，
+     * 落败方连随追加的事件一并回滚）；联系方式缺失记录（RECIPIENT_CONTACT_MISSING）复位前<b>重新解析</b>
+     * 收件人联系方式（用户可能已补绑），仍缺失则拒绝——打通「补绑后人工重试」恢复路径。
+     *
+     * @throws cn.zszj.framework.common.exception.ServiceException 记录不存在 / 状态不允许 / 联系方式仍缺失
      */
     NotifyChannelSendDO manualRetry(long sendId, String actorType, String actorId, String reason);
 

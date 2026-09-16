@@ -10,6 +10,8 @@ import cn.zszj.module.system.dal.mysql.notify.NotifyChannelSendMapper;
 import cn.zszj.module.system.service.notify.dispatch.NotifyChannel;
 import cn.zszj.module.system.service.notify.dispatch.NotifyCommand;
 import cn.zszj.module.system.service.notify.dispatch.NotifyRecipient;
+import cn.zszj.module.system.service.notify.dispatch.NotifyRecipientContext;
+import cn.zszj.module.system.service.notify.dispatch.NotifyRecipientContextResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -18,7 +20,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
-import javax.sql.DataSource;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,6 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.NOTIFY_CHANNEL_SEND_CONTACT_STILL_MISSING;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.NOTIFY_CHANNEL_SEND_NOT_FOUND;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.NOTIFY_CHANNEL_SEND_TENANT_REQUIRED;
@@ -70,16 +72,18 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
     private final NotifyChannelSendMapper channelSendMapper;
     private final NotifyChannelSenderRegistry senderRegistry;
     private final ReliableEventPort reliableEventPort;
+    private final NotifyRecipientContextResolver recipientContextResolver;
     private final TransactionTemplate transactionTemplate;
 
     public NotifyChannelSendServiceImpl(NotifyChannelSendMapper channelSendMapper,
                                         NotifyChannelSenderRegistry senderRegistry,
                                         ReliableEventPort reliableEventPort,
-                                        DataSource dataSource,
+                                        NotifyRecipientContextResolver recipientContextResolver,
                                         PlatformTransactionManager transactionManager) {
         this.channelSendMapper = channelSendMapper;
         this.senderRegistry = senderRegistry;
         this.reliableEventPort = reliableEventPort;
+        this.recipientContextResolver = recipientContextResolver;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -125,17 +129,15 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
     }
 
     @Override
-    public void processOutboxDelivery(long sendId) {
+    public void processOutboxDelivery(long sendId, long outboxEventId) {
         Long tenantId = requireTenant();
-        NotifyChannelSendDO record = transactionTemplate.execute(status -> channelSendMapper.selectById(sendId));
-        if (record == null) {
-            // 记录不存在/跨租户：吸收本次投递（事件可能来自已回滚事务或他租户——不推进任何状态）
-            log.warn("[processOutboxDelivery][sendId={} 记录不存在或跨租户，吸收本次投递]", sendId);
-            return;
-        }
-        if (!tenantId.equals(record.getTenantId())) {
-            log.warn("[processOutboxDelivery][sendId={} 租户不一致(context={} record={})，拒绝投递]",
-                    sendId, tenantId, record.getTenantId());
+        // r0 P1 事件身份吸收：按 (租户, outboxEventId) 定位台账——人工重试换绑后，旧事件重投/外来事件
+        // 在此定位不到即幂等吸收，杜绝重叠窗口内的重复外部提交（渠道幂等键为最后一道渠道侧兜底）
+        NotifyChannelSendDO record = transactionTemplate.execute(status ->
+                channelSendMapper.selectByOutboxEventId(tenantId, outboxEventId));
+        if (record == null || record.getId() != sendId) {
+            log.warn("[processOutboxDelivery][sendId={} outboxEventId={} 台账未绑定该事件（陈旧/换绑/外来），幂等吸收]",
+                    sendId, outboxEventId);
             return;
         }
         NotifyChannelSendStatus status = NotifyChannelSendStatus.valueOf(record.getStatus());
@@ -189,7 +191,8 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
                 // 渠道明确拒绝：终局失败（不再自动重试），Outbox 事件正常确认，人工重试路径处置
                 Integer rejected = transactionTemplate.execute(status ->
                         channelSendMapper.casReject(record.getId(), record.getTenantId(),
-                                result.getCode(), truncate(result.getReason(), 512), currentTimestamp()));
+                                // r0 P2：拒绝码截断至列宽 failed_code varchar(64)，超长码不得使终局失败落不了地
+                                truncate(result.getCode(), 64), truncate(result.getReason(), 512), currentTimestamp()));
                 if (rejected == null || rejected == 0) {
                     log.warn("[submitRecord][sendId={} 拒绝推进落败（状态已被并发改变），幂等吸收]", record.getId());
                 }
@@ -302,11 +305,19 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
                             StringUtils.hasText(cmd.getErrorCode()) ? truncate(cmd.getErrorCode(), 64) : FAILED_CODE_RECEIPT,
                             truncate(cmd.getErrorMsg(), 512), receiptTime) == 1;
             if (!moved) {
-                // 并发推进（如 Outbox 同时回查送达）→ 重读按重复吸收
+                // 并发推进（如 Outbox 同时回查送达）→ 重读按终态一致性分类（r0 P2：矛盾回执不再误判 DUPLICATE）
                 NotifyChannelSendDO fresh = channelSendMapper.selectById(record.getId());
                 channelSendMapper.casCountReceipt(record.getId(), tenantId, receiptTime);
                 String freshStatus = fresh != null ? fresh.getStatus() : record.getStatus();
-                log.info("[applyReceipt][sendId={} 推进落败（并发改变），按重复吸收 status={}]", record.getId(), freshStatus);
+                if (NotifyChannelSendStatus.DELIVERED.name().equals(freshStatus)
+                        || NotifyChannelSendStatus.FAILED.name().equals(freshStatus)) {
+                    boolean consistent = NotifyChannelSendStatus.DELIVERED.name().equals(freshStatus) == cmd.isDelivered();
+                    log.info("[applyReceipt][sendId={} 推进落败（并发改变）status={} consistent={}]", record.getId(), freshStatus, consistent);
+                    return consistent
+                            ? NotifyChannelReceiptResult.duplicate(record.getId(), freshStatus)
+                            : NotifyChannelReceiptResult.contradiction(record.getId(), freshStatus);
+                }
+                log.info("[applyReceipt][sendId={} 推进落败（并发改变，仍非终态 status={}），按重复吸收]", record.getId(), freshStatus);
                 return NotifyChannelReceiptResult.duplicate(record.getId(), freshStatus);
             }
             String newStatus = cmd.isDelivered() ? NotifyChannelSendStatus.DELIVERED.name() : NotifyChannelSendStatus.FAILED.name();
@@ -328,25 +339,66 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
         if (status == NotifyChannelSendStatus.ACCEPTED || status == NotifyChannelSendStatus.DELIVERED) {
             throw exception(NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID, record.getStatus());
         }
-        // 先追加新投递事件（MANDATORY 端口要求事务内），再 CAS 复位并换绑事件 ID；
-        // CAS 落败（并发终态化）时新事件由 Sink 幂等吸收，不产生重复发件
-        long outboxEventId = reliableEventPort.append(buildRetryOutboxMessage(record, actorId));
-        int updated = channelSendMapper.casManualRetry(record.getId(), tenantId,
-                truncate(actorType, 16), truncate(actorId, 64), truncate(reason, 512), outboxEventId, currentTimestamp());
+        // r0 P2：联系方式缺失记录的唯一恢复路径——复位前重新解析（用户可能已补绑手机号/邮箱）；
+        // 仍缺失则拒绝（避免把 null 联系方式交给发送器）
+        String contact = record.getRecipientContact();
+        if (!StringUtils.hasText(contact)) {
+            contact = resolveContactForRetry(record);
+            if (!StringUtils.hasText(contact)) {
+                throw exception(NOTIFY_CHANNEL_SEND_CONTACT_STILL_MISSING);
+            }
+        }
+        String trimmedActorType = truncate(actorType, 16);
+        String trimmedActorId = truncate(actorId, 64);
+        // 先追加新投递事件（MANDATORY 端口要求事务内），再按旧事件绑定做条件 CAS 复位并换绑；
+        // CAS 落败（并发重试/并发终态化）抛异常回滚——连随追加的事件一并回滚，不产生多余存活事件
+        long outboxEventId = reliableEventPort.append(
+                buildRetryOutboxMessage(record, trimmedActorType, trimmedActorId));
+        int updated = channelSendMapper.casManualRetry(record.getId(), tenantId, record.getOutboxEventId(),
+                contact, trimmedActorType, trimmedActorId, truncate(reason, 512), outboxEventId, currentTimestamp());
         if (updated == 0) {
             throw exception(NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID, record.getStatus());
         }
         record.setStatus(NotifyChannelSendStatus.PENDING.name());
         record.setStatusReason("人工重试");
+        record.setRecipientContact(contact);
         record.setFailedCode(null);
         record.setLastError(null);
         record.setManualRetryCount(record.getManualRetryCount() == null ? 1 : record.getManualRetryCount() + 1);
-        record.setLastRetryActorType(truncate(actorType, 16));
-        record.setLastRetryActorId(truncate(actorId, 64));
+        record.setLastRetryActorType(trimmedActorType);
+        record.setLastRetryActorId(trimmedActorId);
         record.setLastRetryReason(truncate(reason, 512));
         record.setOutboxEventId(outboxEventId);
         log.info("[manualRetry][sendId={} 人工重试 actor={}/{} 新投递事件={}]", sendId, actorType, actorId, outboxEventId);
         return record;
+    }
+
+    /** 人工重试时重新解析收件联系方式（循 MSG-001 Resolver 合同：仅 ADMIN；无效/仍缺失返回 null）。 */
+    private String resolveContactForRetry(NotifyChannelSendDO record) {
+        NotifyRecipient recipient = "MEMBER".equals(record.getRecipientType())
+                ? NotifyRecipient.member(record.getRecipientId())
+                : NotifyRecipient.admin(record.getRecipientId());
+        NotifyRecipientContext ctx = recipientContextResolver.resolve(recipient);
+        if (!ctx.isValid()) {
+            return null;
+        }
+        return resolveChannelContact(NotifyChannel.valueOf(record.getChannel()), ctx);
+    }
+
+    /** 按渠道取联系方式（ZS-MSG-004）：SMS→手机号，EMAIL→邮箱；PUSH 暂无联系方式语义（返回 null，
+     *  与缺失同归 RECIPIENT_CONTACT_MISSING 明确阻断，待 D-10 后定义设备令牌语义）。 */
+    static String resolveChannelContact(NotifyChannel channel, NotifyRecipientContext ctx) {
+        if (ctx == null) {
+            return null;
+        }
+        switch (channel) {
+            case SMS:
+                return ctx.getContactMobile();
+            case EMAIL:
+                return ctx.getContactEmail();
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -411,8 +463,10 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
 
     @Override
     public NotifyChannelSendDO getNotifyChannelSend(long id) {
-        requireTenant();
-        return transactionTemplate.execute(status -> channelSendMapper.selectById(id));
+        Long tenantId = requireTenant();
+        NotifyChannelSendDO record = transactionTemplate.execute(status -> channelSendMapper.selectById(id));
+        // r0 P3：显式租户等值校验（与 manualRetry/reconcile 的「拦截器 + 显式谓词」双保险对齐）
+        return record != null && tenantId.equals(record.getTenantId()) ? record : null;
     }
 
     @Override
@@ -453,9 +507,9 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
 
     /**
      * 构建人工重试投递事件（biz 引用以台账为中心——台账未存 bizType/bizId，重试事件统一用
-     * notify_channel_send/sendId 引用；原 eventId 保留供链路回查；actorId 取本次操作者入参）。
+     * notify_channel_send/sendId 引用；原 eventId 保留供链路回查；actor 取本次重试操作者入参——r0 P3）。
      */
-    private OutboxEventMessage buildRetryOutboxMessage(NotifyChannelSendDO record, String actorId) {
+    private OutboxEventMessage buildRetryOutboxMessage(NotifyChannelSendDO record, String actorType, String actorId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sendId", record.getId());
         payload.put("eventId", record.getEventId());
@@ -469,7 +523,7 @@ public class NotifyChannelSendServiceImpl implements NotifyChannelSendService {
                 .bizType("notify_channel_send")
                 .bizId(String.valueOf(record.getId()))
                 .payload(payload)
-                .actorType(parseActorType(record.getLastRetryActorType()))
+                .actorType(parseActorType(actorType))
                 .actorId(actorId)
                 .traceId(record.getTraceId())
                 .build();

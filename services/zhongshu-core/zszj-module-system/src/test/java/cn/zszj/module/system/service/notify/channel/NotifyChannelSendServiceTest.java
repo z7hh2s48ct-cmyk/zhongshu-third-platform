@@ -1,5 +1,6 @@
 package cn.zszj.module.system.service.notify.channel;
 
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
@@ -7,12 +8,16 @@ import cn.zszj.module.infra.framework.outbox.JdbcReliableEventPort;
 import cn.zszj.module.infra.framework.outbox.OutboxEventMessage.OutboxActorType;
 import cn.zszj.module.system.dal.dataobject.notify.NotifyChannelSendDO;
 import cn.zszj.module.system.dal.mysql.notify.NotifyChannelSendMapper;
+import cn.zszj.module.system.api.user.AdminUserApi;
+import cn.zszj.module.system.api.user.dto.AdminUserRespDTO;
+import cn.zszj.module.system.service.notify.dispatch.AdminUserNotifyRecipientContextResolver;
 import cn.zszj.module.system.service.notify.dispatch.NotifyChannel;
 import cn.zszj.module.system.service.notify.dispatch.NotifyCommand;
 import cn.zszj.module.system.service.notify.dispatch.NotifyRecipient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -28,23 +33,25 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 /**
  * {@link NotifyChannelSendService} 单元测试（ZS-MSG-004，H2）。
  *
- * <p>覆盖 27 个用例：台账创建(入管道/明确阻断/事务回滚) / 提交三态(受理/明确拒绝/未知) / 技术异常转 UNKNOWN
+ * <p>覆盖 33 个用例：台账创建(入管道/明确阻断/事务回滚) / 提交三态(受理/明确拒绝/未知) / 技术异常转 UNKNOWN
  * / UNKNOWN 先回查(送达推进/确认未发出才重发且幂等键一致/仍未知退避) / 受理-送达-失败重投不重复提交
- * / 提交时发送器缺失明确阻断 / 回执(送达/失败/乱序权威/重复吸收计数/未知拒绝/流水号错配/终态矛盾)
- * / 人工重试(复位+新事件+留痕+受理送达拒绝+重发同一幂等键) / 对账(送达推进/未发出仅证据/仍未知/终态不适用)
- * / 租户强制 / 台账扫描。
+ * / 提交时发送器缺失明确阻断 / 事件身份吸收(r0 P1：陈旧事件重投不提交) / 回执(送达/失败/乱序权威/重复吸收计数
+ * /未知拒绝/流水号错配/终态矛盾) / 人工重试(复位+新事件+留痕+受理送达拒绝+重发同一幂等键+联系方式补绑后重解析
+ * 成功+仍缺失拒绝) / 对账(送达推进/未发出仅证据/仍未知/终态不适用) / 租户强制 / 台账扫描。
  *
  * <p>循 NotifyDispatcherTest 先例：H2 + BaseDbUnitTest + @Import 显式装配（含 JdbcReliableEventPort 与
  * 可编程 {@link TestSmsChannelSender}——Mock 只存在于测试装配，不进入生产上下文，Mock 不作为真实渠道验收）。
  * 创建走 MANDATORY（transactionTemplate 包裹）；投递/回执/对账走服务内部短事务，测试直接调用（无外层事务）。
  */
 @Import({NotifyChannelSendServiceImpl.class, NotifyChannelSenderRegistry.class, JdbcReliableEventPort.class,
+        AdminUserNotifyRecipientContextResolver.class,
         NotifyChannelSendServiceTest.TestSmsChannelSender.class})
 public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
 
@@ -58,6 +65,8 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     private DataSource dataSource;
     @Resource
     private PlatformTransactionManager transactionManager;
+    @MockBean
+    private AdminUserApi adminUserApi;
 
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transactionTemplate;
@@ -179,7 +188,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_提交受理_PENDING转ACCEPTED() {
         NotifyChannelSendDO record = createPendingRecord("EVT_B1");
         testSmsSender.submitScript.add(ChannelSubmitResult.accepted("SER-1"));
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId());
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("ACCEPTED");
         assertThat(after.getChannelSerialNo()).isEqualTo("SER-1");
@@ -191,7 +200,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_提交明确拒绝_PENDING转FAILED() {
         NotifyChannelSendDO record = createPendingRecord("EVT_B2");
         testSmsSender.submitScript.add(ChannelSubmitResult.rejected("INVALID_MOBILE", "号码无效"));
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId());
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("FAILED");
         assertThat(after.getFailedCode()).isEqualTo("INVALID_MOBILE");
@@ -202,7 +211,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_提交结果未知_PENDING转UNKNOWN_抛可重试() {
         NotifyChannelSendDO record = createPendingRecord("EVT_B3");
         testSmsSender.submitScript.add(ChannelSubmitResult.unknown("TIMEOUT", "网关超时"));
-        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId()))
+        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId()))
                 .isInstanceOf(NotifyChannelSendRetryableException.class);
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("UNKNOWN");
@@ -213,7 +222,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_提交技术异常_PENDING转UNKNOWN_只留受控描述() {
         NotifyChannelSendDO record = createPendingRecord("EVT_B4");
         testSmsSender.submitScript.add(new RuntimeException("boom-with-mobile-" + MOBILE));
-        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId()))
+        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId()))
                 .isInstanceOf(NotifyChannelSendRetryableException.class);
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("UNKNOWN");
@@ -226,7 +235,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_UNKNOWN重投_回查送达_不重复提交() {
         NotifyChannelSendDO record = createUnknownRecord("EVT_B5");
         testSmsSender.queryScript.add(ChannelQueryResult.delivered("渠道状态:DELIVERED"));
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId());
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("DELIVERED");
         assertThat(after.getDeliveredAt()).isNotNull();
@@ -240,7 +249,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
         NotifyChannelSendDO record = createUnknownRecord("EVT_B6");
         testSmsSender.queryScript.add(ChannelQueryResult.notSent("渠道无记录"));
         testSmsSender.submitScript.add(ChannelSubmitResult.accepted("SER-2"));
-        assertDoesNotThrow(() -> channelSendService.processOutboxDelivery(record.getId()));
+        assertDoesNotThrow(() -> channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId()));
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("ACCEPTED");
         // 先回查再重发：attempt=2（初次 1 + 重发 1）；两次提交携带同一渠道幂等键（渠道侧可去重）
@@ -255,7 +264,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_UNKNOWN重投_回查仍未知_退避重查() {
         NotifyChannelSendDO record = createUnknownRecord("EVT_B7");
         testSmsSender.queryScript.add(ChannelQueryResult.unknown("渠道仍无结论"));
-        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId()))
+        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId()))
                 .isInstanceOf(NotifyChannelSendRetryableException.class);
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("UNKNOWN");
@@ -266,7 +275,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     @Test
     void test_ACCEPTED重投_吸收不重复提交() {
         NotifyChannelSendDO record = createAcceptedRecord("EVT_B8");
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId());
         assertThat(channelSendService.getNotifyChannelSend(record.getId()).getStatus()).isEqualTo("ACCEPTED");
         assertThat(testSmsSender.submitCalls).isEqualTo(1); // 仅创建后的首次（本用例无新提交）
         assertThat(testSmsSender.submittedMessageIds).hasSize(1);
@@ -276,11 +285,11 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_送达与失败重投_吸收不动作() {
         NotifyChannelSendDO delivered = createAcceptedRecord("EVT_B9");
         channelSendService.applyReceipt(receipt(delivered.getChannelMessageId(), true, null));
-        channelSendService.processOutboxDelivery(delivered.getId());
+        channelSendService.processOutboxDelivery(delivered.getId(), delivered.getOutboxEventId());
         assertThat(channelSendService.getNotifyChannelSend(delivered.getId()).getStatus()).isEqualTo("DELIVERED");
 
         NotifyChannelSendDO failed = createFailedRecord("EVT_B10");
-        channelSendService.processOutboxDelivery(failed.getId());
+        channelSendService.processOutboxDelivery(failed.getId(), failed.getOutboxEventId());
         assertThat(channelSendService.getNotifyChannelSend(failed.getId()).getStatus()).isEqualTo("FAILED");
         // 两笔记录重投全程无新的外部提交（2 = 两笔记录各自创建路径的那一次提交）
         assertThat(testSmsSender.submitCalls).isEqualTo(2);
@@ -289,14 +298,16 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     @Test
     void test_提交时发送器缺失_明确阻断FAILED() {
         // EMAIL 渠道无发送器实现（B05 生产常态）：提交时明确阻断，不静默丢弃
+        // （手工插入夹具须自带伪事件绑定——真实 PENDING 记录的 outbox_event_id 由派发路径回填）
         NotifyChannelSendDO record = NotifyChannelSendDO.builder()
                 .tenantId(TENANT_ID).sendLogId(6001L).eventId("EVT_B11").channel("EMAIL")
                 .recipientType("ADMIN").recipientId(RECIPIENT_ID).templateCode("T")
                 .channelMessageId("NC-TEST-EMAIL").status("PENDING")
                 .attemptCount(0).receiptCount(0).manualRetryCount(0)
+                .outboxEventId(7777L)
                 .actorType("SYSTEM").build();
         channelSendMapper.insert(record);
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), 7777L);
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("FAILED");
         assertThat(after.getFailedCode()).isEqualTo("CHANNEL_NOT_CONFIGURED");
@@ -399,7 +410,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
         NotifyChannelSendDO record = createFailedRecord("EVT_D2");
         NotifyChannelSendDO retried = channelSendService.manualRetry(record.getId(), "ADMIN", "9", null);
         testSmsSender.submitScript.add(ChannelSubmitResult.accepted("SER-3"));
-        channelSendService.processOutboxDelivery(retried.getId());
+        channelSendService.processOutboxDelivery(retried.getId(), retried.getOutboxEventId());
         NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
         assertThat(after.getStatus()).isEqualTo("ACCEPTED");
         assertThat(after.getAttemptCount()).isEqualTo(2);
@@ -479,7 +490,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     void test_租户上下文缺失_拒绝执行() {
         NotifyChannelSendDO record = createPendingRecord("EVT_F1");
         TenantContextHolder.clear();
-        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId()))
+        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId()))
                 .isInstanceOf(ServiceException.class)
                 .hasMessageContaining("租户上下文");
         assertThatThrownBy(() -> channelSendService.applyReceipt(receipt(record.getChannelMessageId(), true, null)))
@@ -498,6 +509,57 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
         assertThat(channelSendService.listByStatus("ACCEPTED", 100)).isEmpty();
         assertThatThrownBy(() -> channelSendService.listByStatus("NOT_A_STATUS", 100))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ========== r0 处置：事件身份吸收与人工重试恢复路径 ==========
+
+    @Test
+    void test_陈旧事件重投_幂等吸收不提交() {
+        // r0 P1：manualRetry 换绑 E2 后，旧事件 E1 的重投必须被吸收（不重叠提交）
+        NotifyChannelSendDO record = createPendingRecord("EVT_G1");
+        Long oldEventId = record.getOutboxEventId();
+        NotifyChannelSendDO retried = channelSendService.manualRetry(record.getId(), "ADMIN", "9", "换绑验证");
+        assertThat(retried.getOutboxEventId()).isNotEqualTo(oldEventId);
+        // 旧事件 E1 重投到达：台账已绑定 E2 → 吸收，不提交
+        channelSendService.processOutboxDelivery(record.getId(), oldEventId);
+        NotifyChannelSendDO after = channelSendService.getNotifyChannelSend(record.getId());
+        assertThat(after.getStatus()).isEqualTo("PENDING");
+        assertThat(after.getAttemptCount()).isZero();
+        assertThat(testSmsSender.submitCalls).isZero();
+        // 外来事件（未绑定任何台账）同样吸收
+        channelSendService.processOutboxDelivery(record.getId(), 999999L);
+        assertThat(channelSendService.getNotifyChannelSend(record.getId()).getStatus()).isEqualTo("PENDING");
+        assertThat(testSmsSender.submitCalls).isZero();
+        // 新事件 E2 正常驱动提交
+        testSmsSender.submitScript.add(ChannelSubmitResult.accepted("SER-9"));
+        channelSendService.processOutboxDelivery(record.getId(), retried.getOutboxEventId());
+        assertThat(channelSendService.getNotifyChannelSend(record.getId()).getStatus()).isEqualTo("ACCEPTED");
+        assertThat(testSmsSender.submittedMessageIds).containsExactly(record.getChannelMessageId());
+    }
+
+    @Test
+    void test_联系方式缺失记录_人工重试_补绑后重解析成功() {
+        // r0 P2：缺联系方式 FAILED 记录的唯一恢复路径——用户补绑手机号后人工重试重解析成功
+        NotifyChannelSendDO blocked = transactionTemplate.execute(s -> channelSendService.createFromDispatch(
+                command("EVT_G2"), NotifyRecipient.admin(RECIPIENT_ID), NotifyChannel.SMS, "", "内容", 9100L));
+        assertThat(blocked.getStatus()).isEqualTo("FAILED");
+        // 用户此时仍未绑定手机号 → 人工重试拒绝（不再把空联系方式交给发送器）
+        assertThatThrownBy(() -> channelSendService.manualRetry(blocked.getId(), "ADMIN", "9", null))
+                .isInstanceOf(ServiceException.class)
+                .hasMessageContaining("仍缺少该渠道联系方式");
+        // 用户补绑手机号 → 人工重试重解析成功并入管道，且携带新联系方式提交
+        AdminUserRespDTO bound = new AdminUserRespDTO();
+        bound.setId(RECIPIENT_ID);
+        bound.setStatus(CommonStatusEnum.ENABLE.getStatus());
+        bound.setMobile(MOBILE);
+        when(adminUserApi.getUser(RECIPIENT_ID)).thenReturn(bound);
+        NotifyChannelSendDO retried = channelSendService.manualRetry(blocked.getId(), "ADMIN", "9", "已补绑手机号");
+        assertThat(retried.getStatus()).isEqualTo("PENDING");
+        assertThat(retried.getRecipientContact()).isEqualTo(MOBILE);
+        testSmsSender.submitScript.add(ChannelSubmitResult.accepted("SER-10"));
+        channelSendService.processOutboxDelivery(retried.getId(), retried.getOutboxEventId());
+        assertThat(channelSendService.getNotifyChannelSend(blocked.getId()).getStatus()).isEqualTo("ACCEPTED");
+        assertThat(testSmsSender.submittedMessageIds).containsExactly(blocked.getChannelMessageId());
     }
 
     // ========== 夹具 ==========
@@ -527,7 +589,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     private NotifyChannelSendDO createAcceptedRecord(String eventId) {
         NotifyChannelSendDO record = createPendingRecord(eventId);
         testSmsSender.submitScript.add(ChannelSubmitResult.accepted("SER-1"));
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId());
         return reload(record.getId());
     }
 
@@ -535,7 +597,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     private NotifyChannelSendDO createFailedRecord(String eventId) {
         NotifyChannelSendDO record = createPendingRecord(eventId);
         testSmsSender.submitScript.add(ChannelSubmitResult.rejected("INVALID_MOBILE", "号码无效"));
-        channelSendService.processOutboxDelivery(record.getId());
+        channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId());
         return reload(record.getId());
     }
 
@@ -543,7 +605,7 @@ public class NotifyChannelSendServiceTest extends BaseDbUnitTest {
     private NotifyChannelSendDO createUnknownRecord(String eventId) {
         NotifyChannelSendDO record = createPendingRecord(eventId);
         testSmsSender.submitScript.add(ChannelSubmitResult.unknown("TIMEOUT", "网关超时"));
-        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId()))
+        assertThatThrownBy(() -> channelSendService.processOutboxDelivery(record.getId(), record.getOutboxEventId()))
                 .isInstanceOf(NotifyChannelSendRetryableException.class);
         return reload(record.getId());
     }

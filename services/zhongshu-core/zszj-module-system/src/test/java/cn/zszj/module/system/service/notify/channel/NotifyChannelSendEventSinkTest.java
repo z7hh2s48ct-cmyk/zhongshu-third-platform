@@ -40,7 +40,7 @@ class NotifyChannelSendEventSinkTest extends BaseMockitoUnitTest {
     void testDeliver_正常载荷_透传sendId() {
         OutboxEventRecord event = event("{\"sendId\":123,\"channel\":\"SMS\"}");
         notifyChannelSendEventSink.deliver(event);
-        verify(channelSendService).processOutboxDelivery(123L);
+        verify(channelSendService).processOutboxDelivery(123L, 1L);
     }
 
     @Test
@@ -49,7 +49,7 @@ class NotifyChannelSendEventSinkTest extends BaseMockitoUnitTest {
         assertThatThrownBy(() -> notifyChannelSendEventSink.deliver(event))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("sendId");
-        verify(channelSendService, never()).processOutboxDelivery(anyLong());
+        verify(channelSendService, never()).processOutboxDelivery(anyLong(), anyLong());
     }
 
     @Test
@@ -58,14 +58,14 @@ class NotifyChannelSendEventSinkTest extends BaseMockitoUnitTest {
         assertThatThrownBy(() -> notifyChannelSendEventSink.deliver(event))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("sendId 非法");
-        verify(channelSendService, never()).processOutboxDelivery(anyLong());
+        verify(channelSendService, never()).processOutboxDelivery(anyLong(), anyLong());
     }
 
     @Test
     void testDeliver_服务抛可重试异常_原样上抛交退避() {
         OutboxEventRecord event = event("{\"sendId\":456}");
         doThrow(new NotifyChannelSendRetryableException("提交结果未知须先回查 sendId=456"))
-                .when(channelSendService).processOutboxDelivery(456L);
+                .when(channelSendService).processOutboxDelivery(456L, 1L);
         assertThatThrownBy(() -> notifyChannelSendEventSink.deliver(event))
                 .isInstanceOf(NotifyChannelSendRetryableException.class);
     }

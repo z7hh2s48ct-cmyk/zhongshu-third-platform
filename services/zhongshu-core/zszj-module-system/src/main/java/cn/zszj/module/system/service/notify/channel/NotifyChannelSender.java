@@ -11,8 +11,10 @@ import cn.zszj.module.system.service.notify.dispatch.NotifyChannel;
  * <ol>
  *   <li><b>无实现 = 未配置</b>：注册器查不到该渠道实现 → 派发侧记 CHANNEL_NOT_CONFIGURED 明确阻断
  *       （B05 无任何生产实现——真实短信/邮件/推送适配器受 D-10 门禁，归 B11/D-10 后另立）；</li>
- *   <li><b>渠道幂等键</b>：{@code submit} 必须携带 {@code channelMessageId}（我方生成的渠道幂等键）——
- *       同一记录的重发/重试/重复事件到达渠道时按该键去重，不得每次生成新键；</li>
+ *   <li><b>渠道幂等键（r0 P1 升级为强制合同）</b>：{@code submit} 必须携带 {@code channelMessageId}
+ *       （我方生成的渠道幂等键），且实现<b>必须</b>以该键在渠道侧去重——同一键的重复提交
+ *       （同事件租约过期重领、人工重试与在途投递重叠等 at-least-once 残余窗口）不得产生重复发件；
+ *       这是可靠投递管道的强制前提而非期望，真实适配器（D-10/B11）落地时须有对应渠道能力证据；</li>
  *   <li><b>三态提交结果</b>：ACCEPTED（受理，携渠道流水号）/ REJECTED（明确拒绝，携失败码——终局，
  *       不再自动重试）/ UNKNOWN（超时或结果不确定——调用方必须先 {@link #queryByReceiptKey} 回查，
  *       确认未发出才允许重发，禁止直接重发）；技术异常直接抛出，由服务归一化为 UNKNOWN；</li>

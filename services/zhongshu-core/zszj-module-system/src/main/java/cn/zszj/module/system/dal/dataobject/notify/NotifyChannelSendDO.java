@@ -86,7 +86,7 @@ public class NotifyChannelSendDO extends BaseDO {
     /** 失败码（渠道拒绝码 / 我方受控码，如 CHANNEL_NOT_CONFIGURED、RECIPIENT_CONTACT_MISSING） */
     private String failedCode;
 
-    /** 实际提交渠道次数（只增不减） */
+    /** 实际提交渠道次数（只增不减；提交动作被渠道配置阻断时亦计入；并发 CAS 落败方的外部调用不计入——计数口径为「状态推进次数」） */
     private Integer attemptCount;
 
     /** 回执到达次数（重复回执可追踪，只增不减） */

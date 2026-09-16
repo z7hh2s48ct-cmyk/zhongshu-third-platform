@@ -109,9 +109,10 @@ public interface NotifyChannelSendMapper extends BaseMapperX<NotifyChannelSendDO
                           @Param("evidence") String evidence, @Param("now") Date now);
 
     /**
-     * CAS：回查确认未发出（UNKNOWN → PENDING，待重发——「先回查再重发」的唯一重发入口）。
+     * CAS：回查确认未发出（UNKNOWN → PENDING，待重发——「先回查再重发」的唯一重发入口；
+     * 复位同时清空 last_error，避免重发记录携带上一次技术失败描述误导检索）。
      */
-    @Update("UPDATE system_notify_channel_send SET status = 'PENDING', "
+    @Update("UPDATE system_notify_channel_send SET status = 'PENDING', last_error = NULL, "
             + "last_query_at = #{now}, last_query_result = 'NOT_SENT', status_reason = #{evidence}, "
             + "update_time = #{now} "
             + "WHERE id = #{id} AND tenant_id = #{tenantId} AND status = 'UNKNOWN' AND deleted = FALSE")
@@ -129,15 +130,24 @@ public interface NotifyChannelSendMapper extends BaseMapperX<NotifyChannelSendDO
                                @Param("evidence") String evidence, @Param("now") Date now);
 
     /**
-     * CAS：人工重试复位（PENDING/FAILED/UNKNOWN → PENDING）+ 操作留痕；ACCEPTED/DELIVERED 不可复位
-     * （受理/送达状态由回执与回查推进，人工重发会造成重复发件）。
+     * CAS：人工重试复位（PENDING/FAILED/UNKNOWN → PENDING）+ 操作留痕 + 联系方式刷新；
+     * ACCEPTED/DELIVERED 不可复位（受理/送达状态由回执与回查推进，人工重发会造成重复发件）。
+     *
+     * <p>r0 P2 处置：以 <b>expectedOldEventId 条件换绑</b>——PENDING→PENDING 不再是无条件空转迁移，
+     * 并发/双击人工重试只有一次成功（其余落败方由事务回滚连带撤销其追加的事件）。
+     *
+     * @return 影响行数；0 = 状态或事件绑定已被并发改变（真 CAS 落败）
      */
     @Update("UPDATE system_notify_channel_send SET status = 'PENDING', status_reason = '人工重试', "
             + "failed_code = NULL, last_error = NULL, manual_retry_count = manual_retry_count + 1, "
+            + "recipient_contact = #{contact}, "
             + "last_retry_actor_type = #{actorType}, last_retry_actor_id = #{actorId}, "
             + "last_retry_reason = #{reason}, outbox_event_id = #{outboxEventId}, update_time = #{now} "
-            + "WHERE id = #{id} AND tenant_id = #{tenantId} AND status IN ('PENDING','FAILED','UNKNOWN') AND deleted = FALSE")
+            + "WHERE id = #{id} AND tenant_id = #{tenantId} AND status IN ('PENDING','FAILED','UNKNOWN') "
+            + "AND (outbox_event_id = #{expectedOldEventId} "
+            + "OR (outbox_event_id IS NULL AND #{expectedOldEventId} IS NULL)) AND deleted = FALSE")
     int casManualRetry(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                       @Param("expectedOldEventId") Long expectedOldEventId, @Param("contact") String contact,
                        @Param("actorType") String actorType, @Param("actorId") String actorId,
                        @Param("reason") String reason, @Param("outboxEventId") Long outboxEventId,
                        @Param("now") Date now);

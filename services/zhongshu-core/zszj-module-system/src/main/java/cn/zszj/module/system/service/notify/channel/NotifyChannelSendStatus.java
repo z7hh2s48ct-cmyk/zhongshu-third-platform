@@ -16,7 +16,8 @@ package cn.zszj.module.system.service.notify.channel;
  *      ├──明确拒绝──▶ FAILED
  *      └──超时/不确定──▶ UNKNOWN ──先回查──▶ DELIVERED / 重发(PENDING→…) / 仍未知(退避重试)
  * </pre>
- * 任何状态下收到送达回执均以<b>回执为权威</b>直接推进 DELIVERED（乱序回执不丢事实）。
+ * 任意<b>非终态</b>（PENDING/ACCEPTED/UNKNOWN）收到送达回执均以<b>回执为权威</b>直接推进 DELIVERED（乱序回执不丢
+ * 事实）；终态收到回执按一致性吸收（DUPLICATE）或登记矛盾（CONTRADICTION）留人工核实。
  */
 public enum NotifyChannelSendStatus {
 
