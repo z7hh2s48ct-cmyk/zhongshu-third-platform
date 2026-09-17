@@ -5,6 +5,7 @@ import cn.zszj.framework.mybatis.core.mapper.BaseMapperX;
 import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.zszj.framework.tenant.core.aop.TenantIgnore;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
+import cn.zszj.module.system.framework.outbox.TokenRowSnapshot;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
@@ -100,4 +101,17 @@ public interface OAuth2RefreshTokenMapper extends BaseMapperX<OAuth2RefreshToken
      */
     @Delete("DELETE FROM system_oauth2_refresh_token WHERE id IN (SELECT id FROM system_oauth2_refresh_token WHERE expires_time < #{expiresTime} LIMIT #{limit})")
     Integer deleteByExpiresTimeLt(@Param("expiresTime") LocalDateTime expiresTime, @Param("limit") Integer limit);
+
+    /**
+     * ZS-LOGIN-005.B：按主键反查刷新令牌行快照（穿透逻辑删除）——语义与
+     * {@link OAuth2AccessTokenMapper#selectByIdIncludeDeleted(Long)} 完全一致，仅表名/列名分派。
+     *
+     * @param id 刷新令牌 DB 主键
+     * @return 行快照；行不存在（已物理删除）时返回 {@code null}
+     */
+    @TenantIgnore
+    @Select("SELECT refresh_token AS token, deleted, expires_time AS expiresTime "
+            + "FROM system_oauth2_refresh_token WHERE id = #{id}")
+    @Options(flushCache = Options.FlushCachePolicy.TRUE)
+    TokenRowSnapshot selectByIdIncludeDeleted(@Param("id") Long id);
 }
