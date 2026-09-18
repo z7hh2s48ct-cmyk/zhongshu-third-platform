@@ -507,8 +507,8 @@ export function extractBalancedBraceBody(text, startIdx) {
 /**
  * 字符串/文本块转义值解码（codex r4 P2-3）：判定必须针对**真实字符串值**而非源码拼写——
  * \171 八进制转出 'y'、文本块续行符 \<行终止> 把 `yu\<LF>dao` 拼回 `yudao`，按拼写判定即漏报。
- * 解码 JLS 3.10.6/3.10.7 全集：\b \t \n \f \r \" \' \\ \s(仅文本块) \0~\377 八进制（1~3 位、
- * 三位时首位 ≤3）；\u 序列不应到达此处（掩码预处理已全文件翻译；残留形状=非法转义）→ fail-loud；
+ * 解码 JLS 3.10.6/3.10.7 全集：\b \t \n \f \r \" \' \\ \s（r5 订正：合法于文本块/普通字符串/char）
+ * \0~\377 八进制（1~3 位、三位时首位 ≤3，超界按两位转义 + 字面量处理——\400 = \40 + '0'）；\u 序列不应到达此处（掩码预处理已全文件翻译；残留形状=非法转义）→ fail-loud；
  * 未建模/非法转义 → problem（javac 同样拒绝编译），返回 null 由调用方丢弃该字面量（问题已计入）。
  */
 export function decodeJavaEscapeValues(raw, isTextBlock, source, field, problems) {
@@ -528,10 +528,7 @@ export function decodeJavaEscapeValues(raw, isTextBlock, source, field, problems
     if (n === '"') { out += '"'; i += 2; continue; }
     if (n === "'") { out += "'"; i += 2; continue; }
     if (n === '\\') { out += '\\'; i += 2; continue; }
-    if (n === 's') {
-      if (!isTextBlock) { fail('escape-illegal', `普通字符串不支持 \\s 转义（JLS 3.10.6 仅文本块）：${source}`); return null; }
-      out += ' '; i += 2; continue;
-    }
+    if (n === 's') { out += ' '; i += 2; continue; } // [r5 P2-2] \s 合法于文本块/普通字符串/char（JLS 3.10.7 修正：r4 误限仅文本块）
     if (n >= '0' && n <= '7') {
       const oct0 = (/^[0-7]{1,3}/.exec(raw.slice(i + 1)))[0];
       const oct = oct0.length === 3 && oct0[0] > '3' ? oct0.slice(0, 2) : oct0; // 八进制上限 \377：三位时首位须 0-3，否则只取两位
@@ -594,19 +591,28 @@ export function extractMessageRouteOverrides(text, source) {
         break;
       }
       const decodedRaw = body.slice(k, closedAt);
-      // JLS 3.10.6 incidental indentation（r4 P2-3 补全）：以「非空内容行 + 末行（闭界符行）」的
-      // 最小前导空白为公共前缀剥离，且**剥离先于转义解释**——续行拼接必须发生在剥离后，
-      // 否则 `yu\<LF>dao`（带缩进续行）在 javac 值为 yudao 而按原文判定漏检
+      // JLS 3.10.6 / String.stripIndent（r5 P2-1/P2-3 对齐 javac 词法语义）：空白判定用 Java
+      // Character.isWhitespace 集合——NBSP（U+00A0/U+2007/U+202F）非 Java 空白，JS trim() 会把
+      // NBSP 行误判空行、制造假红（codex r5 实测）；stripIndent 合同 = 非「空行不计（末行始终
+      // 计入）」取最小前导空白，剥离 = 每行去 minIndent 前导空白 + 裁行尾空白 + 空行归空，且
+      // 剥离先于转义解释（续行拼接才与 javac 值一致）
       const tLines = decodedRaw.split(/\r\n|\n|\r/);
-      const isBlankLine = (s) => s.trim() === '';
+      const isJavaWs = (ch) => /[\t\n\u000B\f\r \u001C-\u001F\u1680\u2000-\u2006\u2008-\u200A\u2028\u2029\u205F\u3000]/.test(ch);
+      const isBlankLine = (s) => [...s].every((ch) => isJavaWs(ch));
+      const leadingWsLen = (s) => { let n = 0; while (n < s.length && isJavaWs(s[n])) n++; return n; };
+      const stripTrailingWs = (s) => { let e = s.length; while (e > 0 && isJavaWs(s[e - 1])) e--; return s.slice(0, e); };
       let minIndent = Infinity;
       tLines.forEach((ln, idx) => {
         if (isBlankLine(ln) && idx !== tLines.length - 1) return; // 空行不计（末行始终计入）
-        minIndent = Math.min(minIndent, (ln.match(/^[ \t]*/))[0].length);
+        minIndent = Math.min(minIndent, leadingWsLen(ln));
       });
       if (!Number.isFinite(minIndent)) minIndent = 0;
       const strippedRaw = tLines
-        .map((ln) => ln.slice(Math.min(minIndent, (ln.match(/^[ \t]*/))[0].length)))
+        .map((ln) => {
+          if (isBlankLine(ln)) return ''; // stripIndent：空行归空
+          const lead = leadingWsLen(ln);
+          return stripTrailingWs(lead >= minIndent ? ln.slice(minIndent) : ln);
+        })
         .join('\n'); // 行终止归一为 LF（javac 值语义；续行解码器按 CR/LF/CRLF 均兼容）
       const decoded = decodeJavaEscapeValues(strippedRaw, true, source, 'message-route-override-textblock', problems);
       if (decoded !== null) literals.push({ source, field: 'message-route-override-textblock', value: decoded });
@@ -1191,6 +1197,128 @@ export function injectionSelfTest() {
       minHits: 1,
     },
     {
+      // r5 P3-4 变异回归（八进制 2/3 位边界）：\400 首位 '4'>3 → 按两位转义 \40（空格）+ 字面
+      // '0'，真实值 ' 0 yudao_channel'；「无条件吞三位」变异产出 'Ā yudao_channel'——值形状断言
+      // 精确到期望值，变异即转红（judgeValue 命中无法区分二者）
+      name: 'route-literal-octal-2digit-vs-3digit-boundary',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { String s = "\\400 yudao_channel"; return "yudao_channel"; }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        if (p2.length) return [];
+        return literals; // 值形状断言由 expectDerived 承担
+      },
+      expectDerived: ' 0 yudao_channel',
+    },
+    {
+      // r5 P3-4 变异回归（空行缩进不参与最小值）：续行后小缩进空白行（2 空格）不参与最小缩进。
+      // javac 语义：剥离 min=8 后行序列为 [yu\, '', dao_channel, '']，续行仅消一个终止符、空行
+      // 留下空行 → 真实值 'yu\n\ndao_channel\n'；「空行参与」变异剥离 min=2 → 值带缩进前缀——
+      // 值形状断言精确区分（两种取值均不含 yudao 连写，命中断言无法区分二者）
+      name: 'route-textblock-blank-line-indent-not-participating',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '        yu\\\n'
+          + '  \n'
+          + '        dao_channel\n'
+          + '        """;\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        if (p2.length) return [];
+        return literals; // 值形状断言由 expectDerived 承担
+      },
+      expectDerived: 'yu\ndao_channel\n', // javac 值：行拼接一条 LF + 续行消一条 LF
+    },
+    {
+      // r5 P3-4 变异回归（花括号提取器文本块闭界偏移，r4 P2-6 防回归）：数组字面量文本块后
+      // 跟随其它方法——偏移 +3 变异会越过方法收 '}'、把后续方法体吞进当前 body，其 yudao 诊断
+      // 值被误判为违规（命中 0 为正确语义）
+      name: 'route-brace-textblock-array-offset-regression',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { return new String[]{"""\n'
+          + '        zszj_ok\n'
+          + '        """}[0]; }\n'
+          + '  public String diagnostic() { return "yudao_diag"; }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        if (p2.length) return [];
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null,
+      minHits: 0, // 负向断言：diagnostic() 的 yudao_diag 不得落入 getChannel 方法体（maxHits 语义由 0 命中承担）
+      maxHits: 0,
+    },
+    {
+      // r5 P3-4 变异回归（文本块扫描转义感知防回归）：块内 \"（转义闭界符前半）不得终止扫描——
+      // 「取消转义感知」变异会在 """" 处提前闭合，x\ 成孤立反斜杠产 problem、yudao 漏报转红
+      name: 'route-textblock-escaped-delimiter-escape-aware',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '        x\\"""yudao_channel\n'
+          + '        """;\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        if (p2.length) return [];
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null,
+      minHits: 1,
+    },
+    {
+      // r5 P3-4 变异回归（字符串扫描反斜杠跨行检查防回归）：普通字符串内 \<LF> 是 Java 非法
+      // 形状 → fatal + masked=null；「删除跨行检查」变异静默跳过终止符、无 fatal → 转红
+      name: 'masker-string-backslash-crossline-fatal',
+      extract: () => {
+        const { masked, problems } = maskComments('public class X {\n  String s = "a\\\nb"; return "yudao_channel";\n}\n');
+        const fatal = problems.filter((p) => p.check === 'string-literal-unterminated' && p.fatal);
+        if (masked !== null || fatal.length === 0) return [];
+        return fatal;
+      },
+      expectValue: null,
+      minHits: 1,
+    },
+    {
+      // r5 P2-1 变异回归（NBSP 非 Java 空白）：NBSP 行是内容行（非空、前导空白 0）→ 公共缩进 0、
+      // 不剥离、续行拼接隔着缩进不形成 yudao（命中 0 为正确语义）；JS trim() 判空变异会把 NBSP 行
+      // 当空行忽略 → 剥离 4 → 拼出 yudao 假红转红
+      name: 'route-textblock-nbsp-line-not-blank',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '\u00a0\n'
+          + '    yu\\\n'
+          + '    dao_channel\n'
+          + '    """;\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        if (p2.length) return [];
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null,
+      minHits: 0, // 负向断言：NBSP 行为内容行，续行拼接不得形成 yudao
+      maxHits: 0,
+    },
+    {
       // codex r3 P2-A 变异反证：行注释以 \r 终止（JLS 三种行终止符）——注释后的 return
       // 不得被当注释吞掉
       name: 'masker-line-comment-cr-terminator',
@@ -1297,7 +1425,9 @@ export function injectionSelfTest() {
       hits = ok ? 1 : 0;
     } else if (s.expectValue === null) {
       hits = extracted.length;
-      ok = hits >= (s.minHits ?? 1);
+      // maxHits（r5 P3-4 负向断言）：限制命中上限（如 maxHits: 0 断言「不得产生任何命中」——
+      // 用于越界/误报回归：缺陷引入后命中数变正即转红）
+      ok = hits >= (s.minHits ?? 1) && (s.maxHits === undefined || hits <= s.maxHits);
     } else {
       hits = extracted.filter((k) => k.value === s.expectValue)
         .flatMap((k) => judgeValue(k.source, k.field, k.value)).length;
