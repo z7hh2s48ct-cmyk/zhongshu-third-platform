@@ -264,75 +264,159 @@ export function extractJsonTypeInfoInterfaces(text, source) {
 }
 
 /**
- * 单一复用的注释掩码预处理（codex r2 根治）：按 Java 词法扫描，把 // 行注释与 block 块注释
- * 区间的字符替换为等长空白（保留换行——偏移量/行号不变）；掩码器感知字符串/字符字面量与
- * 转义（字面量内的注释记号不参与词法）。Java 17 文本块按 JLS 开界符（""" + [空白] + 行终止符）
- * 识别，块内内容原样保留（其中的引号/注释记号同样不参与词法）；文本块未闭合 → fail-loud 产
- * problem，不放过。所有 Java 文本提取（类型声明匹配、路由字面量提取等）一律只对掩码后文本
- * 工作——各正则不再各自为战。掩码幂等性注意：文本块内容原样保留，掩码只可对原文应用一次。
+ * 词法模型边界（codex r3「模型外输入 fail-loud」合同）：掩码器/翻译器覆盖不了的输入结构，
+ * 一律产 fatal problem——该文件**跳过全部 Java 判定**（不产出清单、不静默通过，要求人工复核）。
+ * 本门禁是「证明无残留」的安全侧工具：解析不了就大声说出来，绝不静默。
+ * 合格 Unicode 转义采用 JLS 3.3 翻译（r3 采纳方案①安全子集 + ②兜底）：良性目标字符（字母/
+ * 空白/CJK 等）按语义翻译后掩码（真实树存量 \u2003/\u3000 类正则转义零 problem、值判定更准）；
+ * 真正无法安全翻译的形状（目标为反斜杠的自指链、翻译轮数超限）fail-loud。
+ */
+export const JAVA_LEXICAL_MODEL_BOUNDARIES = [
+  { check: 'unicode-escape-backslash-target', fatal: true, why: '合格 Unicode 转义目标为反斜杠（\\u005c，自指链风险）：翻译器不建模，需人工复核' },
+  { check: 'unicode-escape-translation-overflow', fatal: true, why: 'Unicode 转义翻译轮数超限（反复左剥不收敛）：翻译器不建模，需人工复核' },
+  { check: 'text-block-unterminated', fatal: true, why: 'Java 17 文本块未闭合，无法安全词法分析' },
+  { check: 'block-comment-unterminated', fatal: true, why: '块注释未闭合（文件尾前无 */），无法安全词法分析' },
+  { check: 'string-literal-unterminated', fatal: true, why: '普通字符串字面量跨行未闭合（Java 非法形状），无法安全词法分析' },
+  { check: 'char-literal-unterminated', fatal: true, why: '字符字面量跨行未闭合（Java 非法形状），无法安全词法分析' },
+];
+
+/**
+ * JLS 3.3 合格 Unicode 转义翻译预处理（codex r3 P2-B，方案①安全子集 + ②兜底）：javac 在词法
+ * 前翻译合格转义（奇数反斜杠 + u{1,} + 4 位 hex；\uu002f 按 JLS 反复左剥仍合格）——注释/
+ * 字符串内的转义同样生效、可改写代码结构（// 注释里藏 \u000a 即断行出可执行代码）。安全子集
+ * 翻译：目标字符为反斜杠（\u005c，自指链风险）或翻译轮数超限 → fatal（方案②兜底）；其余
+ * （字母/空白/CJK 等）翻译后不影响词法结构，掩码与值提取在翻译后文本上进行（字面量值即真实值）。
+ */
+export function translateEligibleUnicodeEscapes(text) {
+  const MAX_ROUNDS = 10;
+  let current = text;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    let translated = '';
+    let i = 0;
+    let found = false;
+    while (i < current.length) {
+      if (current[i] !== '\\') { translated += current[i]; i++; continue; }
+      let bs = 0;
+      while (current[i + bs] === '\\') bs++;
+      const after = i + bs;
+      let u = 0;
+      while (current[after + u] === 'u') u++;
+      const hex = current.slice(after + u, after + u + 4);
+      if (bs % 2 === 1 && u >= 1 && /^[0-9a-fA-F]{4}$/.test(hex)) {
+        const code = parseInt(hex, 16);
+        if (code === 0x5c) {
+          return { translated: null, problem: { check: 'unicode-escape-backslash-target', why: JAVA_LEXICAL_MODEL_BOUNDARIES[0].why } };
+        }
+        translated += '\\'.repeat(bs - 1) + String.fromCharCode(code); // 偶数前缀反斜杠原样保留，最后一个反斜杠参与转义
+        i = after + u + 4;
+        found = true;
+        continue;
+      }
+      translated += current.slice(i, after + u);
+      i = after + u;
+    }
+    if (!found) return { translated: current, problem: null }; // 收敛：无合格转义剩余
+    current = translated; // JLS 反复左剥：翻译产物可能再次构成合格转义
+  }
+  return { translated: null, problem: { check: 'unicode-escape-translation-overflow', why: JAVA_LEXICAL_MODEL_BOUNDARIES[1].why } };
+}
+
+/**
+ * 单一复用的注释掩码预处理（codex r2 根治 / r3 模型边界合同）：先做合格 Unicode 转义翻译
+ * （translateEligibleUnicodeEscapes），再按 Java 词法扫描把 // 行注释与 block 块注释区间替换为
+ * 等长空白（保留换行——偏移量/行号不变）；掩码器感知字符串/字符字面量与转义（字面量内的注释
+ * 记号不参与词法）。词法模型（r3 显式化，见 JAVA_LEXICAL_MODEL_BOUNDARIES）：行终止符 = \r、
+ * \n、\r\n（JLS 3.4）；文本块开界符 = """ + 空白（space/tab/FF）+ 行终止符（JLS 3.10.6），块内
+ * 转义（含 \s、\""）不终止扫描；模型外输入 → fatal problem 且 masked=null——调用方必须跳过该
+ * 文件的全部判定。所有 Java 文本提取（类型声明匹配、路由字面量提取等）一律只对掩码后文本工作。
+ * 掩码幂等性注意：文本块内容原样保留，掩码只可对原文应用一次。
  */
 export function maskComments(text) {
   const problems = [];
-  const chars = text.split('');
+  const fatal = (check, why) => problems.push({ check, fatal: true, why });
+  const tr = translateEligibleUnicodeEscapes(text);
+  if (tr.problem) {
+    fatal(tr.problem.check, tr.problem.why);
+    return { masked: null, problems }; // masked=null 明示「本文件未产出可用掩码，判定须跳过」
+  }
+  // r3 坐标系合同（自检 masker-unicode-escape-in-comment-translated 实证）：翻译是变长的
+  // （\u000a 6 字符 → \n 1 字符），定界扫描与掩码抹除必须同在翻译后文本上进行——在原文上
+  // 扫描、译文上抹除会坐标错位（掩码越界/截断，藏毒假绿或误伤真代码）。下游消费者只读返回的
+  // masked 串（自身坐标自洽），不受与原文件偏移差异影响。
+  const src = tr.translated;
+  const chars = src.split('');
   const blank = (from, to) => {
     for (let k = from; k < to && k < chars.length; k++) {
       if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ';
     }
   };
-  // JLS 文本块开界符：""" 后仅允许空白再行终止符；否则按普通字符串词法（如 "" 空串序列）
+  // [P2-C] 文本块开界符空白 = space/tab/FF（JLS 3.10.6）；否则按普通字符串词法（如 "" 空串序列）
   const isTextBlockOpen = (idx) => {
-    if (!text.startsWith('"""', idx)) return false;
+    if (!src.startsWith('"""', idx)) return false;
     let j = idx + 3;
-    while (j < text.length && (text[j] === ' ' || text[j] === '\t')) j++;
-    return text[j] === '\n' || text[j] === '\r';
+    while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\f')) j++;
+    return src[j] === '\n' || src[j] === '\r';
   };
   let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
+  while (i < src.length) {
+    const ch = src[i];
     if (ch === '"' && isTextBlockOpen(i)) {
       i += 3; // 开界符原样保留
       let closed = false;
-      while (i < text.length) {
-        if (text[i] === '\\') { i += 2; continue; } // 转义（含 \""）
-        if (text.startsWith('"""', i)) { i += 3; closed = true; break; }
+      while (i < src.length) {
+        if (src[i] === '\\') { i += 2; continue; } // 块内转义（\""、\s 等）不参与终止判定
+        if (src.startsWith('"""', i)) { i += 3; closed = true; break; }
         i++;
       }
-      if (!closed) problems.push({ check: 'text-block-unterminated', why: 'Java 17 文本块未闭合，无法安全词法分析，保守拒绝' });
+      if (!closed) fatal('text-block-unterminated', JAVA_LEXICAL_MODEL_BOUNDARIES[1].why);
       continue;
     }
-    if (ch === '/' && text[i + 1] === '/') {
+    if (ch === '/' && src[i + 1] === '/') {
+      // [P2-A] 行注释在 \r 或 \n 终止（JLS 3.4 三种行终止符；\r\n 两个都消费）
       let j = i;
-      while (j < text.length && text[j] !== '\n') j++;
+      while (j < src.length && src[j] !== '\n' && src[j] !== '\r') j++;
       blank(i, j);
       i = j;
+      if (src[j] === '\r' && src[j + 1] === '\n') i++;
       continue;
     }
-    if (ch === '/' && text[i + 1] === '*') {
+    if (ch === '/' && src[i + 1] === '*') {
       let j = i + 2;
-      while (j < text.length && !text.startsWith('*/', j)) j++;
-      const end = Math.min(j + 2, text.length);
+      while (j < src.length && !src.startsWith('*/', j)) j++;
+      if (j >= src.length) {
+        fatal('block-comment-unterminated', JAVA_LEXICAL_MODEL_BOUNDARIES[2].why);
+        blank(i, src.length);
+        break;
+      }
+      const end = j + 2;
       blank(i, end);
       i = end;
       continue;
     }
     if (ch === '"') {
       let j = i + 1;
-      while (j < text.length) {
-        if (text[j] === '\\') { j += 2; continue; }
-        if (text[j] === '"' || text[j] === '\n') break; // 普通字符串不跨行
+      let terminated = false;
+      while (j < src.length) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === '"') { terminated = true; break; }
+        if (src[j] === '\n' || src[j] === '\r') break; // 普通字符串不跨行（Java 非法形状）
         j++;
       }
-      i = Math.min(j + 1, text.length);
+      if (!terminated) fatal('string-literal-unterminated', JAVA_LEXICAL_MODEL_BOUNDARIES[3].why);
+      i = Math.min(j + 1, src.length); // 行尾即状态复位，继续收集其余问题供人工一次复核
       continue;
     }
     if (ch === "'") {
       let j = i + 1;
-      while (j < text.length) {
-        if (text[j] === '\\') { j += 2; continue; }
-        if (text[j] === "'" || text[j] === '\n') break;
+      let terminated = false;
+      while (j < src.length) {
+        if (src[j] === '\\') { j += 2; continue; } // 八进制/多字符转义如 '\12' 原样跳过
+        if (src[j] === "'") { terminated = true; break; }
+        if (src[j] === '\n' || src[j] === '\r') break;
         j++;
       }
-      i = Math.min(j + 1, text.length);
+      if (!terminated) fatal('char-literal-unterminated', JAVA_LEXICAL_MODEL_BOUNDARIES[4].why);
+      i = Math.min(j + 1, src.length);
       continue;
     }
     i++;
@@ -392,6 +476,16 @@ export function extractBalancedBraceBody(text, startIdx) {
       if (ch === inStr) inStr = null;
       continue;
     }
+    // Java 17 文本块（掩码后原文保留，r2 P2-C）：整体跳过——块内 /* 等记号不参与深度/字符串状态
+    if (ch === '"' && text.startsWith('"""', i)) {
+      i += 3;
+      while (i < text.length) {
+        if (text[i] === '\\') { i += 2; continue; }
+        if (text.startsWith('"""', i)) { i += 3; break; }
+        i++;
+      }
+      continue;
+    }
     if (ch === '/' && next === '/') { inLineComment = true; i++; continue; }
     if (ch === '/' && next === '*') { inBlockComment = true; i++; continue; }
     if (ch === '"' || ch === "'") { inStr = ch; continue; }
@@ -426,8 +520,8 @@ export function extractMessageRouteOverrides(text, source) {
     while ((l = litRe.exec(body))) {
       literals.push({ source, field: 'message-route-override', value: l[2] });
     }
-    // Java 17 文本块内容（掩码保留原文）同样作为路由值参与判定
-    const tbRe = /"""[ \t]*(?:\r?\n)([\s\S]*?)"""/g;
+    // Java 17 文本块内容（掩码保留原文）同样作为路由值参与判定；开界符空白含 FF（r3 P2-C）
+    const tbRe = /"""[ \t\f]*(?:\r?\n)([\s\S]*?)"""/g;
     let t;
     while ((t = tbRe.exec(body))) {
       literals.push({ source, field: 'message-route-override-textblock', value: t[1] });
@@ -516,7 +610,9 @@ export function runInventory() {
   };
   const violations = [];
   const qrtzViolations = [];
-  // codex r2 根治：全部 Java 文本提取共用单一注释掩码（每文件恰好掩码一次，文本块问题只上报一次）
+  // codex r2 根治：全部 Java 文本提取共用单一注释掩码（每文件恰好掩码一次，problem 只上报一次）。
+  // codex r3 合同：掩码器词法模型边界外的输入（fatal problem，见 JAVA_LEXICAL_MODEL_BOUNDARIES）
+  // → 该文件返回 null，**跳过全部 Java 判定**（不产出清单、不静默通过），problem 计入 contractProblems。
   const deriveProblems = [];
   const javaMaskMemo = new Map();
   const getMaskedJava = (rel) => {
@@ -525,8 +621,9 @@ export function runInventory() {
     if (raw === null) return null;
     const { masked, problems } = maskComments(raw);
     deriveProblems.push(...problems.map((p) => ({ source: rel, ...p })));
-    javaMaskMemo.set(rel, masked);
-    return masked;
+    const value = (masked === null || problems.some((p) => p.fatal)) ? null : masked;
+    javaMaskMemo.set(rel, value);
+    return value;
   };
 
   // ① 任务域 + QRTZ 面 + SQL 包形旧 FQCN
@@ -867,6 +964,167 @@ export function injectionSelfTest() {
         return problems;
       },
       expectValue: null, // 布尔判定：产 problem 即通过
+      minHits: 1,
+    },
+    {
+      // codex r3 P2-B 变异反证（JLS 翻译语义）：注释里藏合格 Unicode 转义（\u000a=词法前翻译出的
+      // 换行，注释实际断行、后续是可执行代码）→ 翻译预处理后掩码器正确断注释，藏在「注释」里的
+      // 可执行方法被正常提取判定（r2 版会把整段抹掉 = 藏毒假绿）
+      name: 'masker-unicode-escape-in-comment-translated',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  // note \\u000a public String getChannel() { return "yudao_channel"; }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return []; // 合格转义被翻译，不应有 problem
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1（藏毒无处遁形）
+      minHits: 1,
+    },
+    {
+      // 方案②兜底：合格转义目标为反斜杠（\u005c 自指链风险）→ fatal，整文件跳过判定
+      name: 'masker-unicode-backslash-target-fail-loud',
+      extract: () => {
+        const { masked, problems } = maskComments('public class X {\n  String s = "\\u005c"; return "yudao_channel";\n}\n');
+        const fatal = problems.filter((p) => p.check === 'unicode-escape-backslash-target' && p.fatal);
+        if (masked !== null || fatal.length === 0) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.length === 0 ? fatal : []; // masked=null，无清单可产出
+      },
+      expectValue: null, // 布尔判定：fatal problem 在且无清单
+      minHits: 1,
+    },
+    {
+      // JLS 反复左剥确认：\uu0041（双 u）合格、翻译为 A——不触发 fail-loud，判定照常
+      name: 'masker-unicode-multi-u-left-strip',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { String a = "\\uu0041"; return "yudao_channel"; }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1 且零误报
+      minHits: 1,
+    },
+    {
+      // 不误报确认（codex r3）：\u00g1 非 hex、\\u0041 偶数反斜杠、'\12' 八进制 char 转义
+      // 均非合格 Unicode 转义——不得触发 fail-loud，路由判定照常工作
+      name: 'masker-unicode-invalid-shape-not-flagged',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    String g = "\\u00g1"; // 非法形状，非合格转义\n'
+          + "    char c = '\\12'; // 八进制转义\n"
+          + '    String p = "\\\\u0041"; // 偶数反斜杠，非合格转义\n'
+          + '    return "yudao_channel";\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return []; // 不应有任何 problem（不误报）
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1 且零误报
+      minHits: 1,
+    },
+    {
+      // codex r3 P2-A 变异反证：行注释以 \r 终止（JLS 三种行终止符）——注释后的 return
+      // 不得被当注释吞掉
+      name: 'masker-line-comment-cr-terminator',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { // note\r return "yudao_channel";\n }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // \r\n 行终止符：两个字符都被消费，注释后代码照常提取
+      name: 'masker-line-comment-crlf-terminator',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() { // note\r\n return "yudao_channel";\n }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // codex r3 P2-C 变异反证：开界符空白含换页符（JLS 允许 space/tab/FF）——"""\f\n 开头的
+      // 文本块内容里的 /* 不得被误当未闭合注释（否则后续方法全被抹）
+      name: 'masker-textblock-formfeed-open',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\f\n'
+          + '        /* 不是注释 */\n'
+          + '        yudao_channel\n'
+          + '        """;\n'
+          + '  }\n'
+          + '  public String getStreamKey() { return "zszj_ok"; }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1 且零误报
+      minHits: 1,
+    },
+    {
+      // 文本块内 \s 转义（r3 顺带确认）：转义不参与终止判定，块内旧名照常判定
+      name: 'textblock-escape-s-not-terminator',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '        \\s   yudao_channel\n'
+          + '        """;\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.flatMap((k) => judgeValue(k.source, k.field, k.value));
+      },
+      expectValue: null, // 布尔判定：命中 ≥1
+      minHits: 1,
+    },
+    {
+      // 合同：未闭合块注释 → fatal problem（文件跳过判定，不静默通过）
+      name: 'masker-block-comment-unterminated-fail-loud',
+      extract: () => {
+        const { masked, problems } = maskComments('public class X {\n  /* never closed\n  return "yudao_channel";\n');
+        const fatal = problems.filter((p) => p.check === 'block-comment-unterminated' && p.fatal);
+        if (!masked || fatal.length === 0) return [];
+        const { literals } = extractMessageRouteOverrides(masked, 'injected');
+        return literals.length === 0 ? fatal : []; // 注释吞掉的内容不得产出清单
+      },
+      expectValue: null, // 布尔判定：fatal problem 在且清单为空
+      minHits: 1,
+    },
+    {
+      // 合同：跨行未闭合普通字符串（Java 非法形状）→ fatal problem
+      name: 'masker-string-unterminated-fail-loud',
+      extract: () => {
+        const { problems } = maskComments('public class X {\n  String s = "no close\n}\n');
+        return problems.filter((p) => p.check === 'string-literal-unterminated' && p.fatal);
+      },
+      expectValue: null, // 布尔判定：产 fatal problem 即通过
       minHits: 1,
     },
   ];
