@@ -201,19 +201,27 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
     // ========== 用例 7：过期凭据静默 skip ==========
 
     /**
-     * RED：过期凭据（{@code expiresTime < now}）Redis key TTL 到期自清理，无需墓碑——
-     * Sink 必须静默返回、不查 DB、不写 Redis、不抛异常。
+     * RED：过期凭据（{@code expiresTime < now}，以事件载荷快照为准）Redis key TTL 到期自清理，
+     * 无需墓碑——Sink 必须静默返回、不查 DB、不写 Redis、不抛异常。
+     *
+     * <p>codex r0 P2-7 加固：令牌行与缓存条目均活跃、<b>仅事件载荷 expiresTime 已过</b>（事件
+     * 延迟投递的现实中存在形态）——过期分支必须先行静默返回（不查 DB、不动缓存）。若该分支被
+     * 删除，Sink 会反查 DB（deleted=TRUE → 业务回滚保护放行）→ 对活跃缓存写墓碑 + {@code delete}
+     * 删缓存条目 → 下方「无墓碑 + 缓存原样」双断言即转红（原版仅断言无墓碑，TTL≤0 守卫掩盖了
+     * 分支缺失）。
      */
     @Test
     public void deliver_expiredToken_silentSkip() throws Exception {
-        LocalDateTime past = LocalDateTime.now().minusMinutes(5);
-        OAuth2AccessTokenDO access = seedAccessRow(past);
+        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        preheatCache(access);
         accessTokenMapper.deleteById(access.getId());
-        OutboxEventRecord event = buildEvent(access.getId(), TokenType.ACCESS, past);
+        OutboxEventRecord event = buildEvent(access.getId(), TokenType.ACCESS, LocalDateTime.now().minusMinutes(5));
 
         assertDoesNotThrow(() -> sink.deliver(event), "过期凭据 deliver 必须静默返回");
         assertFalse(tombstoneExists(access.getAccessToken()),
                 "过期凭据不得写墓碑（Redis TTL 已自清理，墓碑无意义且浪费 key 空间）");
+        assertNotNull(redisDAO.get(access.getAccessToken()),
+                "过期事件路径不得触碰活跃缓存条目（过期分支必须先于 DB 反查/缓存删除静默返回）");
     }
 
     // ========== 用例 8：逻辑删除后穿透反查 ==========

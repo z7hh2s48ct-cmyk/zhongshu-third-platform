@@ -1,5 +1,6 @@
 package cn.zszj.module.system.framework.outbox;
 
+import cn.zszj.framework.common.util.date.DateUtils;
 import cn.zszj.framework.common.util.json.JsonUtils;
 import cn.zszj.module.infra.framework.outbox.OutboxEventRecord;
 import cn.zszj.module.infra.framework.outbox.OutboxEventSink;
@@ -62,17 +63,22 @@ public class OAuth2TokenRevocationCompensationSink implements OutboxEventSink {
 
     @Override
     public void deliver(OutboxEventRecord event) throws Exception {
-        // 步 1：反序列化 payload（格式错误视为不可恢复，上抛进 DEAD 台账由 JOB-004 人工介入）
-        TokenRevocationCompensationPayload payload = JsonUtils.parseObject(
+        // 步 1：反序列化 payload——【静默解析】（codex r0 P2-4）：parseObject 失败会把原文整体落日志，
+        // 载荷属敏感凭据面（含 tokenId 语义），改用 parseObjectQuietly 不留原文日志；格式错误视为
+        // 不可恢复，上抛进 DEAD 台账由 JOB-004 人工介入（异常消息只含受控摘要，不含原始 payload）。
+        TokenRevocationCompensationPayload payload = JsonUtils.parseObjectQuietly(
                 event.getPayload(), TokenRevocationCompensationPayload.class);
         if (payload == null || payload.getTokenId() == null || payload.getTokenType() == null) {
             throw new IllegalStateException(
-                    "ZS-LOGIN-005.B payload 缺关键字段（eventId=" + event.getEventId()
-                            + ", payload=" + event.getPayload() + "）");
+                    "ZS-LOGIN-005.B payload 缺关键字段或反序列化失败（eventId=" + event.getEventId()
+                            + ", payloadLength=" + (event.getPayload() == null ? 0 : event.getPayload().length())
+                            + ", bizId=" + event.getBizId() + "）：原文不落日志，人工介入请查 outbox_event.payload");
         }
 
-        // 步 2：过期识别（事件载荷快照）——已过期凭据 Redis key TTL 自清理，无需墓碑，静默返回
-        LocalDateTime now = LocalDateTime.now();
+        // 步 2：过期识别（事件载荷快照）——已过期凭据 Redis key TTL 自清理，无需墓碑，静默返回。
+        // codex r0 P2-3：时钟合同对齐 SEC-009.A——令牌生产端用 DateUtils（固定 GMT+8），此处
+        // LocalDateTime.now() 依赖宿主时区，UTC 环境会延迟过期识别/多算 TTL，统一改 DateUtils.now()。
+        LocalDateTime now = DateUtils.now();
         LocalDateTime payloadExpires = payload.getExpiresTime();
         if (payloadExpires != null && payloadExpires.isBefore(now)) {
             log.debug("[deliver][eventId={} 凭据已过期（expiresTime={}），静默 skip：Redis TTL 自清理]",
@@ -113,8 +119,10 @@ public class OAuth2TokenRevocationCompensationSink implements OutboxEventSink {
             oauth2AccessTokenRedisDAO.markRevoked(token, ttlMillis);
         } catch (RuntimeException ex) {
             firstFailure = ex;
-            log.warn("[deliver][eventId={} markRevoked 失败（tokenId={}），继续尝试 delete]",
-                    event.getEventId(), payload.getTokenId(), ex);
+            // codex r0 P2-4：异常消息/原因链可能含带 token 的键名，本层只记错误类型受控摘要，
+            // 不落异常原文（根因原文由 dispatcher 按 JOB-002 口径写入 outbox_event.last_error 受控字段）
+            log.warn("[deliver][eventId={} markRevoked 失败（tokenId={} errorType={}），继续尝试 delete]",
+                    event.getEventId(), payload.getTokenId(), ex.getClass().getName());
         }
         try {
             oauth2AccessTokenRedisDAO.delete(token);
@@ -124,8 +132,8 @@ public class OAuth2TokenRevocationCompensationSink implements OutboxEventSink {
             } else {
                 firstFailure.addSuppressed(ex);
             }
-            log.warn("[deliver][eventId={} delete 失败（tokenId={}）]",
-                    event.getEventId(), payload.getTokenId(), ex);
+            log.warn("[deliver][eventId={} delete 失败（tokenId={} errorType={})]",
+                    event.getEventId(), payload.getTokenId(), ex.getClass().getName());
         }
         if (firstFailure != null) {
             // 原样上抛（保留根因类型与 stack）——dispatcher 会将异常信息写入 outbox_event.last_error，

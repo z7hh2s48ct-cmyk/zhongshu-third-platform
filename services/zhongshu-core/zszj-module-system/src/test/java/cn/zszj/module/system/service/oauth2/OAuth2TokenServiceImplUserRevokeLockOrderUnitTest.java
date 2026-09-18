@@ -9,10 +9,12 @@ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
 import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
@@ -65,6 +67,11 @@ public class OAuth2TokenServiceImplUserRevokeLockOrderUnitTest {
         ReflectionTestUtils.setField(service, "oauth2CodeMapper", mock(OAuth2CodeMapper.class));
         // ZS-LOGIN-003 codex r2 P1：撤销现在先取用户行锁（统一锁序最外层），注入 AdminUserMapper mock
         ReflectionTestUtils.setField(service, "adminUserMapper", adminUserMapper);
+        // ZS-LOGIN-005.B codex r0 P2：懒解析 provider 未注入为 null，处理 ACCESS 行时 getIfAvailable() NPE——
+        // 注入 getIfAvailable()=null 的 ObjectProvider mock（与容器无 bean 时 Spring 行为一致 = .A 降级语义）
+        @SuppressWarnings("unchecked")
+        ObjectProvider<ReliableEventPort> nullProvider = mock(ObjectProvider.class);
+        ReflectionTestUtils.setField(service, "reliableEventPortProvider", nullProvider);
     }
 
     @AfterEach

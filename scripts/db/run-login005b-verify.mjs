@@ -18,9 +18,11 @@
  *   P8 过期事件静默 skip（expiresTime 已过 → Sink 静默 → status=DISPATCHED 非 DEAD）。
  * 任一失败退出非零；缺 Docker 退出码 3。用法：node scripts/db/run-login005b-verify.mjs
  *
- * 注：P2/P4/P5/P7/P8 为「模拟 Service/dispatcher/Sink 行为」的纯 SQL 验证（直接 INSERT/UPDATE
- * outbox_event 行），真实 server 端到端验证由 H2 集成测试（LoginCompensationIntegrationTest）覆盖；
- * 本脚本聚焦 PG 层 SQL 语义（SKIP LOCKED / 事务原子性 / CHECK 约束 / 秘密扩散防护）。
+ * 注：本脚本聚焦 PG 层 SQL 语义与事务契约（SKIP LOCKED / 原子性 / CHECK 约束 / 秘密扩散防护；
+ * P8 为「删令牌行 + 预写事件」同事务原子性契约，对齐 JOB-002 套件 P2 口径）。Sink 过期 skip /
+ * 重放撤销等<b>行为级</b>验证不作 SQL 模拟（r0 P2-7：夹具自证不构成行为验证），由 H2 集成测试
+ * （LoginCompensationIntegrationTest + Sink 用例 7 交互断言）承担；Java-on-PG 行为联验归 D-07
+ * 正式联验链（循 JOB-003/FILE-005.B 登记）。
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -114,15 +116,18 @@ VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:12345', '${payload}', 1,
     `rows=${rows} payload_intact=${storedPayload.includes('"tokenId":12345')} no_plaintext=${noTokenPlaintext}`);
 }
 
-// P3 双实例 SKIP LOCKED 领取不重复（循 run-job002-verify 同款持锁会话模式）
+// P3 双实例 SKIP LOCKED 领取不重复（循 run-job002-verify 同款持锁会话模式；r0 P2-6 加固：
+// statement_timeout 短于持锁时长 + A 锁定行确定化，堵死「无 SKIP LOCKED 时 B 阻塞至 A 释放后
+// 顺序领取仍 PASS」的假绿通道——B 若阻塞即超时报错，且断言 B 领到的恰是非 A 锁定行）
 {
   reset();
   psql('postgres', 'zhongshu', `INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type) VALUES
 ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:1', '{"tokenId":1}', 1, 'SYSTEM'),
 ('${EVENT_TYPE}', 'oauth2_refresh_token', 'REFRESH:2', '{"tokenId":2}', 1, 'SYSTEM')`);
-  // 领取语句形状（对齐 dispatcher 两步领取：SELECT FOR UPDATE SKIP LOCKED + 同事务 UPDATE 标记）
-  const claimSql = (token) => `UPDATE outbox_event SET status = 'DISPATCHED', dispatched_at = now(), claimed_by = '${token}'
-WHERE id IN (SELECT id FROM outbox_event WHERE status = 'PENDING' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id`;
+  // A 锁定行确定化：A 按 biz_id 精确领取 ACCESS:1 行，锁定的行 id 从表内可查
+  const lockedId = one(`SELECT id FROM outbox_event WHERE biz_id = 'ACCESS:1'`);
+  const claimSql = (token, whereExtra) => `UPDATE outbox_event SET status = 'DISPATCHED', dispatched_at = now(), claimed_by = '${token}'
+WHERE id IN (SELECT id FROM outbox_event WHERE status = 'PENDING'${whereExtra ? ' AND ' + whereExtra : ''} ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id`;
   const waitAState = async (expectActive) => {
     for (let i = 0; i < 60; i++) {
       const n = one(`SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(8)%' AND state = 'active' AND pid <> pg_backend_pid()`);
@@ -131,19 +136,22 @@ WHERE id IN (SELECT id FROM outbox_event WHERE status = 'PENDING' ORDER BY id LI
     }
     return false;
   };
-  // 会话 A：领取 1 行并持锁 8 秒不提交（行锁保持；ROLLBACK 归还为 PENDING）
-  const holdSql = `BEGIN; ${claimSql('inst-a')} ; SELECT pg_sleep(8); ROLLBACK;`;
+  // 会话 A：领取 ACCESS:1 行并持锁 8 秒不提交（行锁保持；ROLLBACK 归还为 PENDING）
+  const holdSql = `BEGIN; ${claimSql('inst-a', `biz_id = 'ACCESS:1'`)} ; SELECT pg_sleep(8); ROLLBACK;`;
   spawn('docker', ['exec', container, 'psql', '-U', 'postgres', '-d', 'zhongshu', '-c', holdSql], { stdio: 'ignore' });
   const aLocked = await waitAState(true);
-  // 会话 B：SKIP LOCKED 须跳过 A 锁定行，只领到其余 1 行
-  const bIds = aLocked ? oneIds(claimSql('inst-b')) : [];
+  // 会话 B：statement_timeout=3s < 持锁 8s——若无 SKIP LOCKED（变异），B 阻塞在 A 锁定行上
+  // 直至超时中断（语句报错、无行返回）；有 SKIP LOCKED 则立即跳过锁定行领到 REFRESH:2
+  const bClaim = spawnSync('docker', ['exec', container, 'psql', '-U', 'postgres', '-d', 'zhongshu', '-At', '-c',
+    `SET statement_timeout = '3s'; ${claimSql('inst-b')}`], { encoding: 'utf8' });
+  const bIds = bClaim.status === 0 ? bClaim.stdout.split('\n').filter((line) => /^\d+$/.test(line)) : [];
   const aGone = await waitAState(false);
-  // A 回滚释放后其行可再领，且与 B 已领行不相交（双实例全程无重复领取）
+  // A 回滚释放后其行可再领：C 恰领到 A 曾锁定的行（与 B 不相交，双实例全程无重复领取）
   const cIds = aGone ? oneIds(claimSql('inst-c')) : [];
-  const disjoint = cIds.every((id) => !bIds.includes(id));
-  record('P3 双实例 SKIP LOCKED 领取不重复（A 持锁行被跳过，B 仅领其余行）',
-    bIds.length === 1 && cIds.length === 1 && disjoint,
-    `A持锁=${aLocked} B=${bIds.join(',')} A释放=${aGone} C=${cIds.join(',')} 不相交=${disjoint}`);
+  const disjoint = cIds.length === 1 && cIds[0] === lockedId && !bIds.includes(lockedId);
+  record('P3 双实例 SKIP LOCKED 领取不重复（A 持 ACCESS:1 行，B 超时护栏下仅领 REFRESH:2，C 领回 A 行）',
+    bIds.length === 1 && cIds.length === 1 && cIds[0] === lockedId && !bIds.includes(lockedId),
+    `A持锁=${aLocked} locked=${lockedId} B=${bIds.join(',')} A释放=${aGone} C=${cIds.join(',')} 确定性=${disjoint}`);
 }
 
 // P4 Sink 重放恰 1 次（模拟 dispatcher 领取 + Sink 成功 → DISPATCHED）
@@ -205,18 +213,31 @@ VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:7', '${payload}', 1, 'SY
     `no_plaintext=${noPlaintext} biz_id=${bizIdFormat}`);
 }
 
-// P8 过期事件静默 skip（expiresTime 已过 → Sink 静默 → DISPATCHED 非 DEAD）
+// P8 业务撤销与补偿事件同事务原子性（SQL 事务契约；codex r0 P2-7 处置：原 P8「无条件标记
+// DISPATCHED」属夹具自证，不验证 Sink 行为——Sink 过期 skip / 重放撤销的行为级验证由 H2 集成
+// 测试（LoginCompensationIntegrationTest + Sink 交互断言）承担，本套件聚焦 SQL 契约面。
+// 本探针对齐 JOB-002 套件 P2：撤销主逻辑（删令牌行）与预写事件同事务，回滚双侧不留痕 / 提交双侧落库）
 {
   reset();
-  const expiredPayload = JSON.stringify({ tokenId: 8, tokenType: 'ACCESS', expiresTime: '2020-01-01T00:00:00' });
-  psql('postgres', 'zhongshu', `INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type)
-VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:8', '${expiredPayload}', 1, 'SYSTEM')`);
-  const marked = oneIds(`UPDATE outbox_event SET status = 'DISPATCHED', dispatched_at = now()
-WHERE biz_id = 'ACCESS:8' AND status = 'PENDING' RETURNING id`);
-  const state = one(`SELECT status FROM outbox_event WHERE biz_id = 'ACCESS:8'`);
-  record('P8 过期事件静默 skip（expiresTime 已过 → Sink 静默 → status=DISPATCHED 非 DEAD）',
-    marked.length === 1 && state === 'DISPATCHED',
-    `state=${state}`);
+  const tokenInsert = (tag) => `INSERT INTO system_oauth2_access_token (id, user_id, user_type, user_info, access_token, refresh_token, client_id, expires_time, tenant_id)
+VALUES (9${tag}, 9001, 2, '{}', 'at-${tag}', 'rt-${tag}', 'default', now() + interval '30 minutes', 1);`;
+  const eventInsert = (tag) => `INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type)
+VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:9${tag}', '{"tokenId":9${tag}}', 1, 'SYSTEM');`;
+  // 回滚侧：业务回滚无事件、令牌行也不留痕（同一事务原子性）
+  const rbP = psql('postgres', 'zhongshu', `BEGIN;\n${tokenInsert(1)}\n${eventInsert(1)}\nROLLBACK;`);
+  const rbToken = one(`SELECT count(*) FROM system_oauth2_access_token WHERE id = 91`);
+  const rbEvent = one(`SELECT count(*) FROM outbox_event WHERE biz_id = 'ACCESS:91'`);
+  // 提交侧：提交必有事件、令牌行落库
+  const cmP = psql('postgres', 'zhongshu', `BEGIN;\n${tokenInsert(2)}\n${eventInsert(2)}\nCOMMIT;`);
+  if (rbP.status !== 0 || cmP.status !== 0) {
+    console.error(`[login005b][P8 debug] rollback status=${rbP.status} stderr=${rbP.stderr}`);
+    console.error(`[login005b][P8 debug] commit status=${cmP.status} stderr=${cmP.stderr}`);
+  }
+  const cmToken = one(`SELECT count(*) FROM system_oauth2_access_token WHERE id = 92`);
+  const cmEvent = one(`SELECT count(*) FROM outbox_event WHERE biz_id = 'ACCESS:92'`);
+  record('P8 业务撤销与补偿事件同事务原子性（回滚双侧不留痕 / 提交双侧落库）',
+    rbP.status === 0 && cmP.status === 0 && rbToken === '0' && rbEvent === '0' && cmToken === '1' && cmEvent === '1',
+    `rollback_token=${rbToken} rollback_event=${rbEvent} commit_token=${cmToken} commit_event=${cmEvent}`);
 }
 
 console.log(JSON.stringify({ pass, fail: failCount }));
