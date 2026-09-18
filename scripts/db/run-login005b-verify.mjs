@@ -114,25 +114,36 @@ VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:12345', '${payload}', 1,
     `rows=${rows} payload_intact=${storedPayload.includes('"tokenId":12345')} no_plaintext=${noTokenPlaintext}`);
 }
 
-// P3 双实例 SKIP LOCKED 领取不重复
+// P3 双实例 SKIP LOCKED 领取不重复（循 run-job002-verify 同款持锁会话模式）
 {
   reset();
   psql('postgres', 'zhongshu', `INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type) VALUES
 ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:1', '{"tokenId":1}', 1, 'SYSTEM'),
 ('${EVENT_TYPE}', 'oauth2_refresh_token', 'REFRESH:2', '{"tokenId":2}', 1, 'SYSTEM')`);
-  const claimSql = `SELECT id FROM outbox_event WHERE status = 'PENDING' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`;
-  const attempts = await Promise.all(range(2).map(() => new Promise((resolve) => {
-    const child = spawn('docker', ['exec', container, 'psql', '-U', 'postgres', '-d', 'zhongshu', '-At', '-c', claimSql]);
-    let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.on('error', () => resolve({ code: -1, ids: [] }));
-    child.on('close', (code) => resolve({ code, ids: out.split('\n').filter((line) => /^\d+$/.test(line)) }));
-  })));
-  const allIds = attempts.flatMap((a) => a.ids);
-  const uniqueIds = new Set(allIds);
-  record('P3 双实例 SKIP LOCKED 领取不重复（2 并发连接各领 1 行，无重复）',
-    allIds.length === 2 && uniqueIds.size === 2,
-    `claimed=${allIds.length} unique=${uniqueIds.size}`);
+  // 领取语句形状（对齐 dispatcher 两步领取：SELECT FOR UPDATE SKIP LOCKED + 同事务 UPDATE 标记）
+  const claimSql = (token) => `UPDATE outbox_event SET status = 'DISPATCHED', dispatched_at = now(), claimed_by = '${token}'
+WHERE id IN (SELECT id FROM outbox_event WHERE status = 'PENDING' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id`;
+  const waitAState = async (expectActive) => {
+    for (let i = 0; i < 60; i++) {
+      const n = one(`SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(8)%' AND state = 'active' AND pid <> pg_backend_pid()`);
+      if (Number(n) === (expectActive ? 1 : 0)) return true;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+    return false;
+  };
+  // 会话 A：领取 1 行并持锁 8 秒不提交（行锁保持；ROLLBACK 归还为 PENDING）
+  const holdSql = `BEGIN; ${claimSql('inst-a')} ; SELECT pg_sleep(8); ROLLBACK;`;
+  spawn('docker', ['exec', container, 'psql', '-U', 'postgres', '-d', 'zhongshu', '-c', holdSql], { stdio: 'ignore' });
+  const aLocked = await waitAState(true);
+  // 会话 B：SKIP LOCKED 须跳过 A 锁定行，只领到其余 1 行
+  const bIds = aLocked ? oneIds(claimSql('inst-b')) : [];
+  const aGone = await waitAState(false);
+  // A 回滚释放后其行可再领，且与 B 已领行不相交（双实例全程无重复领取）
+  const cIds = aGone ? oneIds(claimSql('inst-c')) : [];
+  const disjoint = cIds.every((id) => !bIds.includes(id));
+  record('P3 双实例 SKIP LOCKED 领取不重复（A 持锁行被跳过，B 仅领其余行）',
+    bIds.length === 1 && cIds.length === 1 && disjoint,
+    `A持锁=${aLocked} B=${bIds.join(',')} A释放=${aGone} C=${cIds.join(',')} 不相交=${disjoint}`);
 }
 
 // P4 Sink 重放恰 1 次（模拟 dispatcher 领取 + Sink 成功 → DISPATCHED）
