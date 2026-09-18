@@ -13,6 +13,7 @@ import cn.zszj.framework.common.util.date.DateUtils;
 import cn.zszj.framework.common.util.monitor.TracerUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.tenant.core.util.TenantUtils;
 import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenPageReqVO;
@@ -190,7 +191,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
                 evictions.add(() -> revokeWithTombstone(evicted.getAccessToken(), evicted.getExpiresTime()));
                 // ZS-LOGIN-005.B：事务内预写补偿事件——业务回滚则事件一并回滚（Outbox 语义）
                 appendRevocationCompensationEvent(evicted.getId(), TokenType.ACCESS, evicted.getExpiresTime(),
-                        evicted.getTenantId(), OutboxEventMessage.OutboxActorType.USER, evicted.getUserId());
+                        evicted.getTenantId(), evicted.getUserId());
             }
             invalidateCacheAfterCommit("刷新淘汰旧代际(refreshAccessToken)", evictions);
         }
@@ -330,14 +331,14 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             cacheInvalidations.add(() -> revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime()));
             // ZS-LOGIN-005.B：事务内预写 ACCESS 补偿事件
             appendRevocationCompensationEvent(aliveToken.getId(), TokenType.ACCESS, aliveToken.getExpiresTime(),
-                    aliveToken.getTenantId(), OutboxEventMessage.OutboxActorType.USER, aliveToken.getUserId());
+                    aliveToken.getTenantId(), aliveToken.getUserId());
         }
         // 删除刷新令牌
         OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
         // ZS-LOGIN-005.B：REFRESH 类型预写补偿事件（合成凭据 key 命名空间与 ACCESS 共用）
         if (refreshTokenDO != null) {
             appendRevocationCompensationEvent(refreshTokenDO.getId(), TokenType.REFRESH, refreshTokenDO.getExpiresTime(),
-                    refreshTokenDO.getTenantId(), OutboxEventMessage.OutboxActorType.USER, refreshTokenDO.getUserId());
+                    refreshTokenDO.getTenantId(), refreshTokenDO.getUserId());
         }
         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
         // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
@@ -509,17 +510,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
                 cacheInvalidations.add(() -> revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime()));
-                // ZS-LOGIN-005.B：事务内预写 ACCESS 补偿事件（管理端踢出：事件主体=ADMIN）
+                // ZS-LOGIN-005.B：事务内预写 ACCESS 补偿事件
                 appendRevocationCompensationEvent(aliveToken.getId(), TokenType.ACCESS, aliveToken.getExpiresTime(),
-                        aliveToken.getTenantId(), OutboxEventMessage.OutboxActorType.ADMIN, aliveToken.getUserId());
+                        aliveToken.getTenantId(), aliveToken.getUserId());
             }
             // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
             // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
             OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
-            // ZS-LOGIN-005.B：REFRESH 类型预写补偿事件（管理端踢出：事件主体=ADMIN）
+            // ZS-LOGIN-005.B：REFRESH 类型预写补偿事件
             if (revokeTarget != null) {
                 appendRevocationCompensationEvent(revokeTarget.getId(), TokenType.REFRESH, revokeTarget.getExpiresTime(),
-                        revokeTarget.getTenantId(), OutboxEventMessage.OutboxActorType.ADMIN, revokeTarget.getUserId());
+                        revokeTarget.getTenantId(), revokeTarget.getUserId());
             }
             // 删除刷新令牌
             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
@@ -678,11 +679,25 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
      * @param tokenType     令牌类型（ACCESS / REFRESH）
      * @param expiresTime   到期时间（写入事件载荷快照，Sink 用于过期识别）
      * @param tokenTenantId 被撤销令牌行的租户（事件租户归属权威，非调用者上下文租户）
-     * @param actorType     事件主体类型（撤销触发面：用户自操作=USER、管理端踢出=ADMIN）
      * @param subjectUserId 被撤销凭据属主用户 ID（回填 actorId 供后台重放关联）
      */
+    /**
+     * r1 P3：撤销事件主体按【调用时请求上下文】判定——管理员踢出与用户自操作共用同一撤销方法，
+     * 按方法名硬编码会错标（r1 实证：revokeSession 固定 USER 漏管理员踢出、用户级撤销固定 ADMIN
+     * 混入自助改密）。上下文有登录主体时按其 userType 分 ADMIN/USER，无上下文（定时清理/MQ）为 SYSTEM。
+     */
+    private OutboxEventMessage.OutboxActorType resolveRevocationActorType() {
+        LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
+        if (loginUser == null) {
+            return OutboxEventMessage.OutboxActorType.SYSTEM;
+        }
+        return UserTypeEnum.ADMIN.getValue().equals(loginUser.getUserType())
+                ? OutboxEventMessage.OutboxActorType.ADMIN
+                : OutboxEventMessage.OutboxActorType.USER;
+    }
+
     private void appendRevocationCompensationEvent(Long tokenId, TokenType tokenType, LocalDateTime expiresTime,
-                                                   Long tokenTenantId, OutboxEventMessage.OutboxActorType actorType, Long subjectUserId) {
+                                                   Long tokenTenantId, Long subjectUserId) {
         // ZS-LOGIN-005.B GREEN-2：ObjectProvider 懒解析 → 降级或预写
         ReliableEventPort port = reliableEventPortProvider.getIfAvailable();
         if (port == null) {
@@ -703,7 +718,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
                         : SystemOutboxEventTypes.BIZ_TYPE_OAUTH2_REFRESH_TOKEN)
                 .bizId(tokenType.name() + ":" + tokenId)
                 .payload(payloadMap)
-                .actorType(actorType)
+                .actorType(resolveRevocationActorType())
                 .actorId(subjectUserId != null ? String.valueOf(subjectUserId) : null)
                 .traceId(TracerUtils.getTraceId())
                 .build();

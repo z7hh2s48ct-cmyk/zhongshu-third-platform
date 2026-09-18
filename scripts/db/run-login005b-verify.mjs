@@ -13,9 +13,11 @@
  *   P3 双实例 SKIP LOCKED 领取不重复（2 并发连接各领 1 行，无重复）；
  *   P4 Sink 重放恰 1 次（status PENDING→DISPATCHED + dispatched_at 非空 + claimed_by 登记）；
  *   P5 重启不重复写（已完成事件 status=DISPATCHED，新连接不重新领取，恒 1 行）；
- *   P6 双连接并发交错（收编 LOGIN-003 延后：2 独立连接各插 1 行事件，恰 2 行，无冲突）；
+ *   P6 双连接并发插入交错（2 独立连接各插 1 行事件，恰 2 行，无冲突；【非】LOGIN-003 兑换↔改密
+ *      业务交错——该项按 r0 P1-2 处置登记为 ZS-SYS-001 真实 PG 并发回归扩展，本套件不含）；
  *   P7 不复活凭据（payload 无 token 明文 + biz_id 格式 tokenType:tokenId）；
- *   P8 过期事件静默 skip（expiresTime 已过 → Sink 静默 → status=DISPATCHED 非 DEAD）。
+ *   P8 业务撤销与补偿事件同事务原子性（预置活跃令牌 → 事务内逻辑删除 + 预写事件：回滚则令牌
+ *      恢复活跃且事件不留痕，提交则令牌撤销且事件落库）。
  * 任一失败退出非零；缺 Docker 退出码 3。用法：node scripts/db/run-login005b-verify.mjs
  *
  * 注：本脚本聚焦 PG 层 SQL 语义与事务契约（SKIP LOCKED / 原子性 / CHECK 约束 / 秘密扩散防护；
@@ -179,7 +181,8 @@ VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:5', '{"tokenId":5}', 1, 
     `reclaimable=${reClaim} rows=${rows}`);
 }
 
-// P6 双连接并发交错（收编 LOGIN-003 延后：兑换↔改密两序）
+// P6 双连接并发插入交错（仅 SQL 并发写面；LOGIN-003 兑换↔改密业务交错已按 r0 P1-2 处置
+// 登记为 ZS-SYS-001 真实 PG 并发回归扩展，见 docs/reviews/README.md 台账）
 {
   reset();
   const insertSql = (bizId) => `INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type)
@@ -217,27 +220,34 @@ VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:7', '${payload}', 1, 'SY
 // DISPATCHED」属夹具自证，不验证 Sink 行为——Sink 过期 skip / 重放撤销的行为级验证由 H2 集成
 // 测试（LoginCompensationIntegrationTest + Sink 交互断言）承担，本套件聚焦 SQL 契约面。
 // 本探针对齐 JOB-002 套件 P2：撤销主逻辑（删令牌行）与预写事件同事务，回滚双侧不留痕 / 提交双侧落库）
+// P8 业务撤销与补偿事件同事务原子性（r1 P2 重构：预置【活跃】令牌行 → 事务内逻辑删除令牌
+// （撤销主逻辑的落库面）+ 预写事件——回滚则令牌恢复活跃且事件不留痕，提交则令牌撤销且事件落库；
+// 对齐 JOB-002 套件 P2 口径，非夹具自证）
 {
   reset();
   const tokenInsert = (tag) => `INSERT INTO system_oauth2_access_token (id, user_id, user_type, user_info, access_token, refresh_token, client_id, expires_time, tenant_id)
 VALUES (9${tag}, 9001, 2, '{}', 'at-${tag}', 'rt-${tag}', 'default', now() + interval '30 minutes', 1);`;
-  const eventInsert = (tag) => `INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type)
+  const revokeAndAppend = (tag) => `UPDATE system_oauth2_access_token SET deleted = 1 WHERE id = 9${tag};
+INSERT INTO outbox_event (event_type, biz_type, biz_id, payload, tenant_id, actor_type)
 VALUES ('${EVENT_TYPE}', 'oauth2_access_token', 'ACCESS:9${tag}', '{"tokenId":9${tag}}', 1, 'SYSTEM');`;
-  // 回滚侧：业务回滚无事件、令牌行也不留痕（同一事务原子性）
-  const rbP = psql('postgres', 'zhongshu', `BEGIN;\n${tokenInsert(1)}\n${eventInsert(1)}\nROLLBACK;`);
-  const rbToken = one(`SELECT count(*) FROM system_oauth2_access_token WHERE id = 91`);
+  // 预置两个活跃令牌行（独立事务已提交）
+  const seedP = psql('postgres', 'zhongshu', `${tokenInsert(1)}\n${tokenInsert(2)}`);
+  // 回滚侧：事务内撤销 + 预写，回滚 → 令牌恢复活跃、事件不留痕
+  const rbP = psql('postgres', 'zhongshu', `BEGIN;\n${revokeAndAppend(1)}\nROLLBACK;`);
+  const rbTokenActive = one(`SELECT count(*) FROM system_oauth2_access_token WHERE id = 91 AND deleted = 0`);
   const rbEvent = one(`SELECT count(*) FROM outbox_event WHERE biz_id = 'ACCESS:91'`);
-  // 提交侧：提交必有事件、令牌行落库
-  const cmP = psql('postgres', 'zhongshu', `BEGIN;\n${tokenInsert(2)}\n${eventInsert(2)}\nCOMMIT;`);
-  if (rbP.status !== 0 || cmP.status !== 0) {
-    console.error(`[login005b][P8 debug] rollback status=${rbP.status} stderr=${rbP.stderr}`);
-    console.error(`[login005b][P8 debug] commit status=${cmP.status} stderr=${cmP.stderr}`);
+  // 提交侧：事务内撤销 + 预写，提交 → 令牌撤销、事件落库
+  const cmP = psql('postgres', 'zhongshu', `BEGIN;\n${revokeAndAppend(2)}\nCOMMIT;`);
+  if (seedP.status !== 0 || rbP.status !== 0 || cmP.status !== 0) {
+    console.error(`[login005b][P8 debug] seed=${seedP.status} rollback=${rbP.status} commit=${cmP.status}`);
+    console.error(`[login005b][P8 debug] seed stderr=${seedP.stderr} rb stderr=${rbP.stderr} cm stderr=${cmP.stderr}`);
   }
-  const cmToken = one(`SELECT count(*) FROM system_oauth2_access_token WHERE id = 92`);
+  const cmTokenRevoked = one(`SELECT count(*) FROM system_oauth2_access_token WHERE id = 92 AND deleted = 1`);
   const cmEvent = one(`SELECT count(*) FROM outbox_event WHERE biz_id = 'ACCESS:92'`);
-  record('P8 业务撤销与补偿事件同事务原子性（回滚双侧不留痕 / 提交双侧落库）',
-    rbP.status === 0 && cmP.status === 0 && rbToken === '0' && rbEvent === '0' && cmToken === '1' && cmEvent === '1',
-    `rollback_token=${rbToken} rollback_event=${rbEvent} commit_token=${cmToken} commit_event=${cmEvent}`);
+  record('P8 业务撤销与补偿事件同事务原子性（回滚=令牌恢复活跃+事件不留痕；提交=令牌撤销+事件落库）',
+    seedP.status === 0 && rbP.status === 0 && cmP.status === 0
+      && rbTokenActive === '1' && rbEvent === '0' && cmTokenRevoked === '1' && cmEvent === '1',
+    `rollback_active_token=${rbTokenActive} rollback_event=${rbEvent} commit_revoked_token=${cmTokenRevoked} commit_event=${cmEvent}`);
 }
 
 console.log(JSON.stringify({ pass, fail: failCount }));

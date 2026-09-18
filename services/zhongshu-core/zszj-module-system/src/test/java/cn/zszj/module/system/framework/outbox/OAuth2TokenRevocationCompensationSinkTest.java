@@ -1,5 +1,6 @@
 package cn.zszj.module.system.framework.outbox;
 
+import cn.zszj.framework.common.util.date.DateUtils;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.util.json.JsonUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
@@ -177,7 +178,7 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_idempotent_multipleInvocationsSameResult() throws Exception {
-        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        OAuth2AccessTokenDO access = seedAccessRow(DateUtils.now().plusMinutes(30));
         preheatCache(access);
         // 撤销已生效：mapper.deleteById 触发 MyBatis Plus 逻辑删除（deleted=TRUE）
         accessTokenMapper.deleteById(access.getId());
@@ -212,10 +213,10 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_expiredToken_silentSkip() throws Exception {
-        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        OAuth2AccessTokenDO access = seedAccessRow(DateUtils.now().plusMinutes(30));
         preheatCache(access);
         accessTokenMapper.deleteById(access.getId());
-        OutboxEventRecord event = buildEvent(access.getId(), TokenType.ACCESS, LocalDateTime.now().minusMinutes(5));
+        OutboxEventRecord event = buildEvent(access.getId(), TokenType.ACCESS, DateUtils.now().minusMinutes(5));
 
         assertDoesNotThrow(() -> sink.deliver(event), "过期凭据 deliver 必须静默返回");
         assertFalse(tombstoneExists(access.getAccessToken()),
@@ -234,7 +235,7 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_rowLogicallyDeleted_readsViaIncludeDeleted() throws Exception {
-        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        OAuth2AccessTokenDO access = seedAccessRow(DateUtils.now().plusMinutes(30));
         preheatCache(access);
         accessTokenMapper.deleteById(access.getId());
         // 前置：普通 select 因逻辑删除过滤读到 null；专用 selectByIdIncludeDeleted 必须能读到
@@ -266,7 +267,7 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_rowStillActive_silentSkipNoRevoke() throws Exception {
-        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        OAuth2AccessTokenDO access = seedAccessRow(DateUtils.now().plusMinutes(30));
         preheatCache(access);
         // 关键：不 deleteById，保持 deleted=FALSE（模拟业务回滚 / 事件误发场景）
         TokenRowSnapshot snapshot = accessTokenMapper.selectByIdIncludeDeleted(access.getId());
@@ -290,7 +291,7 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_rowPhysicallyPurged_silentReturn() throws Exception {
-        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        OAuth2AccessTokenDO access = seedAccessRow(DateUtils.now().plusMinutes(30));
         Long tokenId = access.getId();
         String tokenStr = access.getAccessToken();
         // 物理清理：JdbcTemplate 直接 DELETE（绕开 MyBatis Plus 逻辑删除）
@@ -311,7 +312,7 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_refreshTokenType_readsFromRefreshTable() throws Exception {
-        OAuth2RefreshTokenDO refresh = seedRefreshRow(LocalDateTime.now().plusDays(1));
+        OAuth2RefreshTokenDO refresh = seedRefreshRow(DateUtils.now().plusDays(1));
         preheatCacheForRefresh(refresh);
         refreshTokenMapper.deleteById(refresh.getId());
         TokenRowSnapshot snapshot = refreshTokenMapper.selectByIdIncludeDeleted(refresh.getId());
@@ -339,7 +340,7 @@ public class OAuth2TokenRevocationCompensationSinkTest extends BaseDbAndRedisUni
      */
     @Test
     public void deliver_redisFailsAgain_throwsForDispatcherRetry() throws Exception {
-        OAuth2AccessTokenDO access = seedAccessRow(LocalDateTime.now().plusMinutes(30));
+        OAuth2AccessTokenDO access = seedAccessRow(DateUtils.now().plusMinutes(30));
         accessTokenMapper.deleteById(access.getId());
         OutboxEventRecord event = buildEvent(access.getId(), TokenType.ACCESS, access.getExpiresTime());
 

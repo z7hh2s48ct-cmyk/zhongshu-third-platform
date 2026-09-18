@@ -1,5 +1,6 @@
 package cn.zszj.module.system.service.oauth2;
 
+import cn.zszj.framework.common.util.date.DateUtils;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
@@ -125,7 +126,7 @@ public class LoginCompensationIntegrationTest extends BaseDbAndRedisUnitTest {
         OAuth2RefreshTokenDO refresh = new OAuth2RefreshTokenDO();
         refresh.setRefreshToken(randomString()).setUserId(userId)
                 .setUserType(UserTypeEnum.ADMIN.getValue()).setClientId(clientId)
-                .setScopes(List.of("read")).setExpiresTime(LocalDateTime.now().plusDays(1));
+                .setScopes(List.of("read")).setExpiresTime(DateUtils.now().plusDays(1));
         refresh.setTenantId(1L);
         refreshTokenMapper.insert(refresh);
         OAuth2AccessTokenDO access = new OAuth2AccessTokenDO();
@@ -133,7 +134,7 @@ public class LoginCompensationIntegrationTest extends BaseDbAndRedisUnitTest {
                 .setUserType(UserTypeEnum.ADMIN.getValue()).setClientId(clientId)
                 .setRefreshToken(refresh.getRefreshToken())
                 .setScopes(List.of("read"))
-                .setExpiresTime(LocalDateTime.now().plusMinutes(30));
+                .setExpiresTime(DateUtils.now().plusMinutes(30));
         access.setUserInfo(Map.of("nickname", "ut-user"));
         access.setTenantId(1L);
         accessTokenMapper.insert(access);

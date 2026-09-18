@@ -1,5 +1,6 @@
 package cn.zszj.module.system.service.oauth2;
 
+import cn.zszj.framework.common.util.date.DateUtils;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
@@ -157,9 +158,9 @@ public class OAuth2TokenServiceImplOutboxPreWriteTest extends BaseDbAndRedisUnit
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
-        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, LocalDateTime.now().plusDays(1));
-        seedAccess(clientId, userId, refresh.getRefreshToken(), LocalDateTime.now().plusMinutes(30));
-        seedAccess(clientId, userId, refresh.getRefreshToken(), LocalDateTime.now().plusMinutes(30));
+        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, DateUtils.now().plusDays(1));
+        seedAccess(clientId, userId, refresh.getRefreshToken(), DateUtils.now().plusMinutes(30));
+        seedAccess(clientId, userId, refresh.getRefreshToken(), DateUtils.now().plusMinutes(30));
         assertEquals(0L, countCompensationEvents(), "前置：无历史事件");
 
         transactionTemplate.executeWithoutResult(status ->
@@ -191,9 +192,9 @@ public class OAuth2TokenServiceImplOutboxPreWriteTest extends BaseDbAndRedisUnit
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
-        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, LocalDateTime.now().plusDays(1));
+        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, DateUtils.now().plusDays(1));
         OAuth2AccessTokenDO access = seedAccess(clientId, userId, refresh.getRefreshToken(),
-                LocalDateTime.now().plusMinutes(30));
+                DateUtils.now().plusMinutes(30));
         assertEquals(0L, countCompensationEvents(), "前置：无历史事件");
 
         transactionTemplate.executeWithoutResult(status ->
@@ -223,10 +224,10 @@ public class OAuth2TokenServiceImplOutboxPreWriteTest extends BaseDbAndRedisUnit
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
-        OAuth2RefreshTokenDO refresh1 = seedRefresh(clientId, userId, LocalDateTime.now().plusDays(1));
-        seedAccess(clientId, userId, refresh1.getRefreshToken(), LocalDateTime.now().plusMinutes(30));
-        OAuth2RefreshTokenDO refresh2 = seedRefresh(clientId, userId, LocalDateTime.now().plusDays(1));
-        seedAccess(clientId, userId, refresh2.getRefreshToken(), LocalDateTime.now().plusMinutes(30));
+        OAuth2RefreshTokenDO refresh1 = seedRefresh(clientId, userId, DateUtils.now().plusDays(1));
+        seedAccess(clientId, userId, refresh1.getRefreshToken(), DateUtils.now().plusMinutes(30));
+        OAuth2RefreshTokenDO refresh2 = seedRefresh(clientId, userId, DateUtils.now().plusDays(1));
+        seedAccess(clientId, userId, refresh2.getRefreshToken(), DateUtils.now().plusMinutes(30));
         assertEquals(0L, countCompensationEvents(), "前置：无历史事件");
 
         transactionTemplate.executeWithoutResult(status ->
@@ -259,9 +260,9 @@ public class OAuth2TokenServiceImplOutboxPreWriteTest extends BaseDbAndRedisUnit
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
-        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, LocalDateTime.now().plusDays(1));
+        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, DateUtils.now().plusDays(1));
         OAuth2AccessTokenDO access = seedAccess(clientId, userId, refresh.getRefreshToken(),
-                LocalDateTime.now().plusMinutes(30));
+                DateUtils.now().plusMinutes(30));
 
         try {
             transactionTemplate.executeWithoutResult(status -> {
@@ -292,9 +293,9 @@ public class OAuth2TokenServiceImplOutboxPreWriteTest extends BaseDbAndRedisUnit
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
-        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, LocalDateTime.now().plusDays(1));
+        OAuth2RefreshTokenDO refresh = seedRefresh(clientId, userId, DateUtils.now().plusDays(1));
         OAuth2AccessTokenDO access = seedAccess(clientId, userId, refresh.getRefreshToken(),
-                LocalDateTime.now().plusMinutes(30));
+                DateUtils.now().plusMinutes(30));
         assertEquals(0L, countCompensationEvents(), "前置：无历史事件");
 
         // 读路径调用（不撤销，DB 行仍在，checkAccessToken 通过）
