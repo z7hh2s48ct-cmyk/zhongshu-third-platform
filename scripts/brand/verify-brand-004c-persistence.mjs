@@ -607,16 +607,20 @@ export function extractMessageRouteOverrides(text, source) {
         minIndent = Math.min(minIndent, leadingWsLen(ln));
       });
       if (!Number.isFinite(minIndent)) minIndent = 0;
-      // [r6 P2] 非法转义洗白防护：剥离前校验原始行——「\ + 空白 + 行尾」是 javac 拒绝编译的
-      // 非法转义（\ 后仅允许确定转义符/八进制/行终止符），先裁剪行尾空白会把 `\ ` 洗成 `\<LF>`
-      // 合法续行、按续行拼出与 javac 不同的值（zszj_\<SP><LF>channel → zszj_channel 假绿）。
-      // `\` 紧贴行尾（e === ln.length）是合法续行，不拦。
+      // [r6 P2 / r7 P2 订正] 非法转义洗白防护：剥离前校验原始行——「奇数个连续反斜杠 + 空白 +
+      // 行尾」是 javac 拒绝编译的非法转义（奇数反斜杠意味着最后一个 \ 悬空等待转义符）；先裁剪
+      // 行尾空白会把 `\ ` 洗成 `\<LF>` 合法续行、按续行拼出与 javac 不同的值。偶数反斜杠（如
+      // `\\` 转义反斜杠 + 空格 + 行尾）合法不拦；奇数反斜杠紧贴行尾是合法续行也不拦。
       for (const ln of tLines) {
         let e = ln.length;
         while (e > 0 && isJavaWs(ln[e - 1])) e--;
         if (e > 0 && ln[e - 1] === '\\' && e < ln.length) {
-          problems.push({ source, field: 'message-route-override-textblock', check: 'escape-illegal', why: `文本块行尾为反斜杠+空白（javac 非法转义，剥离不得洗白为续行）：${source}` });
-          return { literals, problems };
+          let bs = 0;
+          while (e - 1 - bs >= 0 && ln[e - 1 - bs] === '\\') bs++;
+          if (bs % 2 === 1) {
+            problems.push({ source, field: 'message-route-override-textblock', check: 'escape-illegal', why: `文本块行尾为奇数个反斜杠+空白（javac 非法转义，剥离不得洗白为续行）：${source}` });
+            return { literals, problems };
+          }
         }
       }
       const strippedRaw = tLines
@@ -1365,6 +1369,46 @@ export function injectionSelfTest() {
         return literals;
       },
       expectDerived: 'yudao_channel\n',
+    },
+    {
+      // r7 P3 成对断言（非法转义防护检出力）：文本块行尾「1 根反斜杠 + 空格 + 行尾」= javac
+      // 非法转义 → escape-illegal problem（删除该防护的变异则洗白为续行、假绿转红）
+      name: 'route-textblock-odd-backslash-ws-illegal',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '        yudao_channel\\ \n'
+          + '        """;\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return problems;
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        return p2.length ? p2 : literals.filter((k) => false); // 期望仅 problem、不产出清单
+      },
+      expectValue: null,
+      minHits: 1,
+    },
+    {
+      // r7 P3 成对断言（偶数反斜杠合法）：「2 根反斜杠（转义反斜杠）+ 空格 + 行尾」javac 合法，
+      // 值含字面反斜杠——防 r7 P2 的奇偶判定误拦合法形状（OddBackslash 变异会产 problem 转红）
+      name: 'route-textblock-even-backslash-ws-legal',
+      extract: () => {
+        const src = 'public class X extends AbstractRedisChannelMessage {\n'
+          + '  public String getChannel() {\n'
+          + '    return """\n'
+          + '        yudao_channel\\\\ \n'
+          + '        """;\n'
+          + '  }\n'
+          + '}';
+        const { masked, problems } = maskComments(src);
+        if (problems.length) return []; // 偶数反斜杠 + 空白行尾：合法，零 problem
+        const { literals, problems: p2 } = extractMessageRouteOverrides(masked, 'injected');
+        if (p2.length) return [];
+        return literals;
+      },
+      expectDerived: 'yudao_channel\\\n', // \\ 转义消费为单个字面反斜杠：值 = yudao_channel\ + LF
     },
     {
       // codex r3 P2-A 变异反证：行注释以 \r 终止（JLS 三种行终止符）——注释后的 return
