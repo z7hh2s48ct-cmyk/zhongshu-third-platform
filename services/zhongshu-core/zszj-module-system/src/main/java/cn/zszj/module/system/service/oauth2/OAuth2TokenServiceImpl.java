@@ -10,8 +10,10 @@ import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.date.DateUtils;
+import cn.zszj.framework.common.util.monitor.TracerUtils;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.tenant.core.util.TenantUtils;
 import cn.zszj.module.system.controller.admin.oauth2.vo.token.OAuth2AccessTokenPageReqVO;
@@ -24,10 +26,15 @@ import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import cn.zszj.module.system.framework.outbox.SystemOutboxEventTypes;
+import cn.zszj.module.system.framework.outbox.TokenRevocationCompensationPayload.TokenType;
 import cn.zszj.module.system.service.user.AdminUserService;
+import cn.zszj.module.infra.framework.outbox.OutboxEventMessage;
+import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -40,6 +47,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -76,6 +84,18 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Resource
     @Lazy // 懒加载，避免循环依赖
     private AdminUserService adminUserService;
+
+    /**
+     * ZS-LOGIN-005.B：Outbox 事件写入端口（JOB-002 SPI）——ObjectProvider 懒解析：
+     * <ul>
+     *   <li>system + infra 合并部署（生产）：解析到 {@code JdbcReliableEventPort}，撤销主逻辑事务内预写补偿事件；</li>
+     *   <li>system 单独运行（部分测试 / 精简部署）：解析为 {@code null}，降级为 {@code .A} 语义
+     *       （无补偿链路，仅事务后失效 + 权威校验）。</li>
+     * </ul>
+     * 选择 ObjectProvider 而非直接 @Resource：避免 system 单独运行时因 infra bean 缺失导致上下文启动失败。
+     */
+    @Resource
+    private ObjectProvider<ReliableEventPort> reliableEventPortProvider;
 
     /**
      * ZS-LOGIN-001：令牌用途分离门控开关——是否允许把「刷新令牌」静默当作「访问令牌」使用。
@@ -169,6 +189,9 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             List<Runnable> evictions = new ArrayList<>();
             for (OAuth2AccessTokenDO evicted : accessTokenDOs) {
                 evictions.add(() -> revokeWithTombstone(evicted.getAccessToken(), evicted.getExpiresTime()));
+                // ZS-LOGIN-005.B：事务内预写补偿事件——业务回滚则事件一并回滚（Outbox 语义）
+                appendRevocationCompensationEvent(evicted.getId(), TokenType.ACCESS, evicted.getExpiresTime(),
+                        evicted.getTenantId(), evicted.getUserId());
             }
             invalidateCacheAfterCommit("刷新淘汰旧代际(refreshAccessToken)", evictions);
         }
@@ -306,9 +329,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, accessTokenDO)) {
             oauth2AccessTokenMapper.deleteById(aliveToken.getId());
             cacheInvalidations.add(() -> revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime()));
+            // ZS-LOGIN-005.B：事务内预写 ACCESS 补偿事件
+            appendRevocationCompensationEvent(aliveToken.getId(), TokenType.ACCESS, aliveToken.getExpiresTime(),
+                    aliveToken.getTenantId(), aliveToken.getUserId());
         }
         // 删除刷新令牌
         OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+        // ZS-LOGIN-005.B：REFRESH 类型预写补偿事件（合成凭据 key 命名空间与 ACCESS 共用）
+        if (refreshTokenDO != null) {
+            appendRevocationCompensationEvent(refreshTokenDO.getId(), TokenType.REFRESH, refreshTokenDO.getExpiresTime(),
+                    refreshTokenDO.getTenantId(), refreshTokenDO.getUserId());
+        }
         oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
         // ZS-LOGIN-003 codex r1 P1：刷新令牌串可能充当「已缓存转换凭据」的 Redis key（ZS-LOGIN-001 兼容路径），
         // 撤销时同样落墓碑（TTL 取刷新令牌剩余有效期，删除前读取），堵住并发门控路径从旧 DB 快照回填复活
@@ -479,10 +510,18 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             for (OAuth2AccessTokenDO aliveToken : listAliveAccessTokens(refreshToken, fallback)) {
                 oauth2AccessTokenMapper.deleteById(aliveToken.getId());
                 cacheInvalidations.add(() -> revokeWithTombstone(aliveToken.getAccessToken(), aliveToken.getExpiresTime()));
+                // ZS-LOGIN-005.B：事务内预写 ACCESS 补偿事件
+                appendRevocationCompensationEvent(aliveToken.getId(), TokenType.ACCESS, aliveToken.getExpiresTime(),
+                        aliveToken.getTenantId(), aliveToken.getUserId());
             }
             // ZS-LOGIN-003 codex r1 P1：删除前先读刷新令牌剩余有效期（删除后查不到），落撤销墓碑，
             // 堵住并发鉴权/门控路径从旧 DB 快照回填复活
             OAuth2RefreshTokenDO revokeTarget = oauth2RefreshTokenMapper.selectByRefreshToken(refreshToken);
+            // ZS-LOGIN-005.B：REFRESH 类型预写补偿事件
+            if (revokeTarget != null) {
+                appendRevocationCompensationEvent(revokeTarget.getId(), TokenType.REFRESH, revokeTarget.getExpiresTime(),
+                        revokeTarget.getTenantId(), revokeTarget.getUserId());
+            }
             // 删除刷新令牌
             oauth2RefreshTokenMapper.deleteByRefreshToken(refreshToken);
             // ZS-LOGIN-003：清除「刷新令牌被当作访问令牌」时缓存下来的转换凭据（ZS-LOGIN-001 兼容路径写入，
@@ -624,6 +663,74 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             log.warn("[revokeWithTombstone][ZS-LOGIN-005.A 缓存删除失败 token({})]"
                     + "——checkAccessToken DB 权威校验自愈 evict 即修复路径]", maskToken(token), ex);
         }
+    }
+
+    /**
+     * ZS-LOGIN-005.B：事务内预写补偿事件到 Outbox（JOB-002 SPI，MANDATORY 传播）——业务回滚则事件一并回滚。
+     *
+     * <p><b>当前状态：RED-2 骨架</b>——方法体仅 log.debug 后 return，测试断言 {@code outbox_event}
+     * 新增行数 > 0 会失败；GREEN-2 阶段通过 {@link #reliableEventPortProvider} 懒解析
+     * {@link ReliableEventPort} 并调用 {@code append}。
+     *
+     * <p><b>降级契约</b>：{@code ObjectProvider.getIfAvailable()} 返回 {@code null} 时（system 单独运行 /
+     * infra 未装配），静默降级为 {@code .A} 语义（无补偿链路），保留撤销主逻辑不变。
+     *
+     * @param tokenId       令牌 DB 主键
+     * @param tokenType     令牌类型（ACCESS / REFRESH）
+     * @param expiresTime   到期时间（写入事件载荷快照，Sink 用于过期识别）
+     * @param tokenTenantId 被撤销令牌行的租户（事件租户归属权威，非调用者上下文租户）
+     * @param subjectUserId 被撤销凭据属主用户 ID（回填 actorId 供后台重放关联）
+     */
+    /**
+     * r1 P3：撤销事件主体按【调用时请求上下文】判定——管理员踢出与用户自操作共用同一撤销方法，
+     * 按方法名硬编码会错标（r1 实证：revokeSession 固定 USER 漏管理员踢出、用户级撤销固定 ADMIN
+     * 混入自助改密）。上下文有登录主体时按其 userType 分 ADMIN/USER，无上下文（定时清理/MQ）为 SYSTEM。
+     */
+    private OutboxEventMessage.OutboxActorType resolveRevocationActorType() {
+        LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
+        if (loginUser == null) {
+            return OutboxEventMessage.OutboxActorType.SYSTEM;
+        }
+        return UserTypeEnum.ADMIN.getValue().equals(loginUser.getUserType())
+                ? OutboxEventMessage.OutboxActorType.ADMIN
+                : OutboxEventMessage.OutboxActorType.USER;
+    }
+
+    private void appendRevocationCompensationEvent(Long tokenId, TokenType tokenType, LocalDateTime expiresTime,
+                                                   Long tokenTenantId, Long subjectUserId) {
+        // ZS-LOGIN-005.B GREEN-2：ObjectProvider 懒解析 → 降级或预写
+        ReliableEventPort port = reliableEventPortProvider.getIfAvailable();
+        if (port == null) {
+            // 静默降级为 .A 语义（system 单独运行 / infra 未装配），不阻断撤销主逻辑
+            log.debug("[appendRevocationCompensationEvent][ZS-LOGIN-005.B 降级：ReliableEventPort 不可用 tokenId={} tokenType={}]",
+                    tokenId, tokenType);
+            return;
+        }
+        // 构造 payload Map（JdbcReliableEventPort 内部 Jackson 序列化为 JSON 存入 outbox_event.payload）
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put("tokenId", tokenId);
+        payloadMap.put("tokenType", tokenType);
+        payloadMap.put("expiresTime", expiresTime);
+        OutboxEventMessage message = OutboxEventMessage.builder()
+                .eventType(SystemOutboxEventTypes.TOKEN_REVOCATION_COMPENSATION)
+                .bizType(tokenType == TokenType.ACCESS
+                        ? SystemOutboxEventTypes.BIZ_TYPE_OAUTH2_ACCESS_TOKEN
+                        : SystemOutboxEventTypes.BIZ_TYPE_OAUTH2_REFRESH_TOKEN)
+                .bizId(tokenType.name() + ":" + tokenId)
+                .payload(payloadMap)
+                .actorType(resolveRevocationActorType())
+                .actorId(subjectUserId != null ? String.valueOf(subjectUserId) : null)
+                .traceId(TracerUtils.getTraceId())
+                .build();
+        // codex r0 P1 修复（跨租户归属）：OutboxEventMessage 合同规定技术租户取自 TenantContextHolder
+        // 当前上下文——跨租户管理端操作（A 租户管理员撤销 B 租户用户令牌）时若沿用调用者租户，
+        // 事件落错租户、Sink 在事件租户上下文反查令牌行不可见 → 补偿静默丢失。改以【被撤销令牌行】
+        // 的 tenantId 建立上下文完成 append（同一业务事务内仅切换租户上下文，回滚语义不变）。
+        if (tokenTenantId == null) {
+            port.append(message); // 防御分支：令牌行缺租户时维持原上下文（端口 MANDATORY 拒绝兜底）
+            return;
+        }
+        TenantUtils.execute(tokenTenantId, () -> port.append(message));
     }
 
     /**

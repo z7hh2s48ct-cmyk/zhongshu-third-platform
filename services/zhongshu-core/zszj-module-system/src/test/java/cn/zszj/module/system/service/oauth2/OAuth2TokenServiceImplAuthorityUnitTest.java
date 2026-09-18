@@ -7,8 +7,10 @@ import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
@@ -52,6 +54,11 @@ public class OAuth2TokenServiceImplAuthorityUnitTest {
         ReflectionTestUtils.setField(service, "oauth2CodeMapper", mock(OAuth2CodeMapper.class));
         ReflectionTestUtils.setField(service, "adminUserMapper", mock(cn.zszj.module.system.dal.mysql.user.AdminUserMapper.class));
         ReflectionTestUtils.setField(service, "refreshTokenAsAccessTokenEnabled", false);
+        // ZS-LOGIN-005.B codex r0 P2：懒解析 provider 未注入为 null，处理 ACCESS 行时 getIfAvailable() NPE——
+        // 注入 getIfAvailable()=null 的 ObjectProvider mock（与容器无 bean 时 Spring 行为一致 = .A 降级语义）
+        @SuppressWarnings("unchecked")
+        ObjectProvider<ReliableEventPort> nullProvider = mock(ObjectProvider.class);
+        ReflectionTestUtils.setField(service, "reliableEventPortProvider", nullProvider);
     }
 
     private OAuth2AccessTokenDO cachedToken() {
