@@ -211,6 +211,8 @@
 
 | ZS-SEC-009.B 全局 ID→string 合同激活与两端迁移（B06 分批子项） | `86d70290`→`09688e30`→`fa2a54c2`（feat/sec-009-b，合并 `0a0cf62a`） | 315 files（r0） | ✅ 评审通过（r0→r2 三弧） | [codex-ZS-SEC-009.B.raw-r0.md](codex-ZS-SEC-009.B.raw-r0.md)/[r1](codex-ZS-SEC-009.B.raw-r1.md)/[r2](codex-ZS-SEC-009.B.raw-r2.md) | r0 1×P1+4×P2（裸 ID 集合 CommonResult<Set<Long>> 经 data 泛型擦除不受命名约定作用——授权失配清空风险/MenuForm 合成根 id/miniapp menu picker/Number 桥精度丢失/schema converter Integer 误标）→ r1 2×P2（探针实锤后 VO 包装 PermissionIdListRespVO/CodegenTableIdListRespVO + BareLongCollectionResponseGuardTest 架构守卫（实测抓获 CodegenController 违规）/springdoc JavaType 形态兼容）→ r2 **PASS/0 发现**。验证：契约 6/6 + converter 6/6 + infra 491/0 + admin-web vitest 207/207 + miniapp 107/107 + 双端 type-check 基线内/0 + gates 10/10 |
 
+| ZS-SYS-001.B 七类基础管理 Web 走查（B06 分批子项） | `5bd57b55`（feat/sys-001-b） | 2 files | ✅ 页面走查证据齐备（本项目自走查；codex 弧随卡评审待排） | [web-walkthrough-report.md](../../scripts/sys001/web-walkthrough-report.md) | 真实 PG/API 夹具 `--serve` 驻留 + 页面操作：用户 P/N、角色 P（菜单分配持久化）、菜单 P（导航一致性）、岗位/字典/配置 P 全链落库回读；公告富文本 CDP 自动化挂起如实登记（写路径 .A API 矩阵覆盖）；SEC-009.B string ID 实链佐证 |
+
 ## B09 技术准备先行评审状态
 
 | 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
