@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
     # 本地联验：仅绑定 127.0.0.1 且不设口令（与 application-local.yaml 默认一致）
     ports:
-      - "127.0.0.1:16379:6379"  # 同上避让
+      - "127.0.0.1:26379:6379"  # 避让 16379（单测嵌入式 Redis 约定端口，application-unit-test.yaml）与 5432/6379 占用
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
