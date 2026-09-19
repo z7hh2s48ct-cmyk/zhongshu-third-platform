@@ -2,7 +2,7 @@ import { http } from '@/http/http'
 
 /** 数据源配置信息 */
 export interface DataSourceConfig {
-  id?: number
+  id?: string
   name: string
   url: string
   username: string
@@ -16,7 +16,7 @@ export function getDataSourceConfigList() {
 }
 
 /** 获取数据源配置详情 */
-export function getDataSourceConfig(id: number) {
+export function getDataSourceConfig(id: string) {
   return http.get<DataSourceConfig>(`/infra/data-source-config/get?id=${id}`)
 }
 
@@ -31,6 +31,6 @@ export function updateDataSourceConfig(data: DataSourceConfig) {
 }
 
 /** 删除数据源配置 */
-export function deleteDataSourceConfig(id: number) {
+export function deleteDataSourceConfig(id: string) {
   return http.delete<boolean>(`/infra/data-source-config/delete?id=${id}`)
 }

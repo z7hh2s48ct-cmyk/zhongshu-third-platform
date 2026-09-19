@@ -3,7 +3,7 @@ import type { Dayjs } from 'dayjs'
 
 /** 示例联系人信息 */
 export interface Demo01Contact {
-  id: number // 编号
+  id: string // 编号
   name?: string // 名字
   sex?: number // 性别
   birthday?: string | Dayjs // 出生年
@@ -19,7 +19,7 @@ export const Demo01ContactApi = {
   },
 
   // 查询示例联系人详情
-  getDemo01Contact: async (id: number) => {
+  getDemo01Contact: async (id: string) => {
     return await request.get({ url: `/infra/demo01-contact/get?id=` + id })
   },
 
@@ -34,12 +34,12 @@ export const Demo01ContactApi = {
   },
 
   // 删除示例联系人
-  deleteDemo01Contact: async (id: number) => {
+  deleteDemo01Contact: async (id: string) => {
     return await request.delete({ url: `/infra/demo01-contact/delete?id=` + id })
   },
 
   /** 批量删除示例联系人 */
-  deleteDemo01ContactList: async (ids: number[]) => {
+  deleteDemo01ContactList: async (ids: string[]) => {
     return await request.delete({ url: `/infra/demo01-contact/delete-list?ids=${ids.join(',')}` })
   },
 

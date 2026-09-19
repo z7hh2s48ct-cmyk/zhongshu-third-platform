@@ -51,13 +51,13 @@ const user = computed(() => card.value.user)
 
 const isSelf = computed(() => {
   const myId = getCurrentUserId()
-  return !!user.value?.id && user.value.id === myId
+  return !!user.value?.id && String(user.value.id) === String(myId)
 })
 const isActiveFriend = computed(() => {
   if (!user.value?.id || isSelf.value) {
     return false
   }
-  return friendStore.isActiveFriend(user.value.id)
+  return friendStore.isActiveFriend(Number(user.value.id))
 })
 const relation = computed<UserInfoRelation>(() => {
   if (!user.value) {
@@ -76,7 +76,7 @@ const remark = computed(() => {
   if (!isActiveFriend.value || !user.value?.id) {
     return undefined
   }
-  return friendStore.getFriend(user.value.id)?.displayName || ''
+  return friendStore.getFriend(Number(user.value.id))?.displayName || ''
 })
 
 /** 关闭名片：点击遮罩 / Esc / UserInfo 抛上来的删除成功事件 */
@@ -100,10 +100,10 @@ function handleSendMessage() {
     return
   }
   // 取 friendStore 里的最新备注 / 免打扰，避免新建会话用过期数据
-  const friend = friendStore.getFriend(user.value.id)
+  const friend = friendStore.getFriend(Number(user.value.id))
   const conversationName = friend ? getFriendDisplayName(friend) : user.value.nickname || ''
   conversationStore.openConversation(
-    user.value.id,
+    Number(user.value.id),
     ImConversationType.PRIVATE,
     conversationName,
     user.value.avatar || '',

@@ -43,7 +43,7 @@ const visible = computed({
 }) // 分配角色弹窗显示状态
 const loading = ref(false) // 表单提交状态
 const roleList = ref<Role[]>([])
-const selectedIds = ref<number[]>([])
+const selectedIds = ref<string[]>([])
 
 /** 监听弹窗打开，加载数据 */
 watch(
@@ -55,7 +55,7 @@ watch(
         roleList.value = await getSimpleRoleList()
       }
       // 加载用户已有角色
-      selectedIds.value = await getUserRoleIds(props.userId)
+      selectedIds.value = (await getUserRoleIds(props.userId))?.roleIds ?? []
     }
   },
 )

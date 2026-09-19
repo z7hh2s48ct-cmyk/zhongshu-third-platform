@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 站内信模板信息 */
 export interface NotifyTemplate {
-  id?: number
+  id?: string
   name: string
   nickname: string
   code: string
@@ -17,7 +17,7 @@ export interface NotifyTemplate {
 
 /** 发送站内信请求 */
 export interface NotifySendReqVO {
-  userId: number
+  userId: string
   userType: number
   templateCode: string
   templateParams: Record<string, any>
@@ -34,7 +34,7 @@ export function getSimpleNotifyTemplateList() {
 }
 
 /** 查询站内信模板详情 */
-export function getNotifyTemplate(id: number) {
+export function getNotifyTemplate(id: string) {
   return http.get<NotifyTemplate>(`/system/notify-template/get`, { id })
 }
 
@@ -49,7 +49,7 @@ export function updateNotifyTemplate(data: NotifyTemplate) {
 }
 
 /** 删除站内信模板 */
-export function deleteNotifyTemplate(id: number) {
+export function deleteNotifyTemplate(id: string) {
   return http.delete<boolean>(`/system/notify-template/delete?id=${id}`)
 }
 

@@ -86,7 +86,7 @@ import { formatDateTime } from '@/utils/date'
 import JobSearchForm from './job-search-form.vue'
 
 const emit = defineEmits<{
-  viewLog: [jobId: number]
+  viewLog: [jobId: string]
 }>()
 
 const { hasAccessByCodes } = useAccess()

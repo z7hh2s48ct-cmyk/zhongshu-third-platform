@@ -5,6 +5,7 @@ import cn.hutool.core.util.ZipUtil;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.object.BeanUtils;
+import cn.zszj.module.infra.controller.admin.codegen.vo.CodegenTableIdListRespVO;
 import cn.zszj.module.infra.controller.admin.codegen.vo.CodegenCreateListReqVO;
 import cn.zszj.module.infra.controller.admin.codegen.vo.CodegenDetailRespVO;
 import cn.zszj.module.infra.controller.admin.codegen.vo.CodegenPreviewRespVO;
@@ -92,8 +93,10 @@ public class CodegenController {
     @Operation(summary = "基于数据库的表结构，创建代码生成器的表和字段定义")
     @PostMapping("/create-list")
     @PreAuthorize("@ss.hasPermission('infra:codegen:create')")
-    public CommonResult<List<Long>> createCodegenList(@Valid @RequestBody CodegenCreateListReqVO reqVO) {
-        return success(codegenService.createCodegenList(getLoginUserNickname(), reqVO));
+    public CommonResult<CodegenTableIdListRespVO> createCodegenList(@Valid @RequestBody CodegenCreateListReqVO reqVO) {
+        // ZS-SEC-009.B r1 P2-B：裸 List<Long> 经 CommonResult.data（泛型擦除为 Object）不受 ID→string
+        // 合同作用——包装为显式 tableIds 字段命中命名约定
+        return success(new CodegenTableIdListRespVO(codegenService.createCodegenList(getLoginUserNickname(), reqVO)));
     }
 
     @Operation(summary = "更新数据库的表和字段定义")

@@ -34,7 +34,7 @@
             />
           </wd-form-item>
           <DeptFormPicker
-            v-model="formData.deptId"
+            v-model="deptIdProxy"
             label="归属部门"
           />
           <PostFormPicker v-model="formData.postIds" />
@@ -128,11 +128,16 @@ const formData = ref<User>({
   mobile: '',
   email: '',
   sex: undefined,
-  deptId: undefined,
-  postIds: [],
+  deptId: undefined as string | undefined,
+  postIds: [] as string[],
   status: CommonStatusEnum.ENABLE,
   remark: '',
 }) // 表单数据
+const deptIdProxy = computed({
+  get: () => (formData.value.deptId != null ? Number(formData.value.deptId) : undefined) as number | undefined,
+  set: (v) => { formData.value.deptId = v != null ? String(v) : undefined },
+})
+// 表单数据
 const formSchema = createFormSchema({
   username: [{ required: true, message: '用户名称不能为空' }],
   nickname: [{ required: true, message: '用户昵称不能为空' }],
@@ -154,7 +159,7 @@ async function getDetail() {
   if (!props.id) {
     return
   }
-  formData.value = await getUser(Number(props.id))
+  formData.value = await getUser(props.id)
 }
 
 /** 提交表单 */

@@ -78,7 +78,7 @@ const message = useMessage() // 消息弹窗
 const dialogVisible = ref(false) // 弹窗的是否展示
 const formLoading = ref(false) // 表单的加载中：1）修改时的数据加载；2）提交的按钮禁用
 const formData = reactive({
-  id: undefined as number | undefined,
+  id: undefined as string | undefined,
   name: '',
   code: '',
   dataScope: undefined as number | undefined,
@@ -104,7 +104,7 @@ const open = async (row: RoleApi.RoleVO) => {
   formData.dataScope = row.dataScope
   await nextTick()
   // 需要在 DOM 渲染完成后，再设置选中状态
-  row.dataScopeDeptIds?.forEach((deptId: number): void => {
+  row.dataScopeDeptIds?.forEach((deptId: string): void => {
     treeRef.value.setChecked(deptId, true, false)
   })
 }
@@ -121,7 +121,7 @@ const submitForm = async () => {
       dataScopeDeptIds:
         formData.dataScope !== SystemDataScopeEnum.DEPT_CUSTOM
           ? []
-          : (treeRef.value.getCheckedKeys(false) as number[])
+          : (treeRef.value.getCheckedKeys(false) as string[])
     }
     await PermissionApi.assignRoleDataScope(data)
     message.success(t('common.updateSuccess'))

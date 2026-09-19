@@ -250,7 +250,7 @@ const handleSyncJob = async () => {
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number) => {
+const openForm = (type: string, id?: string) => {
   formRef.value.open(type, id)
 }
 
@@ -273,7 +273,7 @@ const handleChangeStatus = async (row: JobApi.JobVO) => {
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -286,7 +286,7 @@ const handleDelete = async (id: number) => {
 }
 
 /** 批量删除按钮操作 */
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (rows: JobApi.JobVO[]) => {
   checkedIds.value = rows.map((row) => row.id)
 }
@@ -336,13 +336,13 @@ const handleRun = async (row: JobApi.JobVO) => {
 
 /** 查看操作 */
 const detailRef = ref()
-const openDetail = (id: number) => {
+const openDetail = (id: string) => {
   detailRef.value.open(id)
 }
 
 /** 跳转执行日志 */
-const handleJobLog = (id?: number) => {
-  if (id && id > 0) {
+const handleJobLog = (id?: string) => {
+  if (id && id !== '0') {
     push('/job/job-log?id=' + id)
   } else {
     push('/job/job-log')

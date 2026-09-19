@@ -79,7 +79,7 @@ const { t } = useI18n() // 国际化
 const message = useMessage() // 消息弹窗
 
 const props = defineProps<{
-  studentId?: number // 学生编号（主表的关联字段）
+  studentId?: string // 学生编号（主表的关联字段）
 }>()
 const loading = ref(false) // 列表的加载中
 const list = ref([]) // 列表的数据
@@ -93,7 +93,7 @@ const queryParams = reactive({
 /** 监听主表的关联字段的变化，加载对应的子表数据 */
 watch(
   () => props.studentId,
-  (val: number) => {
+  (val: string) => {
     if (!val) {
       return
     }
@@ -123,7 +123,7 @@ const handleQuery = () => {
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number) => {
+const openForm = (type: string, id?: string) => {
   if (!props.studentId) {
     message.error('请选择一个学生')
     return
@@ -132,7 +132,7 @@ const openForm = (type: string, id?: number) => {
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -156,7 +156,7 @@ const handleDeleteBatch = async () => {
   } catch {}
 }
 
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (records: Demo03Grade[]) => {
   checkedIds.value = records.map((item) => item.id!)
 }

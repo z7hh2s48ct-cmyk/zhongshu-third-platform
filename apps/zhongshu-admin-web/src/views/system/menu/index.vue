@@ -254,7 +254,7 @@ const resetQuery = () => {
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number, parentId?: number) => {
+const openForm = (type: string, id?: string, parentId?: number) => {
   formRef.value.open(type, id, parentId)
 }
 
@@ -283,7 +283,7 @@ const refreshMenu = async () => {
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()

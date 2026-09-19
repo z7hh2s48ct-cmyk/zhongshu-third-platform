@@ -1,10 +1,10 @@
 import request from '@/config/axios'
 
 export type CodegenTableVO = {
-  id: number
-  tableId: number
+  id: string
+  tableId: string
   isParentMenuIdValid: boolean
-  dataSourceConfigId: number
+  dataSourceConfigId: string
   scene: number
   tableName: string
   tableComment: string
@@ -17,25 +17,25 @@ export type CodegenTableVO = {
   createTime: Date
   updateTime: Date
   templateType: number
-  parentMenuId: number
+  parentMenuId: string
 }
 
 export type CodegenTableSaveReqVO = CodegenTableVO & {
   frontType?: number | null
   genPath?: string
   genType?: string
-  masterTableId?: number
-  subJoinColumnId?: number
+  masterTableId?: string
+  subJoinColumnId?: string
   subJoinMany?: boolean
-  treeParentColumnId?: number
-  treeNameColumnId?: number
+  treeParentColumnId?: string
+  treeNameColumnId?: string
 }
 
 export const createEmptyCodegenTableSaveReqVO = (): CodegenTableSaveReqVO => ({
-  id: 0,
-  tableId: 0,
+  id: '0',
+  tableId: '0',
   isParentMenuIdValid: false,
-  dataSourceConfigId: 0,
+  dataSourceConfigId: '0',
   scene: 0,
   tableName: '',
   tableComment: '',
@@ -48,7 +48,7 @@ export const createEmptyCodegenTableSaveReqVO = (): CodegenTableSaveReqVO => ({
   createTime: new Date(),
   updateTime: new Date(),
   templateType: 0,
-  parentMenuId: 0,
+  parentMenuId: '0',
   frontType: null,
   genPath: '',
   genType: '',
@@ -60,8 +60,8 @@ export const createEmptyCodegenTableSaveReqVO = (): CodegenTableSaveReqVO => ({
 })
 
 export type CodegenColumnVO = {
-  id: number
-  tableId: number
+  id: string
+  tableId: string
   columnName: string
   dataType: string
   columnComment: string
@@ -96,7 +96,7 @@ export type CodegenUpdateReqVO = {
 }
 
 // 查询列表代码生成表定义
-export const getCodegenTableList = (dataSourceConfigId: number) => {
+export const getCodegenTableList = (dataSourceConfigId: string) => {
   return request.get({ url: '/infra/codegen/table/list?dataSourceConfigId=' + dataSourceConfigId })
 }
 
@@ -106,7 +106,7 @@ export const getCodegenTablePage = (params: PageParam) => {
 }
 
 // 查询详情代码生成表定义
-export const getCodegenTable = (id: number) => {
+export const getCodegenTable = (id: string) => {
   return request.get<CodegenUpdateReqVO>({ url: '/infra/codegen/detail?tableId=' + id })
 }
 
@@ -116,17 +116,17 @@ export const updateCodegenTable = (data: CodegenUpdateReqVO) => {
 }
 
 // 基于数据库的表结构，同步数据库的表和字段定义
-export const syncCodegenFromDB = (id: number) => {
+export const syncCodegenFromDB = (id: string) => {
   return request.put({ url: '/infra/codegen/sync-from-db?tableId=' + id })
 }
 
 // 预览生成代码
-export const previewCodegen = (id: number) => {
+export const previewCodegen = (id: string) => {
   return request.get({ url: '/infra/codegen/preview?tableId=' + id })
 }
 
 // 下载生成代码
-export const downloadCodegen = (id: number) => {
+export const downloadCodegen = (id: string) => {
   return request.download({ url: '/infra/codegen/download?tableId=' + id })
 }
 
@@ -141,11 +141,11 @@ export const createCodegenList = (data) => {
 }
 
 // 删除代码生成表定义
-export const deleteCodegenTable = (id: number) => {
+export const deleteCodegenTable = (id: string) => {
   return request.delete({ url: '/infra/codegen/delete?tableId=' + id })
 }
 
 // 批量删除代码生成表定义
-export const deleteCodegenTableList = (ids: number[]) => {
+export const deleteCodegenTableList = (ids: string[]) => {
   return request.delete({ url: '/infra/codegen/delete-list', params: { tableIds: ids.join(',') } })
 }

@@ -115,10 +115,10 @@ definePage({
 const toast = useToast()
 const fmsStore = useFmsStore()
 const memberList = ref<AccountUser[]>([]) // 账套成员列表
-const addUserIds = ref<number[]>([]) // 添加成员选择器选中值
+const addUserIds = ref<string[]>([]) // 添加成员选择器选中值
 const formLoading = ref(false) // 表单提交状态
 
-const memberUserIds = computed(() => memberList.value.map(member => member.userId)) // 已授权用户编号
+const memberUserIds = computed(() => memberList.value.map(member => String(member.userId))) // 已授权用户编号
 
 /** 返回上一页 */
 function handleBack() {
@@ -137,7 +137,7 @@ async function getList() {
 function handleAddConfirm(users: User[]) {
   for (const user of users) {
     memberList.value.push({
-      userId: user.id,
+      userId: Number(user.id),
       nickname: user.nickname,
       deptName: user.deptName,
       status: user.status,

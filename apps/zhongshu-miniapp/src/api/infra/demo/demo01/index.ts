@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 示例联系人（单表） */
 export interface Demo01Contact {
-  id?: number
+  id?: string
   name: string // 名字
   sex?: number // 性别
   birthday?: number // 出生年
@@ -18,7 +18,7 @@ export function getDemo01ContactPage(params: PageParam) {
 }
 
 /** 获取示例联系人详情 */
-export function getDemo01Contact(id: number) {
+export function getDemo01Contact(id: string) {
   return http.get<Demo01Contact>(`/infra/demo01-contact/get?id=${id}`)
 }
 
@@ -33,6 +33,6 @@ export function updateDemo01Contact(data: Demo01Contact) {
 }
 
 /** 删除示例联系人 */
-export function deleteDemo01Contact(id: number) {
+export function deleteDemo01Contact(id: string) {
   return http.delete<boolean>(`/infra/demo01-contact/delete?id=${id}`)
 }

@@ -92,7 +92,7 @@ async function getDetail() {
       getWarehouse(Number(props.id)),
       getSimpleUserList(),
     ])
-    const chargeUser = users.find(user => user.id === data.chargeUserId)
+    const chargeUser = users.find(user => String(user.id) === String(data.chargeUserId))
     formData.value = { ...data, chargeUserName: chargeUser?.nickname || null }
   } finally {
     toast.close()

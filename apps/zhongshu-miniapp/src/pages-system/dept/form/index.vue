@@ -12,7 +12,7 @@
       <wd-form ref="formRef" :model="formData" :schema="formSchema">
         <wd-cell-group border>
           <DeptFormPicker
-            v-model="formData.parentId"
+            v-model="parentIdProxy"
             label="上级部门"
             prop="parentId"
             :show-root="true"
@@ -31,7 +31,7 @@
             />
           </wd-form-item>
           <UserFormPicker
-            v-model="formData.leaderUserId"
+            v-model="leaderUserIdProxy"
             label="负责人"
             prop="leaderUserId"
           />
@@ -87,7 +87,7 @@ import { createFormSchema } from '@/utils/wot'
 
 const props = defineProps<{
   id?: number | any
-  parentId?: number
+  parentId?: string
 }>()
 
 definePage({
@@ -103,13 +103,22 @@ const formLoading = ref(false) // 表单提交状态
 const formData = ref<Dept>({
   id: undefined,
   name: '',
-  parentId: props.parentId || 0,
+  parentId: props.parentId || '0',
   sort: 0,
   status: CommonStatusEnum.ENABLE,
   leaderUserId: undefined,
   phone: '',
   email: '',
 }) // 表单数据
+const parentIdProxy = computed({
+  get: () => (formData.value.parentId != null ? Number(formData.value.parentId) : undefined) as number | undefined,
+  set: (v) => { formData.value.parentId = v != null ? String(v) : undefined },
+})
+const leaderUserIdProxy = computed({
+  get: () => (formData.value.leaderUserId != null ? Number(formData.value.leaderUserId) : undefined) as number | undefined,
+  set: (v) => { formData.value.leaderUserId = v != null ? String(v) : undefined },
+})
+// 表单数据
 const formSchema = createFormSchema({
   parentId: [{ required: true, message: '上级部门不能为空' }],
   name: [{ required: true, message: '部门名称不能为空' }],

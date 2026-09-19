@@ -3,8 +3,8 @@
  */
 
 interface TreeNode {
-  id?: number
-  parentId?: number
+  id?: number | string
+  parentId?: number | string
   children?: TreeNode[]
   [key: string]: any
 }
@@ -81,7 +81,7 @@ export function handleTree<T extends TreeNode>(
  */
 export function findChildren<T extends TreeNode>(
   tree: T[],
-  parentId: number,
+  parentId: number | string,
   id = 'id',
   children = 'children',
 ): T[] {

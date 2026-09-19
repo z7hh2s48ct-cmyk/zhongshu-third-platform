@@ -2,12 +2,12 @@ import { http } from '@/http/http'
 
 /** 部门信息 */
 export interface Dept {
-  id?: number
+  id?: string
   name: string
-  parentId: number
+  parentId: string
   status: number
   sort: number
-  leaderUserId?: number
+  leaderUserId?: string
   phone?: string
   email?: string
   createTime?: Date
@@ -25,7 +25,7 @@ export function getSimpleDeptList() {
 }
 
 /** 获取部门详情 */
-export function getDept(id: number) {
+export function getDept(id: string) {
   return http.get<Dept>(`/system/dept/get?id=${id}`)
 }
 
@@ -40,6 +40,6 @@ export function updateDept(data: Dept) {
 }
 
 /** 删除部门 */
-export function deleteDept(id: number) {
+export function deleteDept(id: string) {
   return http.delete<boolean>(`/system/dept/delete?id=${id}`)
 }

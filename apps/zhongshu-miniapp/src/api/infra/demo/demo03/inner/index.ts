@@ -3,23 +3,23 @@ import { http } from '@/http/http'
 
 /** 学生课程（一对多子表） */
 export interface Demo03Course {
-  id?: number
-  studentId?: number
+  id?: string
+  studentId?: string
   name: string // 名字
   score?: number // 分数
 }
 
 /** 学生班级（一对一子表） */
 export interface Demo03Grade {
-  id?: number
-  studentId?: number
+  id?: string
+  studentId?: string
   name: string // 名字
   teacher?: string // 班主任
 }
 
 /** 学生（主表，主子表内嵌模式：子表随主表一起提交） */
 export interface Demo03Student {
-  id?: number
+  id?: string
   name: string // 名字
   sex?: number // 性别
   birthday?: number // 出生日期
@@ -37,7 +37,7 @@ export function getDemo03StudentPage(params: PageParam) {
 }
 
 /** 获取学生详情 */
-export function getDemo03Student(id: number) {
+export function getDemo03Student(id: string) {
   return http.get<Demo03Student>(`${BASE}/get?id=${id}`)
 }
 
@@ -52,16 +52,16 @@ export function updateDemo03Student(data: Demo03Student) {
 }
 
 /** 删除学生 */
-export function deleteDemo03Student(id: number) {
+export function deleteDemo03Student(id: string) {
   return http.delete<boolean>(`${BASE}/delete?id=${id}`)
 }
 
 /** 获取某学生的课程列表 */
-export function getDemo03CourseListByStudentId(studentId: number) {
+export function getDemo03CourseListByStudentId(studentId: string) {
   return http.get<Demo03Course[]>(`${BASE}/demo03-course/list-by-student-id?studentId=${studentId}`)
 }
 
 /** 获取某学生的班级 */
-export function getDemo03GradeByStudentId(studentId: number) {
+export function getDemo03GradeByStudentId(studentId: string) {
   return http.get<Demo03Grade>(`${BASE}/demo03-grade/get-by-student-id?studentId=${studentId}`)
 }

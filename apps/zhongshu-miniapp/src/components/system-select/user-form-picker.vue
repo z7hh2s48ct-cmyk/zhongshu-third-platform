@@ -1,7 +1,7 @@
 <template>
   <UserPicker
     ref="pickerRef"
-    :model-value="modelValue"
+    :model-value="Array.isArray(modelValue) ? modelValue.map(String) : modelValue != null ? String(modelValue) : undefined"
     :type="type"
     :title="label || placeholder"
     :disabled="disabled"
@@ -37,8 +37,8 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   prop?: string
   disabled?: boolean
-  hideIds?: number[]
-  disabledIds?: number[]
+  hideIds?: string[]
+  disabledIds?: string[]
   disabledText?: string
 }>(), {
   type: 'radio',
@@ -60,8 +60,8 @@ const emit = defineEmits<{
 const pickerRef = ref<InstanceType<typeof UserPicker>>() // 用户选择器
 
 /** 更新用户编号 */
-function handleUpdate(value: number | number[] | undefined) {
-  emit('update:modelValue', value)
+function handleUpdate(value: string | string[] | undefined) {
+  emit('update:modelValue', Array.isArray(value) ? value.map(Number) : value != null ? Number(value) : undefined)
 }
 
 /** 确认用户选择 */
@@ -71,7 +71,7 @@ function handleConfirm(users: User[]) {
 
 /** 格式化用户编号 */
 function format(value?: number | number[]) {
-  return arguments.length > 0 ? pickerRef.value?.format(value) || '' : pickerRef.value?.format() || ''
+  return arguments.length > 0 ? pickerRef.value?.format(value != null ? String(value) : undefined) || '' : pickerRef.value?.format() || ''
 }
 
 defineExpose({ format })

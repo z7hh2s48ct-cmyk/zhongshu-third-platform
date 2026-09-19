@@ -92,7 +92,7 @@ const open = async (id: number, selectedList?: any[]) => {
 }
 
 /** 获取指定部门及其所有子部门的ID列表 */
-const getChildDeptIds = (deptId: number, deptList: any[]): number[] => {
+const getChildDeptIds = (deptId: string, deptList: any[]): string[] => {
   const ids = [deptId]
   const children = deptList.filter((dept) => dept.parentId === deptId)
   children.forEach((child) => {
@@ -102,7 +102,7 @@ const getChildDeptIds = (deptId: number, deptList: any[]): number[] => {
 }
 
 /** 获取部门过滤后的用户列表 */
-const filterUserList = async (deptId?: number) => {
+const filterUserList = async (deptId?: string) => {
   formLoading.value = true
   try {
     if (!deptId) {

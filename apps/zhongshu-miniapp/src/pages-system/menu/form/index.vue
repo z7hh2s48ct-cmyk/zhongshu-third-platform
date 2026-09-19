@@ -127,7 +127,7 @@ import MenuFormPicker from './components/menu-form-picker.vue'
 
 const props = defineProps<{
   id?: number | any
-  parentId?: number
+  parentId?: string
 }>()
 
 definePage({
@@ -146,7 +146,7 @@ const formData = ref<Menu>({
   permission: '',
   type: SystemMenuTypeEnum.DIR,
   sort: 0,
-  parentId: 0,
+  parentId: '0',
   path: '',
   icon: '',
   component: '',
@@ -208,10 +208,10 @@ async function handleSubmit() {
     const path = formData.value.path
     const isExternal = /^(?:https?:|mailto:|tel:)/.test(path)
     if (!isExternal) {
-      if (formData.value.parentId === 0 && path.charAt(0) !== '/') {
+      if (formData.value.parentId === '0' && path.charAt(0) !== '/') {
         toast.error('路径必须以 / 开头')
         return
-      } else if (formData.value.parentId !== 0 && path.charAt(0) === '/') {
+      } else if (formData.value.parentId !== '0' && path.charAt(0) === '/') {
         toast.error('路径不能以 / 开头')
         return
       }

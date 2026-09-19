@@ -3,13 +3,13 @@ import { http } from '@/http/http'
 
 /** 用户信息 */
 export interface User {
-  id?: number
+  id?: string
   username: string
   nickname: string
   password?: string
-  deptId?: number
+  deptId?: string
   deptName?: string
-  postIds?: number[]
+  postIds?: string[]
   email?: string
   mobile?: string
   sex?: number
@@ -27,7 +27,7 @@ export function getUserPage(params: PageParam) {
 }
 
 /** 获取用户详情 */
-export function getUser(id: number) {
+export function getUser(id: string) {
   return http.get<User>(`/system/user/get?id=${id}`)
 }
 
@@ -42,27 +42,27 @@ export function updateUser(data: User) {
 }
 
 /** 删除用户 */
-export function deleteUser(id: number) {
+export function deleteUser(id: string) {
   return http.delete<boolean>(`/system/user/delete?id=${id}`)
 }
 
 /** 重置用户密码 */
-export function resetUserPassword(id: number, password: string) {
+export function resetUserPassword(id: string, password: string) {
   return http.put<boolean>('/system/user/update-password', { id, password })
 }
 
 /** 修改用户状态 */
-export function updateUserStatus(id: number, status: number) {
+export function updateUserStatus(id: string, status: number) {
   return http.put<boolean>('/system/user/update-status', { id, status })
 }
 
 /** 获取用户拥有的角色列表 */
-export function getUserRoleIds(userId: number) {
-  return http.get<number[]>(`/system/permission/list-user-roles?userId=${userId}`)
+export function getUserRoleIds(userId: string) {
+  return http.get<{ roleIds?: string[] }>(`/system/permission/list-user-roles?userId=${userId}`)
 }
 
 /** 分配用户角色 */
-export function assignUserRole(userId: number, roleIds: number[]) {
+export function assignUserRole(userId: string, roleIds: string[]) {
   return http.post<boolean>('/system/permission/assign-user-role', { userId, roleIds })
 }
 

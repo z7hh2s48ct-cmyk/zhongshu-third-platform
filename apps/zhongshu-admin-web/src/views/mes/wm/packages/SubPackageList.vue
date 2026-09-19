@@ -67,7 +67,7 @@ import WmPackageSelectDialog from './components/WmPackageSelectDialog.vue'
 defineOptions({ name: 'SubPackageList' })
 
 const props = defineProps<{
-  packageId: number
+  packageId: string
   formType: string
 }>()
 
@@ -83,7 +83,7 @@ const total = ref(0)
 const queryParams = reactive({
   pageNo: 1,
   pageSize: 10,
-  parentId: undefined as number | undefined
+  parentId: undefined as string | undefined
 })
 
 /** 查询子箱列表 */

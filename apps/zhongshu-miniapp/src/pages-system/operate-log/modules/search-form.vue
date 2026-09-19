@@ -91,7 +91,7 @@ const formData = reactive({
   subType: undefined as string | undefined,
   action: undefined as string | undefined,
   createTime: [undefined, undefined] as [number | undefined, number | undefined],
-  bizId: undefined as number | undefined,
+  bizId: undefined as string | undefined,
 }) // 搜索表单数据
 
 /** 搜索条件 placeholder 拼接 */

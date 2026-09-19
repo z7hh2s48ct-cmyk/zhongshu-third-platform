@@ -113,8 +113,8 @@ const filters = reactive({
   endTime: now.getTime(),
   deptId: getDefaultDeptId(userStore.userInfo),
   userId: undefined as number | undefined,
-  categoryId: undefined as number | undefined,
-  productId: undefined as number | undefined,
+  categoryId: undefined as string | undefined,
+  productId: undefined as string | undefined,
 }) // 筛选条件
 const loadingMap = ref<Record<string, boolean>>({}) // 各分类加载状态
 const deptPickerRef = ref<InstanceType<typeof DeptFormPicker>>() // 部门选择器引用

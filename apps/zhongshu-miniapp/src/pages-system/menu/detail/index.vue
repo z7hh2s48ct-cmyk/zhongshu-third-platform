@@ -107,7 +107,7 @@ async function getDetail() {
   try {
     formData.value = await getMenu(props.id)
     const parentId = formData.value?.parentId
-    if (parentId === 0) {
+    if (parentId === '0') {
       parentMenuName.value = '主类目'
     } else if (parentId) {
       const menuList = await getSimpleMenuList()
@@ -121,8 +121,8 @@ async function getDetail() {
 }
 
 /** 获取父菜单名称链 */
-function getParentMenuName(menuList: Menu[], parentId: number) {
-  const menuMap = new Map<number, Menu>()
+function getParentMenuName(menuList: Menu[], parentId: string) {
+  const menuMap = new Map<string, Menu>()
   menuList.forEach((item) => {
     if (item.id !== undefined) {
       menuMap.set(item.id, item)
@@ -131,7 +131,7 @@ function getParentMenuName(menuList: Menu[], parentId: number) {
 
   // 通过 parentId 逐级查找父菜单，构建名称链
   const names: string[] = []
-  const visitedIds = new Set<number>()
+  const visitedIds = new Set<string>()
   let currentParentId = parentId
   while (currentParentId && !visitedIds.has(currentParentId)) {
     visitedIds.add(currentParentId)

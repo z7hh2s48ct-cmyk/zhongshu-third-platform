@@ -1,12 +1,17 @@
 package cn.zszj.framework.swagger.config;
 
 import com.github.xiaoymin.knife4j.spring.configuration.Knife4jAutoConfiguration;
+import cn.zszj.framework.common.util.json.databind.IdToStringAnnotationIntrospector;
+import io.swagger.v3.core.converter.AnnotatedType;
+import io.swagger.v3.core.converter.ModelConverter;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
+import io.swagger.v3.oas.models.media.ArraySchema;
 import io.swagger.v3.oas.models.media.IntegerSchema;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
@@ -109,6 +114,80 @@ public class ZszjSwaggerAutoConfiguration {
     }
 
     // ========== 分组 OpenAPI 配置 ==========
+
+    /**
+     * OpenAPI schema 的 ID 类型同步（ZS-SEC-009.B）
+     *
+     * <p>{@link cn.zszj.framework.jackson.config.ZszjJacksonAutoConfiguration} 激活 ID→string wire
+     * 合同后，文档若仍把 id/*Id/*Ids 标为 integer 即与实际 wire 不符。本 converter 按与
+     * {@link IdToStringAnnotationIntrospector} 一致的命名约定把这些字段的 schema type 改写为
+     * string（含集合 items）；非 ID 的 Long（count/total）保持 number。仅影响文档生成。
+     */
+    @Bean
+    public ModelConverter idToStringSchemaConverter() {
+        return (type, context, chain) -> {
+            Schema<?> resolved = chain.hasNext() ? chain.next().resolve(type, context, chain) : null;
+            if (resolved == null || !IdToStringAnnotationIntrospector.isIdName(propertyName(type))) {
+                return resolved;
+            }
+            // 与 wire 序列化的类型限定对齐（r0 P2-4）：introspector 只改写 Long/long，
+            // Integer 字段（如 AreaNodeRespVO.id）wire 仍是 number，文档不得标 string
+            if (!isLongType(type)) {
+                return resolved;
+            }
+            if (resolved instanceof ArraySchema arraySchema && arraySchema.getItems() != null) {
+                arraySchema.getItems().setType("string");
+                arraySchema.getItems().setFormat(null); // 清 int64 位移留
+            } else {
+                resolved.setType("string");
+                resolved.setFormat(null); // 清 int64，string 类型不应带数值 format
+            }
+            return resolved;
+        };
+    }
+
+    /**
+     * 与 wire 序列化的类型限定对齐（r0 P2-4）：introspector 只改写 Long/long——
+     * 标量字段类型须为 Long/long；集合字段（id/xxxIds/data）元素泛型须为 Long/long。
+     * Integer 字段（如 AreaNodeRespVO.id）wire 仍是 number，文档不得标 string。
+     */
+    private static boolean isLongType(AnnotatedType type) {
+        if (type == null || type.getType() == null) {
+            return false;
+        }
+        // r1 P2-A：springdoc 的 AnnotatedType.getType() 可能返回 Jackson JavaType（而非反射 Type），
+        // 两种形态都须识别，否则 Long 字段在文档里漏标 string
+        if (type.getType() instanceof com.fasterxml.jackson.databind.JavaType jt) {
+            return isLongJavaType(jt);
+        }
+        java.lang.reflect.Type t = type.getType();
+        if (t == Long.class || t == long.class) {
+            return true;
+        }
+        // 集合字段：元素泛型为 Long（Set<Long> menuIds / data 裸 ID 集合）
+        if (t instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() instanceof Class<?> raw && java.util.Collection.class.isAssignableFrom(raw)) {
+            java.lang.reflect.Type[] args = pt.getActualTypeArguments();
+            return args.length == 1 && (args[0] == Long.class || args[0] == long.class);
+        }
+        return false;
+    }
+
+    /** Jackson JavaType 形态的 Long 判定（标量或集合内容类型） */
+    private static boolean isLongJavaType(com.fasterxml.jackson.databind.JavaType jt) {
+        Class<?> raw = jt.getRawClass();
+        if (raw == Long.class || raw == long.class) {
+            return true;
+        }
+        if (java.util.Collection.class.isAssignableFrom(raw)) {
+            return jt.hasContentType() && isLongJavaType(jt.getContentType());
+        }
+        return false;
+    }
+
+    private static String propertyName(AnnotatedType type) {
+        return type != null ? type.getPropertyName() : null;
+    }
 
     /**
      * 所有模块的 API 分组

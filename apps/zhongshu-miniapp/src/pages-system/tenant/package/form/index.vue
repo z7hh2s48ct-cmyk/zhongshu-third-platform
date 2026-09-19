@@ -103,7 +103,7 @@ const formData = ref<TenantPackage>({
   name: '',
   status: CommonStatusEnum.ENABLE,
   remark: '',
-  menuIds: [],
+  menuIds: [] as string[],
 }) // 表单数据
 const formSchema = createFormSchema({
   name: [{ required: true, message: '套餐名称不能为空' }],
@@ -145,7 +145,7 @@ async function handleSubmit() {
     const halfCheckedKeys = menuTreeRef.value?.getHalfCheckedKeys() || [] // 获得半选中的父节点
     const data = {
       ...formData.value,
-      menuIds: Array.from(new Set([...checkedKeys, ...halfCheckedKeys])).map(Number),
+      menuIds: Array.from(new Set([...checkedKeys, ...halfCheckedKeys])).map(String),
     }
     if (props.id) {
       await updateTenantPackage(data)

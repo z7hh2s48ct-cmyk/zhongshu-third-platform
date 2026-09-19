@@ -66,7 +66,7 @@ const props = withDefaults(
     disabled?: boolean // 是否禁用
     clearable?: boolean // 是否允许清空
     placeholder?: string // 占位文字
-    excludeId?: number // 排除的 ID（避免选择自己作为父箱）
+    excludeId?: string // 排除的 ID（避免选择自己作为父箱）
     childableOnly?: boolean // 只展示可作为子箱的装箱单（无父箱 + 已完成状态）
   }>(),
   {

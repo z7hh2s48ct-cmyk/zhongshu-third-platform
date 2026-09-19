@@ -98,7 +98,7 @@ const emit = defineEmits<{
 
 const visible = ref(false) // 搜索弹窗显示状态
 const formData = reactive({
-  userId: undefined as number | undefined,
+  userId: undefined as string | undefined,
   applicationName: undefined as string | undefined,
   requestUrl: undefined as string | undefined,
   userType: undefined as number | undefined,

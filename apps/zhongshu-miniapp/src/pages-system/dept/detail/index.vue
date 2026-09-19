@@ -83,7 +83,7 @@ function handleBack() {
 
 /** 获取上级部门名称 */
 function getParentName(): string {
-  if (!formData.value?.parentId || formData.value.parentId === 0) {
+  if (!formData.value?.parentId || formData.value.parentId === '0') {
     return '顶级部门'
   }
   const parent = deptList.value.find(d => d.id === formData.value?.parentId)

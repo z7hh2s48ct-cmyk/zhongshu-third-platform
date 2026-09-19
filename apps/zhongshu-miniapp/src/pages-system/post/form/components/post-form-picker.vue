@@ -27,15 +27,15 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { getSimplePostList } from '@/api/system/post'
 
 const props = defineProps<{
-  modelValue?: number[]
+  modelValue?: string[]
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: number[]): void
+  (e: 'update:modelValue', value: string[]): void
 }>()
 
 const postList = ref<Post[]>([])
-const selectedIds = ref<number[]>([])
+const selectedIds = ref<string[]>([])
 const pickerRef = ref<SelectPickerInstance>() // 岗位选择器
 
 const selectedLabel = computed(() => {
@@ -43,7 +43,7 @@ const selectedLabel = computed(() => {
     return ''
   }
   return selectedIds.value
-    .map(id => postList.value.find(post => post.id === id)?.name)
+    .map(id => postList.value.find(post => String(post.id) === String(id))?.name)
     .filter(Boolean)
     .join('、')
 })
@@ -66,7 +66,7 @@ function handleOpen() {
 }
 
 function handleChange(value: Array<boolean | number | string>) {
-  emit('update:modelValue', value.map(Number))
+  emit('update:modelValue', value.map(String))
 }
 
 onMounted(() => {

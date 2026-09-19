@@ -219,7 +219,7 @@ const openImportTable = () => {
 }
 
 /** 编辑操作 */
-const handleUpdate = (id: number) => {
+const handleUpdate = (id: string) => {
   push('/codegen/edit?id=' + id)
 }
 
@@ -230,7 +230,7 @@ const handlePreview = (row: CodegenApi.CodegenTableVO) => {
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -243,7 +243,7 @@ const handleDelete = async (id: number) => {
 }
 
 /** 批量删除操作 */
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (rows: CodegenApi.CodegenTableVO[]) => {
   checkedIds.value = rows.map((row) => row.id)
 }

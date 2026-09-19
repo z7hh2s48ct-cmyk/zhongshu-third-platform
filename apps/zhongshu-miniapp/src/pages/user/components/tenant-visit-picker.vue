@@ -42,15 +42,15 @@ const loading = ref(false) // 租户选项加载状态
 const pickerValue = computed(() => userStore.visitTenantId || userStore.tenantId || '')
 const tenantOptions = computed<TenantOption[]>(() => tenantList.value.map(tenant => ({
   ...tenant,
-  displayName: tenant.id === userStore.tenantId
+  displayName: String(tenant.id) === String(userStore.tenantId ?? '')
     ? `${tenant.name}（当前登录）`
-    : tenant.id === userStore.visitTenantId
+    : String(tenant.id) === String(userStore.visitTenantId ?? '')
       ? `${tenant.name}（当前访问）`
       : tenant.name,
 })))
 const displayValue = computed(() => {
   const tenantId = userStore.visitTenantId || userStore.tenantId
-  return tenantList.value.find(tenant => tenant.id === tenantId)?.name || (tenantId ? `租户 ${tenantId}` : '未选择')
+  return tenantList.value.find(tenant => String(tenant.id) === String(tenantId))?.name || (tenantId ? `租户 ${tenantId}` : '未选择')
 })
 
 /** 打开租户选择器 */

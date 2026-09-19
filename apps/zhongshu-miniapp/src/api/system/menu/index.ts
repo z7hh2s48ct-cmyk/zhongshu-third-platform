@@ -2,12 +2,12 @@ import { http } from '@/http/http'
 
 /** 菜单信息 */
 export interface Menu {
-  id?: number
+  id?: string
   name: string
   permission: string
   type: number
   sort: number
-  parentId: number
+  parentId: string
   path: string
   icon: string
   component: string
@@ -31,7 +31,7 @@ export function getSimpleMenuList() {
 }
 
 /** 获取菜单详情 */
-export function getMenu(id: number) {
+export function getMenu(id: string) {
   return http.get<Menu>(`/system/menu/get?id=${id}`)
 }
 
@@ -46,6 +46,6 @@ export function updateMenu(data: Menu) {
 }
 
 /** 删除菜单 */
-export function deleteMenu(id: number) {
+export function deleteMenu(id: string) {
   return http.delete<boolean>(`/system/menu/delete?id=${id}`)
 }

@@ -1,0 +1,19 @@
+对本 worktree 中 feat/client-005-b 分支相对 main 的全部改动（git diff main..HEAD，共 3 个提交：ed8f0f6b 环境编排、5da7f124 E2E 套件、7977f80d MP 降级）做 r0 轮对抗性评审。
+
+背景：ZS-CLIENT-005.B 两端登录/导航/文件/待办 E2E 回归——卡片验收明确「真实接口/PG 环境正反向通过；构建和接口替身不代替联调」。本分支交付联验基础设施 + 接口域 E2E 套件（17/17 全绿）+ 联验过程发现的 MP 缺陷修复。
+
+交付内容：
+1) **联验环境编排**（services/zhongshu-core/deploy/）：docker-compose.local.yml（PG17+Redis，仅绑 127.0.0.1，端口 15432/16379 避让占用）、env.local.example（一次性口令模板，去点命名规避 .env* gitignore）、README-local.md（启动/冒烟/账号/已知注意）
+2) **E2E 套件**（scripts/client005b/run-client005b-e2e.mjs）：对长期联验环境直发真实 HTTP，四域 17 用例正反向（登录 6：正向/错误口令/未登录 401/refresh 轮换/登出失效/WS 票据签发〔LOGIN-001.B〕；导航 2：菜单树真相源+common 严格子集；文件 4：配置创建设 master/上传/认证后下载/未登录删除 401；待办 5：模板/send-notify/my-page/update-read/他人消息 403〔MSG-003.A〕）。已实测 17/17 全绿。
+3) **MP 3.5.17→3.5.12 降级**（zszj-dependencies/pom.xml 单行）：联验实证 3.5.17 的 BaseMapper.selectOne(Wrapper,boolean) 内部路由 selectWithCursor（openSession 自开会话 + selectCursor 流式），与 Druid+PG 组合下第二次起「statement 已关闭」→ 全系统 selectOne 类查询确定性 500（登录/登出/令牌校验/文件配置等）；javap 实证该方法为 3.5.17 内置（BaseMapper 声明），非项目代码引入；3.5.12 无此路由，降级后 E2E 全绿且 L1 恢复正确业务码。
+
+评审重点（按危害排序）：
+1) E2E 断言强度：17 用例有无恒真断言/夹具自证（如 T5 拒绝判据 r.json?.code !== 0 是否过宽——code 非 0 且非 403 的系统错误也会被判 PASS？）；N2 的判别菜单列表是否足够稳定；F3 认证下载与 F4 的断言口径
+2) E2E 幂等与重放：重复跑（用户已存在/模板 code 时间戳/文件配置累积/消息累积）是否仍通过或至少不误报；lianyantest 用户重复 create 的失败路径处理
+3) 环境编排安全：compose/env 模板是否有秘密泄漏面；README 的种子 SQL 口径是否与迁移链合同一致（凭据不入迁移链）
+4) MP 降级风险面：3.5.12 与项目内 MP 用法（BaseMapperX/mybatis-plus-join/动态表名/逻辑删除覆写等）的兼容性缺口——特别是 grep 项目内是否有 3.5.13+ 才有的 API 使用；降级是否需要全量模块验证的补充说明
+5) E2E 与 SEC-009.B（他区在制，ID→string）的基线耦合登记是否到位
+
+硬性约束：严禁任何 git 状态变更（不得 commit/reset/checkout/stash/branch）；开始时记录 git rev-parse HEAD，结束时校验未变。只读评审，不得修改任何文件；允许运行只读验证（node 脚本须联验环境在线——http://127.0.0.1:48080 已运行，可直接跑 E2E；mvn 可选）。
+
+输出：按 P0/P1/P2/P3 分级列发现（每条含 文件:行号 证据与理由）；最后一行给 VERDICT: PASS（0×P0/P1）或 VERDICT: FAIL。

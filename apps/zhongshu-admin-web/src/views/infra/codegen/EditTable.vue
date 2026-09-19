@@ -47,7 +47,7 @@ const formData = ref<CodegenApi.CodegenUpdateReqVO>({
 
 /** 获得详情 */
 const getDetail = async () => {
-  const id = query.id as unknown as number
+  const id = query.id as unknown as string
   if (!id) {
     return
   }

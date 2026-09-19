@@ -54,7 +54,7 @@
           </view>
           <view class="mt-12rpx flex items-center justify-between pl-64rpx">
             <view class="text-24rpx text-[#999]">
-              负责人：{{ getLeaderName(item.leaderUserId) }}
+              负责人：{{ getLeaderName(Number(item.leaderUserId)) }}
             </view>
             <view
               v-if="item.children && item.children.length > 0"
@@ -153,7 +153,7 @@ function getLeaderName(leaderUserId?: number): string {
   if (!leaderUserId) {
     return '未设置'
   }
-  const user = userList.value.find(u => u.id === leaderUserId)
+  const user = userList.value.find(u => String(u.id) === String(leaderUserId))
   return user?.nickname || '未知'
 }
 
@@ -164,7 +164,7 @@ function formatStatistics(item: DeptTreeNode, field: keyof EmployeeStatistics) {
 
 /** 进入下级组织层级 */
 function handleEnterChildren(item: DeptTreeNode) {
-  breadcrumbRef.value?.enter({ id: item.id!, name: item.name })
+  breadcrumbRef.value?.enter({ id: Number(item.id!), name: item.name })
 }
 
 /** 构建包含直属与下级人数统计的组织树 */
@@ -174,7 +174,7 @@ function buildDeptTree(
 ): DeptTreeNode[] {
   function buildNode(dept: Dept): DeptTreeNode {
     const children = (dept.children || []).map(buildNode)
-    const matched = statisticsList.find(statistics => statistics.deptId === dept.id)
+    const matched = statisticsList.find(statistics => String(statistics.deptId) === String(dept.id))
     const directStatistics = matched
       ? {
           activeCount: matched.activeCount,

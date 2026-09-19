@@ -61,7 +61,7 @@
           </div>
           <!-- 已是好友显示「已添加」；否则显示「添加」（点击进入 apply 步骤） -->
           <el-button
-            v-if="!friendStore.isActiveFriend(user.id)"
+            v-if="!friendStore.isActiveFriend(Number(user.id))"
             type="primary"
             size="small"
             @click="enterApply(user)"
@@ -168,7 +168,7 @@ const message = useMessage()
 const currentUserId = computed(() => getCurrentUserId())
 
 /** 搜索结果过滤掉自己；用 v-if 而非 v-show，避免 DOM 占位 + 头像无效请求 */
-const visibleUsers = computed(() => users.value.filter((user) => user.id !== currentUserId.value))
+const visibleUsers = computed(() => users.value.filter((user) => String(user.id) !== String(currentUserId.value)))
 const keyword = ref('')
 const users = ref<UserVO[]>([])
 const searched = ref(false)
@@ -263,12 +263,12 @@ async function handleSubmitApply() {
     return
   }
   // 预校验：不能加自己（搜索列表已过滤，这里兜底 presetUser / 名片入口等场景）
-  if (target.id === currentUserId.value) {
+  if (String(target.id) === String(currentUserId.value)) {
     message.warning('不能添加自己为好友')
     return
   }
   const payload = {
-    toUserId: target.id,
+    toUserId: Number(target.id),
     applyContent: applyContent.value.trim() || undefined,
     displayName: displayName.value.trim() || undefined,
     addSource: addSource.value
@@ -278,7 +278,7 @@ async function handleSubmitApply() {
     const requestId = await friendStore.applyFriendRequest(payload)
     // silent 分支（已是单向好友被静默重启）：主动 fetchFriendInfo 入库，不依赖 WS FRIEND_ADD 推送，避免丢推时列表看不到
     if (requestId === null) {
-      await friendStore.fetchFriendInfo(target.id)
+      await friendStore.fetchFriendInfo(Number(target.id))
     }
     message.success(requestId ? '申请已发送，等待对方验证' : '已添加为好友')
     visible.value = false

@@ -460,7 +460,7 @@ function handlePostConfirm(value?: number | string) {
   if (!Number.isFinite(postId)) {
     return
   }
-  const option = postOptions.value.find(item => item.id === postId)
+  const option = postOptions.value.find(item => String(item.id) === String(postId))
   formData.value.postId = postId
   formData.value.postName = option?.name || ''
 }

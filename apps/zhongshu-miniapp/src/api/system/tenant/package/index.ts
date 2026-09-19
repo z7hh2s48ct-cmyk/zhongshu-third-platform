@@ -3,11 +3,11 @@ import { http } from '@/http/http'
 
 /** 租户套餐信息 */
 export interface TenantPackage {
-  id?: number
+  id?: string
   name: string
   status: number
   remark: string
-  menuIds: number[]
+  menuIds: string[]
   createTime?: Date
 }
 
@@ -22,7 +22,7 @@ export function getTenantPackageList() {
 }
 
 /** 获取租户套餐详情 */
-export function getTenantPackage(id: number) {
+export function getTenantPackage(id: string) {
   return http.get<TenantPackage>(`/system/tenant-package/get?id=${id}`)
 }
 
@@ -37,6 +37,6 @@ export function updateTenantPackage(data: TenantPackage) {
 }
 
 /** 删除租户套餐 */
-export function deleteTenantPackage(id: number) {
+export function deleteTenantPackage(id: string) {
   return http.delete<boolean>(`/system/tenant-package/delete?id=${id}`)
 }

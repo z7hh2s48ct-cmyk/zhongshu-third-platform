@@ -61,7 +61,7 @@ import { getTopPopupModalStyle, getTopPopupStyle } from '@/utils'
 import { formatDate } from '@/utils/date'
 
 const props = defineProps<{
-  defaultDeptId?: number
+  defaultDeptId?: string
   deptId?: number
   initialEndTime: number
   initialStartTime: number
@@ -80,7 +80,7 @@ const deptPickerRef = ref<InstanceType<typeof DeptSearchPicker>>() // 部门选�
 const formData = reactive({
   startTime: props.initialStartTime,
   endTime: props.initialEndTime,
-  deptId: props.deptId || props.defaultDeptId,
+  deptId: (props.deptId != null ? props.deptId : props.defaultDeptId != null ? Number(props.defaultDeptId) : undefined) as number | undefined,
 }) // 搜索表单数据
 
 const placeholder = computed(() => { // 搜索入口展示文案
@@ -100,7 +100,7 @@ watch(
     }
     formData.startTime = props.initialStartTime
     formData.endTime = props.initialEndTime
-    formData.deptId = props.deptId || props.defaultDeptId
+    formData.deptId = props.deptId != null ? props.deptId : props.defaultDeptId != null ? Number(props.defaultDeptId) : undefined
   },
 )
 
@@ -114,7 +114,7 @@ function handleSearch() {
 function handleReset() {
   formData.startTime = props.initialStartTime
   formData.endTime = props.initialEndTime
-  formData.deptId = props.defaultDeptId
+  formData.deptId = props.defaultDeptId != null ? Number(props.defaultDeptId) : undefined
   visible.value = false
   emit('reset')
 }

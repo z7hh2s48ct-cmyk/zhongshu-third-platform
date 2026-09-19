@@ -18,7 +18,7 @@ import { onMounted, ref } from 'vue'
 import { getSimpleMailAccountList } from '@/api/system/mail/account'
 
 const props = withDefaults(defineProps<{
-  modelValue?: number
+  modelValue?: string
   label?: string
   placeholder?: string
 }>(), {
@@ -27,7 +27,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | undefined]
+  'update:modelValue': [value: string | undefined]
   'change': [item: MailAccount | undefined]
 }>()
 
@@ -35,13 +35,13 @@ const pickerRef = ref<YdSearchPickerExpose>() // 通用搜索选择器
 const options = ref<MailAccount[]>([]) // 邮箱账号选项
 
 /** 更新邮箱账号 */
-function handleUpdate(value?: number) {
+function handleUpdate(value?: string) {
   emit('update:modelValue', value)
   emit('change', options.value.find(item => item.id === value))
 }
 
 /** 格式化邮箱账号 */
-function format(value?: number) {
+function format(value?: string) {
   return pickerRef.value?.format(value) || (value == null ? '' : String(value))
 }
 

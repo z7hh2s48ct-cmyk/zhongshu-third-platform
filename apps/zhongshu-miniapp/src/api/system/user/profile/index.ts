@@ -2,7 +2,7 @@ import { http } from '@/http/http'
 
 /** 用户个人中心信息 */
 export interface UserProfileVO {
-  id: number
+  id: string
   username: string
   nickname: string
   email?: string

@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** OAuth2.0 客户端信息 */
 export interface OAuth2Client {
-  id?: number
+  id?: string
   clientId: string
   secret: string
   name: string
@@ -28,7 +28,7 @@ export function getOAuth2ClientPage(params: PageParam) {
 }
 
 /** 获取 OAuth2.0 客户端详情 */
-export function getOAuth2Client(id: number) {
+export function getOAuth2Client(id: string) {
   return http.get<OAuth2Client>(`/system/oauth2-client/get?id=${id}`)
 }
 
@@ -43,6 +43,6 @@ export function updateOAuth2Client(data: OAuth2Client) {
 }
 
 /** 删除 OAuth2.0 客户端 */
-export function deleteOAuth2Client(id: number) {
+export function deleteOAuth2Client(id: string) {
   return http.delete<boolean>(`/system/oauth2-client/delete?id=${id}`)
 }

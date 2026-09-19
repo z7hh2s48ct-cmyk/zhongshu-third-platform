@@ -2,7 +2,7 @@ import request from '@/config/axios'
 
 /** FMS 账套用户信息 */
 export interface FmsAccountUserVO {
-  userId: number // 后台用户编号
+  userId: string // 后台用户编号
   nickname?: string // 用户昵称
   deptName?: string // 部门名称
   mobile?: string // 手机号码
@@ -22,13 +22,13 @@ export enum FmsAccountUserLevelEnum {
 
 /** FMS 账套成员修改参数 */
 export interface FmsAccountUserUpdateMemberReqVO {
-  userId: number // 后台用户编号
+  userId: string // 后台用户编号
   level: number // 成员权限级别
 }
 
 /** FMS 账套用户修改参数 */
 export interface FmsAccountUserUpdateReqVO {
-  accountSetId: number // 账套编号
+  accountSetId: string // 账套编号
   members: FmsAccountUserUpdateMemberReqVO[] // 账套成员数组
 }
 

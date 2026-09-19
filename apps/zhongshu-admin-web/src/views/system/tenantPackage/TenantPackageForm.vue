@@ -97,7 +97,7 @@ const treeRef = ref<InstanceType<typeof ElTree>>() // 树组件 Ref
 const treeNodeAll = ref(false) // 全选/全不选
 
 /** 打开弹窗 */
-const open = async (type: string, id?: number) => {
+const open = async (type: string, id?: string) => {
   dialogVisible.value = true
   dialogTitle.value = t('action.' + type)
   formType.value = type
@@ -112,7 +112,7 @@ const open = async (type: string, id?: number) => {
       // 设置选中
       formData.value = res
       // 设置选中
-      res.menuIds.forEach((menuId: number) => {
+      res.menuIds.forEach((menuId: string) => {
         treeRef.value!.setChecked(menuId, true, false)
       })
     } finally {
@@ -134,8 +134,8 @@ const submitForm = async () => {
   try {
     const data = formData.value as unknown as TenantPackageApi.TenantPackageVO
     data.menuIds = [
-      ...(treeRef.value!.getCheckedKeys(false) as unknown as Array<number>), // 获得当前选中节点
-      ...(treeRef.value!.getHalfCheckedKeys() as unknown as Array<number>) // 获得半选中的父节点
+      ...(treeRef.value!.getCheckedKeys(false) as unknown as Array<string>), // 获得当前选中节点
+      ...(treeRef.value!.getHalfCheckedKeys() as unknown as Array<string>) // 获得半选中的父节点
     ]
     if (formType.value === 'create') {
       await TenantPackageApi.createTenantPackage(data)

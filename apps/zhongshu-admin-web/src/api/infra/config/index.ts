@@ -1,7 +1,7 @@
 import request from '@/config/axios'
 
 export interface ConfigVO {
-  id: number | undefined
+  id: string | undefined
   category: string
   name: string
   key: string
@@ -18,7 +18,7 @@ export const getConfigPage = (params: PageParam) => {
 }
 
 // 查询参数详情
-export const getConfig = (id: number) => {
+export const getConfig = (id: string) => {
   return request.get({ url: '/infra/config/get?id=' + id })
 }
 
@@ -38,12 +38,12 @@ export const updateConfig = (data: ConfigVO) => {
 }
 
 // 删除参数
-export const deleteConfig = (id: number) => {
+export const deleteConfig = (id: string) => {
   return request.delete({ url: '/infra/config/delete?id=' + id })
 }
 
 // 批量删除参数
-export const deleteConfigList = (ids: number[]) => {
+export const deleteConfigList = (ids: string[]) => {
   return request.delete({ url: '/infra/config/delete-list', params: { ids: ids.join(',') } })
 }
 

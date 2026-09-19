@@ -101,7 +101,7 @@ const formData = reactive({
   type: -1,
   status: -1,
   apiTemplateId: undefined as string | undefined,
-  channelId: undefined as number | undefined,
+  channelId: undefined as string | undefined,
   createTime: [undefined, undefined] as [number | undefined, number | undefined],
 }) // 搜索表单数据
 

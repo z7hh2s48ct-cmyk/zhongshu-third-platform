@@ -145,7 +145,7 @@ defineOptions({ name: 'WmPackageSelectDialog' })
 const props = withDefaults(
   defineProps<{
     multiple?: boolean // true 多选（checkbox），false 单选（radio）
-    excludeId?: number // 排除的 ID（避免选择自己作为父箱）
+    excludeId?: string // 排除的 ID（避免选择自己作为父箱）
     childableOnly?: boolean // 只展示可作为子箱的装箱单（无父箱 + 已完成状态）
   }>(),
   {
@@ -209,9 +209,9 @@ const queryParams = reactive({
   pageSize: 10, // 每页条数
   code: undefined as string | undefined, // 装箱单编号
   salesOrderCode: undefined as string | undefined, // 销售订单编号
-  clientId: undefined as number | undefined, // 客户 ID
-  inspectorUserId: undefined as number | undefined, // 检查员用户 ID
-  parentId: undefined as number | undefined, // 父箱 ID
+  clientId: undefined as string | undefined, // 客户 ID
+  inspectorUserId: undefined as string | undefined, // 检查员用户 ID
+  parentId: undefined as string | undefined, // 父箱 ID
   status: undefined as number | undefined // 单据状态
 })
 

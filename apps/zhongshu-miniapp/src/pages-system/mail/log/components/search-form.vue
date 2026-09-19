@@ -106,11 +106,11 @@ const emit = defineEmits<{
 
 const formData = reactive({
   sendTime: [undefined, undefined] as [number | undefined, number | undefined],
-  userId: undefined as number | undefined,
+  userId: undefined as string | undefined,
   userType: -1,
   sendStatus: -1,
-  accountId: undefined as number | undefined,
-  templateId: undefined as number | undefined,
+  accountId: undefined as string | undefined,
+  templateId: undefined as string | undefined,
   toMail: undefined as string | undefined,
 }) // 搜索表单数据
 const visible = ref(false) // 搜索弹窗显示状态

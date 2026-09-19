@@ -81,7 +81,7 @@ const formData = reactive({
   status: -1,
   code: undefined as string | undefined,
   name: undefined as string | undefined,
-  accountId: undefined as number | undefined,
+  accountId: undefined as string | undefined,
   createTime: [undefined, undefined] as [number | undefined, number | undefined],
 }) // 搜索表单数据
 const visible = ref(false) // 搜索弹窗显示状态

@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 字典类型 */
 export interface DictType {
-  id?: number
+  id?: string
   name: string
   type: string
   status: number
@@ -22,7 +22,7 @@ export function getDictTypePage(params: PageParam) {
 }
 
 /** 查询字典类型详情 */
-export function getDictType(id: number) {
+export function getDictType(id: string) {
   return http.get<DictType>(`/system/dict-type/get?id=${id}`)
 }
 
@@ -37,6 +37,6 @@ export function updateDictType(data: DictType) {
 }
 
 /** 删除字典类型 */
-export function deleteDictType(id: number) {
+export function deleteDictType(id: string) {
   return http.delete<boolean>(`/system/dict-type/delete?id=${id}`)
 }

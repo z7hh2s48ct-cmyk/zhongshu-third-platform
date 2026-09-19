@@ -26,7 +26,7 @@ import { dateFormatter } from '@/utils/formatTime'
 import { Demo03Grade, Demo03StudentApi } from '@/api/infra/demo/demo03/inner'
 
 const props = defineProps<{
-  studentId?: number // 学生编号（主表的关联字段）
+  studentId?: string // 学生编号（主表的关联字段）
 }>()
 const loading = ref(false) // 列表的加载中
 const list = ref<Demo03Grade[]>([]) // 列表的数据

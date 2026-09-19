@@ -51,7 +51,7 @@ const formRef = ref() // 表单 Ref
 const demo02CategoryTree = ref() // 树形结构
 
 /** 打开弹窗 */
-const open = async (type: string, id?: number) => {
+const open = async (type: string, id?: string) => {
   dialogVisible.value = true
   dialogTitle.value = t('action.' + type)
   formType.value = type

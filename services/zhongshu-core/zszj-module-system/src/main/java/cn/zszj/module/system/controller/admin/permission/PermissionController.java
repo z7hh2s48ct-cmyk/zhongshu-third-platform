@@ -1,6 +1,7 @@
 package cn.zszj.module.system.controller.admin.permission;
 
 import cn.zszj.framework.common.pojo.CommonResult;
+import cn.zszj.module.system.controller.admin.permission.vo.PermissionIdListRespVO;
 import cn.zszj.module.system.controller.admin.permission.vo.permission.PermissionAssignRoleDataScopeReqVO;
 import cn.zszj.module.system.controller.admin.permission.vo.permission.PermissionAssignRoleMenuReqVO;
 import cn.zszj.module.system.controller.admin.permission.vo.permission.PermissionAssignUserRoleReqVO;
@@ -29,8 +30,10 @@ public class PermissionController {
     @Parameter(name = "roleId", description = "角色编号", required = true)
     @GetMapping("/list-role-menus")
     @PreAuthorize("@ss.hasPermission('system:permission:assign-role-menu')")
-    public CommonResult<Set<Long>> getRoleMenuList(@RequestParam("roleId") Long roleId) {
-        return success(permissionService.getRoleMenuListByRoleId(roleId));
+    public CommonResult<PermissionIdListRespVO> getRoleMenuList(@RequestParam("roleId") Long roleId) {
+        // ZS-SEC-009.B r1 P2-B：裸 Set<Long> 经 CommonResult.data（泛型擦除为 Object）不受 ID→string 合同
+        // 作用，wire 仍 number 与前端 string 选项失配——包装为显式 menuIds 字段命中命名约定
+        return success(new PermissionIdListRespVO(permissionService.getRoleMenuListByRoleId(roleId), null));
     }
 
     @PostMapping("/assign-role-menu")
@@ -58,8 +61,9 @@ public class PermissionController {
     @Parameter(name = "userId", description = "用户编号", required = true)
     @GetMapping("/list-user-roles")
     @PreAuthorize("@ss.hasPermission('system:permission:assign-user-role')")
-    public CommonResult<Set<Long>> listAdminRoles(@RequestParam("userId") Long userId) {
-        return success(permissionService.getUserRoleIdListByUserId(userId));
+    public CommonResult<PermissionIdListRespVO> listAdminRoles(@RequestParam("userId") Long userId) {
+        // 同上：包装为显式 roleIds 字段（ZS-SEC-009.B r1 P2-B）
+        return success(new PermissionIdListRespVO(null, permissionService.getUserRoleIdListByUserId(userId)));
     }
 
     @Operation(summary = "赋予用户角色")

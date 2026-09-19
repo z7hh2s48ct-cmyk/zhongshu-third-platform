@@ -62,7 +62,7 @@ import { formatDateTime } from '@/utils/date'
 import LogSearchForm from './log-search-form.vue'
 
 const props = defineProps<{
-  jobId?: number
+  jobId?: string
 }>()
 
 const list = ref<JobLog[]>([]) // 列表数据

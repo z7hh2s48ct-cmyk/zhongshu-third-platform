@@ -1,10 +1,10 @@
 import request from '@/config/axios'
 
 export interface LoginLogVO {
-  id: number
+  id: string
   logType: number
-  traceId: number
-  userId: number
+  traceId: string
+  userId: string
   userType: number
   username: string
   result: number

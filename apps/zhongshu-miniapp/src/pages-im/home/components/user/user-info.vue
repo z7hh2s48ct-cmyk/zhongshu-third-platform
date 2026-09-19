@@ -96,14 +96,14 @@ const friendStore = useFriendStore()
 const recommendVisible = ref(false) // 推荐名片弹窗
 const blocked = ref(false) // 是否加入黑名单
 const friend = computed<Friend | undefined>(() => props.user?.id
-  ? friendStore.getFriend(props.user.id)
+  ? friendStore.getFriend(Number(props.user.id))
   : undefined) // 当前好友关系
 const resolvedDisplayName = computed(() => props.displayName
   || (friend.value ? getFriendDisplayName(friend.value) : props.user?.nickname)
   || '') // 用户展示名称
 const friendCard = computed(() => props.user?.id
   ? toUserCardTarget({
-      id: props.user.id,
+      id: Number(props.user.id),
       nickname: props.user.nickname,
       avatar: props.user.avatar,
     })
@@ -128,7 +128,7 @@ async function editRemark() {
     return
   }
   const displayName = String(value || '').trim()
-  if (await friendStore.setFriendDisplayName(targetId, displayName)) {
+  if (await friendStore.setFriendDisplayName(Number(targetId), displayName)) {
     toast.success('已保存')
     emit('saved', displayName)
   }
@@ -144,8 +144,8 @@ async function onBlockedChange() {
   }
   try {
     const success = nextBlocked
-      ? await friendStore.blockFriend(targetId)
-      : await friendStore.unblockFriend(targetId)
+      ? await friendStore.blockFriend(Number(targetId))
+      : await friendStore.unblockFriend(Number(targetId))
     if (!success) {
       blocked.value = !nextBlocked
     }
@@ -166,7 +166,7 @@ async function handleDelete() {
   } catch {
     return
   }
-  if (await friendStore.deleteFriend(targetId)) {
+  if (await friendStore.deleteFriend(Number(targetId))) {
     toast.success('已删除')
     emit('deleted', target)
   }

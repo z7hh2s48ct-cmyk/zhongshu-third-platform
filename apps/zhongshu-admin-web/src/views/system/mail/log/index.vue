@@ -265,7 +265,7 @@ const openDetail = (data: MailLogApi.MailLogVO) => {
 }
 
 /** 获取邮箱账号名称 */
-const getAccountMail = (accountId: number) => {
+const getAccountMail = (accountId: string) => {
   const account = accountList.value.find((account) => account.id === accountId)
   return account?.mail || ''
 }

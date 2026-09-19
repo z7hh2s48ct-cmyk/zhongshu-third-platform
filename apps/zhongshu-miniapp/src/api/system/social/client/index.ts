@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 社交客户端信息 */
 export interface SocialClient {
-  id?: number
+  id?: string
   name: string
   socialType: number
   userType: number
@@ -21,7 +21,7 @@ export function getSocialClientPage(params: PageParam) {
 }
 
 /** 获取社交客户端详情 */
-export function getSocialClient(id: number) {
+export function getSocialClient(id: string) {
   return http.get<SocialClient>(`/system/social-client/get?id=${id}`)
 }
 
@@ -36,6 +36,6 @@ export function updateSocialClient(data: SocialClient) {
 }
 
 /** 删除社交客户端 */
-export function deleteSocialClient(id: number) {
+export function deleteSocialClient(id: string) {
   return http.delete<boolean>(`/system/social-client/delete?id=${id}`)
 }

@@ -183,7 +183,7 @@ async function handleBind(item: SocialPlatform) {
     const started = await startH5SocialAuth({
       purpose: 'bind',
       socialType: item.type,
-      tenantId: useUserStore().tenantId || undefined,
+      tenantId: useUserStore().tenantId ?? undefined,
       redirect: '/pages-core/user/security/index',
     })
     if (!started) {

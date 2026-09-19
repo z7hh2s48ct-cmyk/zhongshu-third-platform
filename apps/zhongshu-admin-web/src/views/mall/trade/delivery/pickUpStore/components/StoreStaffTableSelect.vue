@@ -160,7 +160,7 @@ const queryParams = reactive({
   username: undefined as string | undefined,
   mobile: undefined as string | undefined,
   status: undefined as number | undefined,
-  deptId: undefined as number | undefined,
+  deptId: undefined as string | undefined,
   createTime: [] as string[]
 })
 const queryFormRef = ref() // 搜索的表单

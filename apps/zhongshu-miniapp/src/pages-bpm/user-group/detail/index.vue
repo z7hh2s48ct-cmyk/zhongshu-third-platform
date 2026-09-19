@@ -91,7 +91,7 @@ function handleBack() {
 
 /** 获取用户昵称 */
 function getUserNickname(userId: number) {
-  const user = userList.value.find(u => u.id === userId)
+  const user = userList.value.find(u => String(u.id) === String(userId))
   return user?.nickname || userId
 }
 

@@ -66,7 +66,7 @@ const { hasAccessByCodes } = useAccess()
 const list = ref<WmWarehouse[]>([]) // 列表数据
 const pagingRef = ref<ZPagingRef<WmWarehouse>>() // 分页组件引用
 const queryParams = ref<Record<string, any>>({}) // 查询参数
-let userMapPromise: Promise<Map<number, string>> | undefined // 用户名称映射缓存
+let userMapPromise: Promise<Map<string | number, string>> | undefined // 用户名称映射缓存
 
 /** 返回上一页 */
 function handleBack() {

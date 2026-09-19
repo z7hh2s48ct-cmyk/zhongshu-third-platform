@@ -71,7 +71,7 @@ import { DICT_TYPE } from '@/utils/constants'
 import { formatDate, formatDateRange } from '@/utils/date'
 
 const props = defineProps<{
-  jobId?: number
+  jobId?: string
 }>()
 
 const emit = defineEmits<{
@@ -81,7 +81,7 @@ const emit = defineEmits<{
 
 const visible = ref(false) // 搜索弹窗显示状态
 const formData = reactive({
-  jobId: undefined as number | undefined,
+  jobId: undefined as string | undefined,
   handlerName: undefined as string | undefined,
   status: -1, // -1 表示全部
   beginTime: [undefined, undefined] as [number | undefined, number | undefined],

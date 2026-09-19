@@ -166,7 +166,7 @@ const formData = reactive<{
 }>({
   employees: []
 }) // 表单数据
-const selectedUserIds = ref<number[]>([]) // 选中的用户编号
+const selectedUserIds = ref<string[]>([]) // 选中的用户编号
 const boundUserIds = ref<number[]>([]) // 已绑定员工档案的用户编号
 const formRef = ref<FormInstance>() // 表单 Ref
 

@@ -102,7 +102,7 @@ const deptList = ref<Dept[]>([]) // 完整部门列表（树形结构）
 const userList = ref<User[]>([]) // 用户列表
 const toast = useToast()
 
-const currentDeptId = ref(0) // 当前层级的部门编号
+const currentDeptId = ref('0') // 当前层级的部门编号
 const breadcrumbRef = ref<InstanceType<typeof Breadcrumb>>()
 const contactActionVisible = ref(false) // 联系方式菜单显示状态
 const contactUser = ref<User>() // 当前查看的用户
@@ -110,15 +110,15 @@ const contactActions = ref<Array<{ name: string, value: 'mobile' | 'email' }>>([
 
 /** 当前层级的部门列表 */
 const currentDeptList = computed(() => {
-  if (currentDeptId.value === 0) {
-    return deptList.value.filter(item => item.parentId === 0)
+  if (currentDeptId.value === '0') {
+    return deptList.value.filter(item => item.parentId === '0')
   }
   return findChildren(deptList.value, currentDeptId.value)
 })
 
 /** 当前层级的用户列表 */
 const currentUserList = computed(() => {
-  if (currentDeptId.value === 0) {
+  if (currentDeptId.value === '0') {
     // 根层级不显示用户，只显示部门
     return []
   }

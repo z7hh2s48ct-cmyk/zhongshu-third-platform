@@ -1,13 +1,13 @@
 import request from '@/config/axios'
 
 export interface TenantVO {
-  id: number
+  id: string
   name: string
   contactName: string
   contactMobile: string
   status: number
   domain: string
-  packageId: number
+  packageId: string
   username: string
   password: string
   expireTime: Date
@@ -38,7 +38,7 @@ export const getTenantPage = (params: TenantPageReqVO) => {
 }
 
 // 查询租户详情
-export const getTenant = (id: number) => {
+export const getTenant = (id: string) => {
   return request.get({ url: '/system/tenant/get?id=' + id })
 }
 
@@ -58,12 +58,12 @@ export const updateTenant = (data: TenantVO) => {
 }
 
 // 删除租户
-export const deleteTenant = (id: number) => {
+export const deleteTenant = (id: string) => {
   return request.delete({ url: '/system/tenant/delete?id=' + id })
 }
 
 // 批量删除租户
-export const deleteTenantList = (ids: number[]) => {
+export const deleteTenantList = (ids: string[]) => {
   return request.delete({ url: '/system/tenant/delete-list', params: { ids: ids.join(',') } })
 }
 

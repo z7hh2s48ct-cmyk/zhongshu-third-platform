@@ -87,9 +87,9 @@ const friendStore = useFriendStore()
 const { getActiveFriendList } = storeToRefs(friendStore)
 const formRef = ref<FormInstance>() // 表单组件引用
 const formLoading = ref(false) // 表单提交状态
-const hiddenUserIds = computed(() => userStore.userInfo.userId ? [userStore.userInfo.userId] : []) // 隐藏当前用户
+const hiddenUserIds = computed(() => userStore.userInfo.userId ? [String(userStore.userInfo.userId)] : []) // 隐藏当前用户
 const existingFriendUserIds = computed(() => getActiveFriendList.value
-  .map(friend => friend.friendUserId)) // 已添加好友编号
+  .map(friend => String(friend.friendUserId))) // 已添加好友编号
 const formData = ref({
   toUserId: props.toUserId ? Number(props.toUserId) : undefined as number | undefined,
   displayName: '',

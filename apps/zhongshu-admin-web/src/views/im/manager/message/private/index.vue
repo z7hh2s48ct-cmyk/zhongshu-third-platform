@@ -163,8 +163,8 @@ const list = ref<ManagerPrivateMessageApi.ImManagerPrivateMessageVO[]>([]) // åˆ
 const queryParams = reactive({
   pageNo: 1,
   pageSize: 10,
-  senderId: undefined as number | undefined,
-  receiverId: undefined as number | undefined,
+  senderId: undefined as string | undefined,
+  receiverId: undefined as string | undefined,
   type: undefined as number | undefined,
   content: undefined as string | undefined,
   sendTime: [] as string[]

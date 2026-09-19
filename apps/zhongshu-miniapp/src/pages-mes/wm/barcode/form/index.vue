@@ -562,7 +562,7 @@ function handleUserConfirm(users: User[]) {
   if (!user?.id) {
     return
   }
-  fillBizObject(user.id, user.username || String(user.id), user.nickname || user.username || '')
+  fillBizObject(Number(user.id), user.username || String(user.id), user.nickname || user.username || '')
 }
 
 /** 加载详情 */

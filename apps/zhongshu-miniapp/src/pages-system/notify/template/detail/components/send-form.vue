@@ -168,7 +168,7 @@ async function handleSendSubmit() {
   sendLoading.value = true
   try {
     await sendNotify({
-      userId: Number(sendFormData.value.userId),
+      userId: String(sendFormData.value.userId),
       userType: sendFormData.value.userType,
       templateCode: props.template?.code || '',
       templateParams: sendFormData.value.templateParams,

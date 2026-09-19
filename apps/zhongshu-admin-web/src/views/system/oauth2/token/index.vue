@@ -145,7 +145,7 @@ const resetQuery = () => {
 }
 
 /** 强制退出操作（ZS-LOGIN-006：以不可用于认证的会话 ID 踢出，前端无需持有令牌串） */
-const handleForceLogout = async (id: number) => {
+const handleForceLogout = async (id: string) => {
   try {
     // 删除的二次确认
     await message.confirm('是否要强制退出用户')

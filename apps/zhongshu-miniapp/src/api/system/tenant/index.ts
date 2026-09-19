@@ -3,9 +3,9 @@ import { http } from '@/http/http'
 
 /** 租户信息 */
 export interface Tenant {
-  id?: number
+  id?: string
   name: string
-  packageId: number
+  packageId: string
   contactName: string
   contactMobile: string
   accountCount: number
@@ -28,7 +28,7 @@ export function getSimpleTenantList() {
 }
 
 /** 获取租户详情 */
-export function getTenant(id: number) {
+export function getTenant(id: string) {
   return http.get<Tenant>(`/system/tenant/get?id=${id}`)
 }
 
@@ -43,6 +43,6 @@ export function updateTenant(data: Tenant) {
 }
 
 /** 删除租户 */
-export function deleteTenant(id: number) {
+export function deleteTenant(id: string) {
   return http.delete<boolean>(`/system/tenant/delete?id=${id}`)
 }

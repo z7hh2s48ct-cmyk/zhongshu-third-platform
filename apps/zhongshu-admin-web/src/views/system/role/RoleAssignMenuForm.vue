@@ -58,7 +58,7 @@ const message = useMessage() // 消息弹窗
 const dialogVisible = ref(false) // 弹窗的是否展示
 const formLoading = ref(false) // 表单的加载中：1）修改时的数据加载；2）提交的按钮禁用
 const formData = reactive({
-  id: undefined as number | undefined,
+  id: undefined as string | undefined,
   name: '',
   code: '',
   menuIds: []
@@ -81,9 +81,9 @@ const open = async (row: RoleApi.RoleVO) => {
   formData.code = row.code
   formLoading.value = true
   try {
-    formData.menuIds = await PermissionApi.getRoleMenuList(row.id)
+    formData.menuIds = (await PermissionApi.getRoleMenuList(row.id)).menuIds ?? []
     // 设置选中
-    formData.menuIds.forEach((menuId: number) => {
+    formData.menuIds.forEach((menuId: string) => {
       treeRef.value.setChecked(menuId, true, false)
     })
   } finally {
@@ -105,8 +105,8 @@ const submitForm = async () => {
     const data = {
       roleId: formData.id!,
       menuIds: [
-        ...(treeRef.value.getCheckedKeys(false) as unknown as Array<number>), // 获得当前选中节点
-        ...(treeRef.value.getHalfCheckedKeys() as unknown as Array<number>) // 获得半选中的父节点
+        ...(treeRef.value.getCheckedKeys(false) as unknown as Array<string>), // 获得当前选中节点
+        ...(treeRef.value.getHalfCheckedKeys() as unknown as Array<string>) // 获得半选中的父节点
       ]
     }
     await PermissionApi.assignRoleMenu(data)

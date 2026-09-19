@@ -3,10 +3,10 @@ import { http } from '@/http/http'
 
 /** OAuth2.0 令牌信息 */
 export interface OAuth2Token {
-  id?: number
+  id?: string
   accessToken: string
   refreshToken: string
-  userId: number
+  userId: string
   userType: number
   clientId: string
   createTime?: Date

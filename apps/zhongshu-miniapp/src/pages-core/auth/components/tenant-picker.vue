@@ -29,7 +29,7 @@ import { useUserStore } from '@/store/user'
 import { getWotPickerDisplay } from '@/utils/wot'
 
 const props = defineProps<{
-  preferredTenantId?: number
+  preferredTenantId?: string
   disabled?: boolean
 }>()
 
@@ -66,10 +66,10 @@ async function fetchTenantList() {
 
     // 2. 确定选中的租户：授权指定租户 > 域名/appId > store 中的租户 > 列表第一个
     const websiteTenant = await websiteTenantPromise
-    let selectedTenantId: number | null = props.preferredTenantId || null
+    let selectedTenantId: string | null = props.preferredTenantId != null ? String(props.preferredTenantId) : null
     // 2.1 授权未指定租户时，使用域名/appId 对应的租户
     if (!selectedTenantId && websiteTenant?.id) {
-      selectedTenantId = websiteTenant.id
+      selectedTenantId = websiteTenant.id != null ? String(websiteTenant.id) : null
     }
     // 2.2 如果没有从域名获取到，使用 store 中的租户
     if (!selectedTenantId && userStore.tenantId) {
@@ -77,7 +77,7 @@ async function fetchTenantList() {
     }
     // 2.3 如果还是没有，使用列表第一个
     if (!selectedTenantId && tenantList.value.length > 0) {
-      selectedTenantId = tenantList.value[0].id
+      selectedTenantId = tenantList.value[0].id != null ? String(tenantList.value[0].id) : null
     }
 
     // 3. 设置选中的租户
@@ -131,7 +131,7 @@ async function fetchTenantByWebsite(): Promise<TenantVO | null> {
 /** 切换当前租户 */
 function handleTenantConfirm(value?: number | string) {
   if (value !== undefined && value !== '') {
-    userStore.setTenantId(Number(value))
+    userStore.setTenantId(String(value))
   }
 }
 
@@ -149,7 +149,7 @@ function validate(): boolean {
     return false
   }
   if (tenantId.value !== userStore.tenantId) {
-    userStore.setTenantId(tenantId.value)
+    userStore.setTenantId(tenantId.value != null ? String(tenantId.value) : undefined)
   }
   return true
 }
@@ -157,7 +157,7 @@ function validate(): boolean {
 /** 页面加载时获取租户列表 */
 onMounted(() => {
   if (tenantEnabled.value && tenantId.value && tenantId.value !== userStore.tenantId) {
-    userStore.setTenantId(tenantId.value)
+    userStore.setTenantId(tenantId.value != null ? String(tenantId.value) : undefined)
   }
   fetchTenantList()
 })

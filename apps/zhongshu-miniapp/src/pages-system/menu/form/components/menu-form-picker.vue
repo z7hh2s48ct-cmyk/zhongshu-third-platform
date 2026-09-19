@@ -23,7 +23,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   label?: string
   labelWidth?: string
-  modelValue?: number
+  modelValue?: string
   placeholder?: string
   prop?: string
 }>(), {
@@ -35,11 +35,11 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: number): void
+  (e: 'update:modelValue', value: string): void
 }>()
 
 const menuList = ref<Menu[]>([]) // 菜单列表
-const selectedValue = ref<number | undefined>(0) // 当前选中菜单编号
+const selectedValue = ref<string>('0') // 当前选中菜单编号
 const treeProps = {
   children: 'children',
   label: 'name',
@@ -48,7 +48,7 @@ const treeProps = {
 
 const menuOptions = computed(() => { // 菜单树形选项
   return [
-    { id: 0, name: '主类目' },
+    { id: '0', name: '主类目' },
     ...handleTree(menuList.value),
   ]
 })
@@ -57,14 +57,14 @@ const menuOptions = computed(() => { // 菜单树形选项
 watch(
   () => props.modelValue,
   (val) => {
-    selectedValue.value = val ?? 0
+    selectedValue.value = val ?? '0'
   },
   { immediate: true },
 )
 
 /** 监听选中值变化，更新外部值 */
 watch(selectedValue, (value) => {
-  emit('update:modelValue', value === undefined ? 0 : Number(value))
+  emit('update:modelValue', value)
 })
 
 /** 加载菜单列表 */

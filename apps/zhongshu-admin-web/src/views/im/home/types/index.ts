@@ -303,7 +303,7 @@ export interface User {
   nickname?: string
   avatar?: string
   sex?: number
-  deptId?: number
+  deptId?: string
   deptName?: string
 }
 

@@ -78,7 +78,7 @@ definePage({
 })
 
 const toast = useToast()
-const dataSourceConfigId = ref<number>() // 选中数据源
+const dataSourceConfigId = ref<string>() // 选中数据源
 const searchName = ref('') // 表名搜索
 const tables = ref<CodegenDbTable[]>([]) // 可导入的表
 const selected = ref<string[]>([]) // 已选表名

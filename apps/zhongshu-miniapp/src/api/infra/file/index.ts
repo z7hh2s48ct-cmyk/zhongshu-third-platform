@@ -6,8 +6,8 @@ import { getEnvBaseUrl } from '@/utils'
 
 /** 文件信息 */
 export interface FileVO {
-  id?: number
-  configId?: number
+  id?: string
+  configId?: string
   path: string
   name?: string
   url?: string
@@ -18,7 +18,7 @@ export interface FileVO {
 
 /** 文件预签名信息 */
 export interface FilePresignedUrlRespVO {
-  configId: number // 配置编号
+  configId: string // 配置编号
   uploadUrl: string // 文件上传 URL
   url: string // 文件访问 URL
   path: string // 文件路径
@@ -26,7 +26,7 @@ export interface FilePresignedUrlRespVO {
 
 /** 创建文件请求 */
 export interface FileCreateReqVO {
-  configId: number
+  configId: string
   url: string
   path: string
   name: string
@@ -50,12 +50,12 @@ export function getFilePage(params: PageParam) {
 }
 
 /** 获取文件详情 */
-export function getFile(id: number) {
+export function getFile(id: string) {
   return http.get<FileVO>(`/infra/file/get?id=${id}`)
 }
 
 /** 删除文件 */
-export function deleteFile(id: number) {
+export function deleteFile(id: string) {
   return http.delete(`/infra/file/delete?id=${id}`)
 }
 
@@ -132,7 +132,7 @@ export interface FileUploadCredentialCreateRespVO {
 
 /** ZS-FILE-004.A：交付票据签发请求（主体绑定，fileId + 用途）。 */
 export interface FileDeliveryTicketIssueReqVO {
-  fileId: number
+  fileId: string
   purpose: string
 }
 

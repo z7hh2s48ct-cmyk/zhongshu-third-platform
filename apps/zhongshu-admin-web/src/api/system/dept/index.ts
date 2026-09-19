@@ -1,12 +1,12 @@
 import request from '@/config/axios'
 
 export interface DeptVO {
-  id: number
+  id: string
   name: string
-  parentId: number
+  parentId: string
   status: number
   sort: number
-  leaderUserId: number
+  leaderUserId: string
   phone: string
   email: string
   createTime: Date
@@ -29,7 +29,7 @@ export const getDeptPage = async (params: PageParam) => {
 }
 
 // 查询部门详情
-export const getDept = (id: number) => {
+export const getDept = (id: string) => {
   return request.get({ url: '/system/dept/get?id=' + id })
 }
 
@@ -44,11 +44,11 @@ export const updateDept = (data: DeptVO) => {
 }
 
 // 删除部门
-export const deleteDept = async (id: number) => {
+export const deleteDept = async (id: string) => {
   return await request.delete({ url: '/system/dept/delete?id=' + id })
 }
 
 // 批量删除部门
-export const deleteDeptList = async (ids: number[]) => {
+export const deleteDeptList = async (ids: string[]) => {
   return await request.delete({ url: '/system/dept/delete-list', params: { ids: ids.join(',') } })
 }

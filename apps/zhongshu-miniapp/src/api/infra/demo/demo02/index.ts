@@ -2,9 +2,9 @@ import { http } from '@/http/http'
 
 /** 示例分类（树表） */
 export interface Demo02Category {
-  id?: number
+  id?: string
   name: string // 名字
-  parentId?: number // 父级编号
+  parentId?: string // 父级编号
   createTime?: number // 创建时间
   children?: Demo02Category[] // 子分类（前端建树用）
 }
@@ -15,7 +15,7 @@ export function getDemo02CategoryList(params?: { name?: string }) {
 }
 
 /** 获取示例分类详情 */
-export function getDemo02Category(id: number) {
+export function getDemo02Category(id: string) {
   return http.get<Demo02Category>(`/infra/demo02-category/get?id=${id}`)
 }
 
@@ -30,6 +30,6 @@ export function updateDemo02Category(data: Demo02Category) {
 }
 
 /** 删除示例分类 */
-export function deleteDemo02Category(id: number) {
+export function deleteDemo02Category(id: string) {
   return http.delete<boolean>(`/infra/demo02-category/delete?id=${id}`)
 }

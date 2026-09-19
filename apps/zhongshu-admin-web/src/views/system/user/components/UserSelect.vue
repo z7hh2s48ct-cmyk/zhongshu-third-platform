@@ -68,7 +68,7 @@ const handleFilter = (query: string) => {
 }
 
 /** 选中变化 */
-const handleChange = (val: number | undefined) => {
+const handleChange = (val: string | undefined) => {
   const item = allList.value.find((o) => o.id === val)
   emit('change', item)
 }

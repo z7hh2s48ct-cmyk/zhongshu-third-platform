@@ -17,7 +17,7 @@ import { onMounted, ref } from 'vue'
 import { getDataSourceConfigList } from '@/api/infra/data-source-config'
 
 const props = withDefaults(defineProps<{
-  modelValue?: number // 选中的数据源编号
+  modelValue?: string // 选中的数据源编号
   label?: string // 字段标题
   prop?: string // wd-form 校验字段名
 }>(), {
@@ -26,14 +26,14 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number]
-  'change': [value: number]
+  'update:modelValue': [value: string]
+  'change': [value: string]
 }>()
 
 const list = ref<DataSourceConfig[]>([]) // 数据源列表
 
 /** 选中数据源（同步 v-model + 抛 change） */
-function handleConfirm(value: number) {
+function handleConfirm(value: string) {
   emit('update:modelValue', value)
   emit('change', value)
 }

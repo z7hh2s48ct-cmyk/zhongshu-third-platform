@@ -78,7 +78,7 @@
     <EmployeeList
       v-else-if="activeTab === 'employees' && formData.id"
       class="min-h-0 flex-1"
-      :dept-id="formData.id"
+      :dept-id="Number(formData.id)"
     />
 
     <!-- 底部操作（跳转系统部门管理） -->
@@ -161,7 +161,7 @@ async function getDetail() {
   }
   const deptId = Number(props.id)
   const [deptData, deptList, userList, statisticsList] = await Promise.all([
-    getDept(deptId),
+    getDept(String(deptId)),
     getSimpleDeptList(),
     getSimpleUserList(),
     getEmployeeDeptStatistics(),

@@ -75,19 +75,19 @@ const loadDeptTree = async () => {
 }
 
 // 根据 ID 获取部门名称
-const getDeptNameById = (id: number): string | undefined => {
+const getDeptNameById = (id: string): string | undefined => {
   const dept = deptList.value.find((item) => item.id === id)
   return dept?.name
 }
 
 // 根据名称获取部门 ID
-const getDeptIdByName = (name: string): number | undefined => {
+const getDeptIdByName = (name: string): string | undefined => {
   const dept = deptList.value.find((item) => item.name === name)
   return dept?.id
 }
 
 // 处理选中值变化
-const handleChange = (value: number | number[] | undefined) => {
+const handleChange = (value: string | string[] | undefined) => {
   if (value === undefined || value === null) {
     emit('update:modelValue', props.multiple ? [] : undefined)
     return
@@ -127,7 +127,7 @@ watch(
       if (props.multiple && Array.isArray(newValue)) {
         const ids = (newValue as string[])
           .map((name) => getDeptIdByName(name))
-          .filter(Boolean) as number[]
+          .filter(Boolean) as string[]
         selectedValue.value = ids
       } else if (!props.multiple && typeof newValue === 'string') {
         const id = getDeptIdByName(newValue)
@@ -174,7 +174,7 @@ const setDefaultValue = () => {
   const deptId = user?.deptId
 
   // 处理 deptId 为空或 0 的边界情况
-  if (!deptId || deptId === 0) return
+  if (!deptId || deptId === '0') return
 
   // 根据多选模式决定默认值格式
   const defaultValue = props.multiple ? [deptId] : deptId
