@@ -84,7 +84,8 @@ const getTagColor = computed(() => (getIsOpen.value ? 'success' : 'red')) // Web
 
 /** 发起 WebSocket 连接（票据为一次性语义，autoReconnect 复用旧地址会被拒，须换票重连） */
 const { status, data, send, close, open } = useWebSocket(server, {
-  autoReconnect: false,
+  immediate: false, // r0 P2-7：显式建连，防空 URL 初始连接
+  autoConnect: false, // r0 P2-7：URL 变化不自动建连（否则同票据双建连、双消费）
   heartbeat: true
 })
 

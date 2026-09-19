@@ -9,6 +9,7 @@ import { useUserStore } from '@/store/user'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getWsTicket } from '@/api/login'
+import { isDoubleTokenRes } from '@/api/types/login'
 import { getEnvBaseUrlRoot } from '@/utils'
 import {
   ImConversationType,
@@ -47,6 +48,8 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', () => {
   let reconnectAttempts = 0
   let resyncOnReopen = false // 断线重连成功后需补拉一次，补齐断线期间漏收的消息
   let connectionUrl = '' // 当前连接地址；用于复用同一令牌的连接
+  let connectionIdentity = '' // 当前连接的凭据主体（r0 P2-5：凭据替换须替换旧连接）
+  let connectGeneration = 0 // 连接代际（r0 P1-3：取票等待期间的 disconnect 令本次作废）
   let connectionOwner = {} // 当前连接 owner；忽略已被替换连接的迟到回调
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -571,30 +574,44 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', () => {
 
   /** 建立连接（幂等） */
   async function connect() {
-    // 未登录静默跳过（原 buildWsUrl 无 token 同语义；票据由登录主体签发，未登录取票必失败）
+    // 未登录静默跳过（票据由登录主体签发，未登录取票必失败）
     const tokenStore = useTokenStore()
     if (!tokenStore.tokenInfo) {
       return
     }
-    // 处于 CONNECTING / OPEN 时直接复用，避免页面 onShow 叠加连接
-    // （ZS-LOGIN-001.B：地址含一次性票据每次不同，去重键从 URL 改为连接状态）
-    if (socketTask && (isConnecting.value || isConnected.value)) {
+    // r0 P2-5：连接身份 = 当前凭据主体——凭据替换（切账号/重登）时须替换旧连接，
+    // 不能仅按连接状态复用（否则新身份拿不到连接、旧身份连接被持续复用）
+    const identity = isDoubleTokenRes(tokenStore.tokenInfo)
+      ? tokenStore.tokenInfo.refreshToken
+      : tokenStore.updateNowTime().validToken
+    // 身份未变且处于 CONNECTING / OPEN 时直接复用，避免页面 onShow 叠加连接
+    // （ZS-LOGIN-001.B：地址含一次性票据每次不同，去重键从 URL 改为「身份+连接状态」）
+    if (socketTask && connectionIdentity === identity
+      && (isConnecting.value || isConnected.value)) {
       return
     }
+    // r0 P1-4：用户显式发起连接，解除登出断开留下的封锁
+    manualClosed = false
+    // r0 P1-3：递增连接代际——取票等待期间的 disconnect 令本次作废
+    const generation = ++connectGeneration
     // ZS-LOGIN-001.B：建连前以登录态换一次性短时票据（GETDEL 原子消费、默认 60s 过期），
     // 握手带 ?ticket=，不再以刷新令牌作握手凭据；取票失败走重连退避（下次 connect 重新取票）
     let ticket: string
     try {
       ticket = await getWsTicket()
     } catch {
-      reconnect()
+      if (generation === connectGeneration) {
+        reconnect()
+      }
       return
     }
-    // 取票等待期间状态可能已变化：二次复检
-    if (manualClosed || reconnectTimer
+    // r0 P1-3：取票等待期间 disconnect（登出/切账号）→ 本次作废，不建连（旧身份不复活）；
+    // r0 P1-4：manualClosed（登出断开标志）不得在被动路径复位
+    if (generation !== connectGeneration || manualClosed || reconnectTimer
       || (socketTask && (isConnecting.value || isConnected.value))) {
       return
     }
+    connectionIdentity = identity
     const url = buildWsUrl(ticket)
     // 令牌变化时替换旧连接；旧连接的迟到回调由 owner 隔离
     const previousTask = socketTask
@@ -692,6 +709,7 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', () => {
     socketTask?.close({})
     socketTask = null
     connectionUrl = ''
+    connectionIdentity = ''
     isConnecting.value = false
     isConnected.value = false
     frameProcessingTail = Promise.resolve()

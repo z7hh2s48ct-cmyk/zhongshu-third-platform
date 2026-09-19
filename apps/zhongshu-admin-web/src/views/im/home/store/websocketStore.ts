@@ -2,6 +2,9 @@ import { defineStore, acceptHMRUpdate } from 'pinia'
 import { getCurrentUserId } from '@/utils/auth'
 import { getWsHandshakeTicket } from '@/api/login'
 
+// 连接代际（模块级单例）：取票 await 期间的 disconnect 令旧代际失效，防止旧身份连接复活（r0 P1-3）
+let connectGeneration = 0
+
 import {
   ImWebSocketMessageType,
   ImMessageStatus,
@@ -220,6 +223,8 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
      * socket 实例即连接 owner，旧连接回调不得进入新连接
      */
     async connect() {
+      // r0 P1-3：递增连接代际——任何后续 disconnect 都会使本次取票作废
+      const generation = ++connectGeneration
       // 登录态校验：票据以登录主体签发（ZS-LOGIN-001.B 起 WS 握手不再携带刷新令牌）
       const currentUserId = getCurrentUserId()
       if (!currentUserId) {
@@ -245,8 +250,15 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
       try {
         ticket = await getWsHandshakeTicket()
       } catch (error) {
-        console.warn('[IM WS] 获取握手票据失败，走重连退避', error)
-        this.reconnect()
+        if (generation === connectGeneration) {
+          console.warn('[IM WS] 获取握手票据失败，走重连退避', error)
+          this.reconnect()
+        }
+        return
+      }
+      // r0 P1-3：取票期间发生 disconnect（切账号/退出）→ 本次票据作废，不建连（旧身份不复活）
+      if (generation !== connectGeneration) {
+        console.warn('[IM WS] 取票期间连接已被断开，丢弃本次票据')
         return
       }
       // 取票等待期间可能有并发连接建立：二次复检，避免叠加
@@ -1060,6 +1072,8 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
 
     /** 主动断开（切换用户 / 退出登录时用）：关 socket + 停心跳 + 取消待重连 */
     disconnect() {
+      // r0 P1-3：使取票等待中的 connect 作废（旧身份连接不得复活）
+      connectGeneration++
       if (this.socket) {
         // close() 异步触发 onclose / onerror，回调里会无条件 reconnect；
         // 主动关闭路径必须先全部解绑，否则 onclose 会引发自动重连，CONNECTING 期间的 in-flight message 也可能被老 onmessage 投递到 stale 上下文

@@ -100,11 +100,13 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     /**
      * ZS-LOGIN-001：令牌用途分离门控开关——是否允许把「刷新令牌」静默当作「访问令牌」使用。
      * <p>代码默认 {@code false}（安全默认：{@link #getAccessToken} 只认访问令牌；刷新令牌当访问令牌用 → 返回 null → checkAccessToken 抛 UNAUTHORIZED）。
-     * <p><b>现网为何临时置 true：</b>admin-web IM 与 miniapp IM/客服的 WebSocket 握手以 {@code ?token=<refreshToken>} 作凭据
-     * （浏览器 WebSocket 不能自定义 Header，只能拼 URL 参数），依赖本回退放行；须在 LOGIN-001.B（短时握手票据 + 前端 WS 迁移）完成前保持 true 以不破坏现网连接。
+     * <p><b>迁移状态（ZS-LOGIN-001.B 已交付）：</b>admin-web/miniapp 的 WebSocket 握手已迁移为一次性短时票据
+     * （{@code POST /system/auth/ws-ticket} 换票 → 握手带 {@code ?ticket=}），生产 application.yaml 的
+     * {@code refresh-token-as-access-token-enabled: true} 键已删除，本开关保持代码默认 {@code false}；
+     * 兼容分支与自愈 evict 逻辑保留（应对历史 gate=true 期间的存量合成令牌缓存条目）。
      * 注：积木报表走 {@code X-Access-Token} 真访问令牌，<b>不</b>依赖本回退。
-     * <p><b>开启风险：</b>转换出的"访问令牌"继承刷新令牌 TTL（default client 达 30 天）、不落 system_oauth2_access_token 表
-     * （管理端令牌分页/踢出不可见）、{@link #removeAccessToken(String)} 无法撤销，仅随 Redis TTL 自然过期。故仅为迁移期临时兼容。
+     * <p><b>开启风险（如未来误开）：</b>转换出的"访问令牌"继承刷新令牌 TTL（default client 达 30 天）、不落 system_oauth2_access_token 表
+     * （管理端令牌分页/踢出不可见）、{@link #removeAccessToken(String)} 无法撤销，仅随 Redis TTL 自然过期。
      */
     @Value("${zszj.security.refresh-token-as-access-token-enabled:false}")
     private boolean refreshTokenAsAccessTokenEnabled;

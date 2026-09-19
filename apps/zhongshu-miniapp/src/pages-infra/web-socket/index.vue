@@ -250,7 +250,9 @@ async function connect() {
   try {
     ticket = await getWsTicket()
   } catch {
+    // r0 P2-6：取票失败不截断重试链，接回既有退避（计一次尝试）
     toast.error('获取握手票据失败')
+    scheduleReconnect()
     return
   }
   if (socketTask.value) {

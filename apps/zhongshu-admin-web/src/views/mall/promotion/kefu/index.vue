@@ -26,9 +26,31 @@ const kefuStore = useMallKefuStore() // 客服缓存
 const server = ref('') // WebSocket 服务地址（开启连接时以一次性短时票据动态拼装，ZS-LOGIN-001.B）
 
 /** 发起 WebSocket 连接（票据为一次性语义，autoReconnect 复用旧地址会被拒，须换票重连） */
-const { data, close, open } = useWebSocket(server, {
-  autoReconnect: false,
+const { status, data, close, open } = useWebSocket(server, {
+  immediate: false, // r0 P2-7：显式建连，防空 URL 初始连接
+  autoConnect: false, // r0 P2-7：URL 变化不自动建连（否则同票据双建连、双消费）
+  autoReconnect: false, // 票据一次性语义：重连须换票（下方退避链）
   heartbeat: true
+})
+
+// r0 P2-6：断线/取票失败统一走退避换票重连
+let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let wsReconnectAttempts = 0
+let wsDisposed = false
+const scheduleKefuWsReconnect = () => {
+  if (wsDisposed || wsReconnectTimer || getIsOpen.value) return
+  const delay = Math.min(1000 * 2 ** Math.min(wsReconnectAttempts, 5), 30000)
+  wsReconnectAttempts++
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null
+    connectWithTicket()
+  }, delay)
+}
+watch(getIsOpen, (openNow) => {
+  if (openNow) wsReconnectAttempts = 0
+})
+watch(status, (s) => {
+  if (s === 'CLOSED') scheduleKefuWsReconnect()
 })
 
 /** 取票并建连：POST /system/auth/ws-ticket（登录态）换一次性票据 → ?ticket= 握手 */
@@ -43,6 +65,7 @@ const connectWithTicket = async () => {
   } catch (error) {
     console.error(error)
     message.error('获取 WebSocket 握手票据失败')
+    scheduleKefuWsReconnect() // r0 P2-6：取票失败也走退避换票重连
   }
 }
 
@@ -110,6 +133,11 @@ onMounted(() => {
 
 /** 销毁 */
 onBeforeUnmount(() => {
+  wsDisposed = true // r0 P2-6：卸载后不再退避重连
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = null
+  }
   // 关闭 websocket 连接
   close()
 })

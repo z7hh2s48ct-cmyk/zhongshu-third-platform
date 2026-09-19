@@ -55,7 +55,8 @@ public class OAuth2WsTicketHandshakeInterceptor implements HandshakeInterceptor 
         }
         LoginUser loginUser = wsTicketService.consumeTicket(ticket);
         if (loginUser == null) {
-            log.warn("[beforeHandshake][WS 握手票据无效或已被消费（一次性语义），拒绝握手 uri={}]", request.getURI());
+            // r0 P3：不记录 URI（query 含票据本体）；此处票据已消费或不存在，通常已失效
+            log.warn("[beforeHandshake][WS 握手票据无效或已被消费（一次性语义），拒绝握手]");
             return false;
         }
         attributes.put(ATTRIBUTE_LOGIN_USER, loginUser);
