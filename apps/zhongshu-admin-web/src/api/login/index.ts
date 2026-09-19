@@ -89,3 +89,9 @@ export const reqCheck = (data: any) => {
 export const smsResetPassword = (data: any) => {
   return request.post({ url: '/system/auth/reset-password', data })
 }
+
+// 获取 WebSocket 握手一次性短时票据（ZS-LOGIN-001.B：WS 握手不再携带刷新令牌，
+// 建连前以 Authorization 头换一次性票据，握手带 ?ticket=，GETDEL 原子消费、默认 60s 过期）
+export const getWsHandshakeTicket = (): Promise<string> => {
+  return request.post({ url: '/system/auth/ws-ticket' })
+}

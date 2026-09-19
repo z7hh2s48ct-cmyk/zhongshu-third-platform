@@ -13,7 +13,7 @@
 import { KeFuConversationList, KeFuMessageList, MemberInfo } from './components'
 import { WebSocketMessageTypeConstants } from './components/tools/constants'
 import { KeFuConversationRespVO } from '@/api/mall/promotion/kefu/conversation'
-import { getRefreshToken } from '@/utils/auth'
+import { getWsHandshakeTicket } from '@/api/login'
 import { useWebSocket } from '@vueuse/core'
 import { useMallKefuStore } from '@/store/modules/mall/kefu'
 
@@ -23,17 +23,28 @@ const message = useMessage() // 消息弹窗
 const kefuStore = useMallKefuStore() // 客服缓存
 
 // ======================= WebSocket start =======================
-const server = ref(
-  (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
-    '?token=' +
-    getRefreshToken() // 使用 getRefreshToken() 方法，而不使用 getAccessToken() 方法的原因：WebSocket 无法方便的刷新访问令牌
-) // WebSocket 服务地址
+const server = ref('') // WebSocket 服务地址（开启连接时以一次性短时票据动态拼装，ZS-LOGIN-001.B）
 
-/** 发起 WebSocket 连接 */
-const { data, close, open } = useWebSocket(server.value, {
-  autoReconnect: true,
+/** 发起 WebSocket 连接（票据为一次性语义，autoReconnect 复用旧地址会被拒，须换票重连） */
+const { data, close, open } = useWebSocket(server, {
+  autoReconnect: false,
   heartbeat: true
 })
+
+/** 取票并建连：POST /system/auth/ws-ticket（登录态）换一次性票据 → ?ticket= 握手 */
+const connectWithTicket = async () => {
+  try {
+    const ticket = await getWsHandshakeTicket()
+    server.value =
+      (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
+      '?ticket=' +
+      encodeURIComponent(ticket)
+    open()
+  } catch (error) {
+    console.error(error)
+    message.error('获取 WebSocket 握手票据失败')
+  }
+}
 
 /** 监听 WebSocket 数据 */
 watch(
@@ -93,8 +104,8 @@ onMounted(() => {
   kefuStore.setConversationList().then(() => {
     keFuConversationRef.value?.calculationLastMessageTime()
   })
-  // 打开 websocket 连接
-  open()
+  // 打开 websocket 连接（先取一次性票据）
+  connectWithTicket()
 })
 
 /** 销毁 */

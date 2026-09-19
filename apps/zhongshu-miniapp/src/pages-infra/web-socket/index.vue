@@ -170,8 +170,7 @@ import type { User } from '@/api/system/user'
 import { useToast } from '@wot-ui/ui/components/wd-toast'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getSimpleUserList } from '@/api/system/user'
-import { isDoubleTokenRes } from '@/api/types/login'
-import { useTokenStore } from '@/store/token'
+import { getWsTicket } from '@/api/login'
 import { getEnvBaseUrlRoot, navigateBackPlus } from '@/utils'
 import { formatDateTime } from '@/utils/date'
 
@@ -183,7 +182,6 @@ definePage({
 })
 
 // ======================= 状态定义 =======================
-const tokenStore = useTokenStore()
 const toast = useToast()
 
 // WebSocket 相关状态
@@ -197,15 +195,13 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectAttempts = 0
 const MAX_RECONNECT_ATTEMPTS = 5
 
-// 服务地址
-const serverUrl = computed(() => {
-  const baseUrl = getEnvBaseUrlRoot()
-  const wsUrl = baseUrl.replace('http', 'ws')
-  const tokenInfo = tokenStore.tokenInfo
-  // 双 token 用 refreshToken，单 token 回退 validToken（读 getter，不在 computed 里写副作用）
-  const token = isDoubleTokenRes(tokenInfo) ? tokenInfo.refreshToken : tokenStore.validToken
-  return `${wsUrl}/infra/ws?token=${token}`
-})
+// 服务地址（ZS-LOGIN-001.B：开启连接时以一次性短时票据动态拼装，握手带 ?ticket=）
+const serverUrl = ref('')
+
+function buildWsUrlWithTicket(ticket: string): string {
+  const wsUrl = getEnvBaseUrlRoot().replace('http', 'ws')
+  return `${wsUrl}/infra/ws?ticket=${encodeURIComponent(ticket)}`
+}
 
 // 消息相关状态
 interface Message {
@@ -243,11 +239,24 @@ const selectedUserLabel = computed(() => {
 // ======================= WebSocket 方法 =======================
 
 /** 建立 WebSocket 连接 */
-function connect() {
+async function connect() {
   if (socketTask.value) {
     return
   }
   manualClose.value = false
+
+  // ZS-LOGIN-001.B：建连前以登录态换一次性短时票据（GETDEL 原子消费、默认 60s 过期）
+  let ticket: string
+  try {
+    ticket = await getWsTicket()
+  } catch {
+    toast.error('获取握手票据失败')
+    return
+  }
+  if (socketTask.value) {
+    return
+  }
+  serverUrl.value = buildWsUrlWithTicket(ticket)
 
   // 1.1 发起连接请求
   socketTask.value = uni.connectSocket({

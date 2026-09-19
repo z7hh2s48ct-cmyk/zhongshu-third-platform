@@ -145,3 +145,9 @@ export function socialLogin(data: AuthSocialLoginReq) {
     hideErrorToast: true,
   })
 }
+
+// 获取 WebSocket 握手一次性短时票据（ZS-LOGIN-001.B：WS 握手不再携带刷新令牌，
+// 建连前以登录态换票，握手带 ?ticket=，GETDEL 原子消费、默认 60s 过期）
+export function getWsTicket() {
+  return http.post<string>('/system/auth/ws-ticket')
+}

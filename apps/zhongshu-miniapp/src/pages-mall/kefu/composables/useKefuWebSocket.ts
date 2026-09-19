@@ -2,7 +2,7 @@
 // 处理两类帧：kefu_message_type（新消息）、kefu_message_read_status_change（管理员已读回执）
 // 收到后广播 mall:kefu:message / mall:kefu:read 给客服页，由页面更新消息与会话列表
 
-import { useTokenStore } from '@/store/token'
+import { getWsTicket } from '@/api/login'
 import { getEnvBaseUrlRoot } from '@/utils'
 
 /** 客服新消息帧 type */
@@ -17,13 +17,10 @@ let reconnectAttempts = 0
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 拼接 ws 地址 */
-function buildUrl(): string {
+/** 拼接 ws 地址（ZS-LOGIN-001.B：地址含一次性票据，每次建连现取现拼） */
+function buildUrl(ticket: string): string {
   const wsBase = getEnvBaseUrlRoot().replace('http', 'ws')
-  const tokenStore = useTokenStore()
-  const tokenInfo = tokenStore.tokenInfo as any
-  const token = tokenInfo?.refreshToken || tokenStore.updateNowTime().validToken
-  return `${wsBase}/infra/ws?token=${token}`
+  return `${wsBase}/infra/ws?ticket=${encodeURIComponent(ticket)}`
 }
 
 /** 启动心跳 */
@@ -84,13 +81,26 @@ function handleFrame(data: string) {
 }
 
 /** 建立连接（幂等：已连接或连接中则不重复建连） */
-export function connectKefuWebSocket() {
+export async function connectKefuWebSocket() {
   // socketTask 在 connectSocket 后同步赋值，故「连接中」也会拦住重复建连
   if (socketTask) {
     return
   }
   manualClosed = false
-  const url = buildUrl()
+  // ZS-LOGIN-001.B：建连前以登录态换一次性短时票据（GETDEL 原子消费、默认 60s 过期），
+  // 握手带 ?ticket=，不再以刷新令牌作握手凭据；取票失败走重连退避（下次建连重新取票）
+  let ticket: string
+  try {
+    ticket = await getWsTicket()
+  } catch {
+    scheduleReconnect()
+    return
+  }
+  // 取票等待期间可能已有连接建立：二次复检
+  if (socketTask) {
+    return
+  }
+  const url = buildUrl(ticket)
   const task = uni.connectSocket({
     url,
     fail: () => {

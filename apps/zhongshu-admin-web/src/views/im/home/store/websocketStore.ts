@@ -1,5 +1,6 @@
 import { defineStore, acceptHMRUpdate } from 'pinia'
-import { getCurrentUserId, getRefreshToken } from '@/utils/auth'
+import { getCurrentUserId } from '@/utils/auth'
+import { getWsHandshakeTicket } from '@/api/login'
 
 import {
   ImWebSocketMessageType,
@@ -218,11 +219,10 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
      *
      * socket 实例即连接 owner，旧连接回调不得进入新连接
      */
-    connect() {
-      // 鉴权用 refreshToken（生命周期更长；access token 过期后服务端会通过 frame 通知重登）
-      const refreshToken = getRefreshToken()
+    async connect() {
+      // 登录态校验：票据以登录主体签发（ZS-LOGIN-001.B 起 WS 握手不再携带刷新令牌）
       const currentUserId = getCurrentUserId()
-      if (!refreshToken || !currentUserId) {
+      if (!currentUserId) {
         console.warn('[IM WS] 登录信息不完整，跳过连接')
         return
       }
@@ -239,7 +239,26 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
       if (existingSocket) {
         this.disconnect()
       }
-      const url = `${this.buildWsUrl()}/infra/ws?token=${refreshToken}`
+      // ZS-LOGIN-001.B：建连前以登录态换一次性短时票据（GETDEL 原子消费、默认 60s 过期），
+      // 握手带 ?ticket=，不再以刷新令牌充当访问令牌；取票失败走既有重连退避（下次 connect 重新取票）
+      let ticket: string
+      try {
+        ticket = await getWsHandshakeTicket()
+      } catch (error) {
+        console.warn('[IM WS] 获取握手票据失败，走重连退避', error)
+        this.reconnect()
+        return
+      }
+      // 取票等待期间可能有并发连接建立：二次复检，避免叠加
+      const socketAgain = this.socket
+      if (
+        socketAgain &&
+        (socketAgain.readyState === WebSocket.OPEN ||
+          socketAgain.readyState === WebSocket.CONNECTING)
+      ) {
+        return
+      }
+      const url = `${this.buildWsUrl()}/infra/ws?ticket=${encodeURIComponent(ticket)}`
       const socket = new WebSocket(url)
       this.socket = socket
       const isActive = () => this.socket === socket

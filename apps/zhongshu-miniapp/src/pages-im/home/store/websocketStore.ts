@@ -8,7 +8,7 @@ import { useTokenStore } from '@/store/token'
 import { useUserStore } from '@/store/user'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { isDoubleTokenRes } from '@/api/types/login'
+import { getWsTicket } from '@/api/login'
 import { getEnvBaseUrlRoot } from '@/utils'
 import {
   ImConversationType,
@@ -52,17 +52,10 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', () => {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let frameProcessingTail: Promise<void> = Promise.resolve() // 按连接顺序串行处理 WebSocket 帧
 
-  /** 拼接 ws 地址 */
-  function buildWsUrl(): string | undefined {
+  /** 拼接 ws 地址（ZS-LOGIN-001.B：地址含一次性票据，每次 connect 现取现拼，不作复用键） */
+  function buildWsUrl(ticket: string): string {
     const wsBase = getEnvBaseUrlRoot().replace(/^http/, 'ws')
-    const tokenStore = useTokenStore()
-    const token = isDoubleTokenRes(tokenStore.tokenInfo)
-      ? tokenStore.tokenInfo.refreshToken
-      : tokenStore.updateNowTime().validToken
-    if (!token) {
-      return undefined
-    }
-    return `${wsBase}/infra/ws?token=${encodeURIComponent(token)}`
+    return `${wsBase}/infra/ws?ticket=${encodeURIComponent(ticket)}`
   }
 
   /** 启动心跳 */
@@ -577,16 +570,32 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', () => {
   }
 
   /** 建立连接（幂等） */
-  function connect() {
-    const url = buildWsUrl()
-    if (!url) {
+  async function connect() {
+    // 未登录静默跳过（原 buildWsUrl 无 token 同语义；票据由登录主体签发，未登录取票必失败）
+    const tokenStore = useTokenStore()
+    if (!tokenStore.tokenInfo) {
       return
     }
-    // 同一地址处于 CONNECTING / OPEN 时直接复用，避免页面 onShow 叠加连接
-    if (socketTask && connectionUrl === url
-      && (isConnecting.value || isConnected.value)) {
+    // 处于 CONNECTING / OPEN 时直接复用，避免页面 onShow 叠加连接
+    // （ZS-LOGIN-001.B：地址含一次性票据每次不同，去重键从 URL 改为连接状态）
+    if (socketTask && (isConnecting.value || isConnected.value)) {
       return
     }
+    // ZS-LOGIN-001.B：建连前以登录态换一次性短时票据（GETDEL 原子消费、默认 60s 过期），
+    // 握手带 ?ticket=，不再以刷新令牌作握手凭据；取票失败走重连退避（下次 connect 重新取票）
+    let ticket: string
+    try {
+      ticket = await getWsTicket()
+    } catch {
+      reconnect()
+      return
+    }
+    // 取票等待期间状态可能已变化：二次复检
+    if (manualClosed || reconnectTimer
+      || (socketTask && (isConnecting.value || isConnected.value))) {
+      return
+    }
+    const url = buildWsUrl(ticket)
     // 令牌变化时替换旧连接；旧连接的迟到回调由 owner 隔离
     const previousTask = socketTask
     const owner = {}

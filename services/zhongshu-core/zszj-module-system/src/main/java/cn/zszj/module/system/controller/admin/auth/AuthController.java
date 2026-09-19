@@ -17,6 +17,7 @@ import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.enums.logger.LoginLogTypeEnum;
 import cn.zszj.module.system.service.auth.AdminAuthService;
+import cn.zszj.module.system.service.oauth2.OAuth2WsTicketService;
 import cn.zszj.module.system.service.permission.MenuService;
 import cn.zszj.module.system.service.permission.PermissionService;
 import cn.zszj.module.system.service.permission.RoleService;
@@ -61,6 +62,8 @@ public class AuthController {
     private PermissionService permissionService;
     @Resource
     private SocialClientService socialClientService;
+    @Resource
+    private OAuth2WsTicketService wsTicketService;
 
     @Resource
     private SecurityProperties securityProperties;
@@ -95,6 +98,14 @@ public class AuthController {
     @Parameter(name = "refreshToken", description = "刷新令牌", required = true)
     public CommonResult<AuthLoginRespVO> refreshToken(@RequestParam("refreshToken") String refreshToken) {
         return success(authService.refreshToken(refreshToken));
+    }
+
+    @PostMapping("/ws-ticket")
+    @Operation(summary = "获取 WebSocket 握手一次性短时票据")
+    public CommonResult<String> createWsTicket() {
+        // ZS-LOGIN-001.B：WS 握手不再携带刷新令牌（?token= 迁移期兼容已删除）——前端建连前以
+        // Authorization 头调本端点换一次性短时票据（默认 60s、GETDEL 原子消费），握手带 ?ticket=
+        return success(wsTicketService.issueTicket());
     }
 
     @GetMapping("/get-permission-info")
