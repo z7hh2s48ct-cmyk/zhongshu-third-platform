@@ -213,6 +213,9 @@
 
 | ZS-SYS-001.B 七类基础管理 Web 走查（B06 分批子项） | `5bd57b55`（feat/sys-001-b） | 2 files | ✅ 页面走查证据齐备（本项目自走查；codex 弧随卡评审待排） | [web-walkthrough-report.md](../../scripts/sys001/web-walkthrough-report.md) | 真实 PG/API 夹具 `--serve` 驻留 + 页面操作：用户 P/N、角色 P（菜单分配持久化）、菜单 P（导航一致性）、岗位/字典/配置 P 全链落库回读；公告富文本 CDP 自动化挂起如实登记（写路径 .A API 矩阵覆盖）；SEC-009.B string ID 实链佐证 |
 
+| ZS-OPS-001.D G15 双端技术联调门禁（B06 分批子项） | `8326d37c`（feat/ops-001-d） | 4 files | ✅ 门禁实跑 18/18（对账 SEC-009.B；codex 弧随卡评审待排） | [run-b06-joint-gate.mjs](../../scripts/ops/run-b06-joint-gate.mjs) | CLIENT-005.B E2E 对账 SEC-009.B ID→string（N2 VO 兼容/F1 string 化+端口可移植/FX 口径）后 18/18 全绿；G15 注册 run-local-gates（16 门禁基线），planner 17/17 |
+| ZS-BRAND-006.B 联合收口验收（B06 分批子项） | `f4adb536`（feat/brand-006-b） | 1 file | ✅ 聚合器 8/8 PASS（codex 弧随卡评审待排） | [run-brand-006b-joint-acceptance.mjs](../../scripts/brand/run-brand-006b-joint-acceptance.mjs) | 品牌门禁实跑零违规 + SYS-001.A 49/49 + CLIENT-005.B 18/18 + SYS-001.B 走查 + G15 证据链同提交闭合；--full 支持重套件实跑 |
+
 ## B09 技术准备先行评审状态
 
 | 任务 | 提交 | 文件规模 | 状态 | 评审文档 | 结论摘要 |
