@@ -606,9 +606,12 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', () => {
       return
     }
     // r0 P1-3：取票等待期间 disconnect（登出/切账号）→ 本次作废，不建连（旧身份不复活）；
-    // r0 P1-4：manualClosed（登出断开标志）不得在被动路径复位
+    // r0 P1-4：manualClosed（登出断开标志）不得在被动路径复位；
+    // r1 P2-2：二次复检须带身份条件——身份不同（凭据替换）时继续向下替换旧连接，
+    // 否则旧连接 OPEN 时新票据被无条件丢弃、A 永不关闭（codex 内存桩实证）
     if (generation !== connectGeneration || manualClosed || reconnectTimer
-      || (socketTask && (isConnecting.value || isConnected.value))) {
+      || (socketTask && connectionIdentity === identity
+        && (isConnecting.value || isConnected.value))) {
       return
     }
     connectionIdentity = identity

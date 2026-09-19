@@ -8,7 +8,6 @@ import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.framework.datapermission.core.annotation.DataPermission;
 import cn.zszj.framework.ratelimiter.core.annotation.RateLimiter;
 import cn.zszj.framework.ratelimiter.core.keyresolver.impl.ExpressionRateLimiterKeyResolver;
-import cn.zszj.framework.ratelimiter.core.keyresolver.impl.UserRateLimiterKeyResolver;
 import cn.zszj.framework.security.config.SecurityProperties;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.module.system.controller.admin.auth.vo.*;
@@ -103,16 +102,17 @@ public class AuthController {
 
     @PostMapping("/ws-ticket")
     @Operation(summary = "获取 WebSocket 握手一次性短时票据")
-    // ZS-SEC-010 同口径：按登录主体限流（票据为短时 bearer 凭据，防取票风暴刷量）
-    @RateLimiter(time = 60, count = 30, keyResolver = UserRateLimiterKeyResolver.class)
     public CommonResult<String> createWsTicket(HttpServletRequest request) {
         // ZS-LOGIN-001.B：WS 握手不再携带刷新令牌（?token= 迁移期兼容已删除）——前端建连前以
         // Authorization 头调本端点换一次性短时票据（默认 60s、GETDEL 原子消费），握手带 ?ticket=；
-        // 票据绑定当前访问令牌，消费时权威复核（登出/撤销/TTL 内过期 → 拒绝握手）
-        String accessToken = SecurityFrameworkUtils.obtainAuthorization(request,
-                securityProperties.getTokenHeader(), securityProperties.getTokenParameter(),
-                securityProperties.getTokenParameterEnabled());
-        return success(wsTicketService.issueTicket(accessToken));
+        // 票据绑定当前访问令牌，消费时权威复核（登出/撤销/TTL 内过期 → 拒绝握手）。
+        // r1 P2-8：端点级 @RateLimiter(UserRateLimiterKeyResolver) 对含 HttpServletRequest 参数的
+        // 方法会把请求对象拼进限流键（StrUtils 按包名前缀排除不覆盖 security RequestWrapper），
+        // 无法稳定按用户聚合——签发频次限制由 OAuth2WsTicketRedisDAO 按用户配额（60s ≤10 次）承担
+        return success(wsTicketService.issueTicket(
+                SecurityFrameworkUtils.obtainAuthorization(request,
+                        securityProperties.getTokenHeader(), securityProperties.getTokenParameter(),
+                        securityProperties.getTokenParameterEnabled())));
     }
 
     @GetMapping("/get-permission-info")

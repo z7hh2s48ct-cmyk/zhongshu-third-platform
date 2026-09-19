@@ -223,8 +223,6 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
      * socket 实例即连接 owner，旧连接回调不得进入新连接
      */
     async connect() {
-      // r0 P1-3：递增连接代际——任何后续 disconnect 都会使本次取票作废
-      const generation = ++connectGeneration
       // 登录态校验：票据以登录主体签发（ZS-LOGIN-001.B 起 WS 握手不再携带刷新令牌）
       const currentUserId = getCurrentUserId()
       if (!currentUserId) {
@@ -244,6 +242,9 @@ export const useImWebSocketStore = defineStore('imWebSocketStore', {
       if (existingSocket) {
         this.disconnect()
       }
+      // r0 P1-3 / r1 P2-3：旧连接清理（disconnect 会递增代际）之后才捕获本次代际——
+      // 此后任何 disconnect（切账号/退出）都使本次取票作废，防止旧身份连接复活
+      const generation = ++connectGeneration
       // ZS-LOGIN-001.B：建连前以登录态换一次性短时票据（GETDEL 原子消费、默认 60s 过期），
       // 握手带 ?ticket=，不再以刷新令牌充当访问令牌；取票失败走既有重连退避（下次 connect 重新取票）
       let ticket: string

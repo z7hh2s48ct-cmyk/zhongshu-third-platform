@@ -5,7 +5,11 @@ import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+
 import java.time.Duration;
+
+import java.util.List;
 
 /**
  * WebSocket 握手一次性短时票据的 Redis DAO（ZS-LOGIN-001.B）。
@@ -33,24 +37,33 @@ public class OAuth2WsTicketRedisDAO {
     /** 按用户未消费票据积压计数键前缀 */
     private static final String USER_TICKET_COUNT_PREFIX = "oauth2_ws_ticket_user_cnt:";
 
-    /** 单用户 60s 窗口内未消费票据上限（正常场景 ≤3 张：心跳外每次断线重连 1 张） */
-    private static final int MAX_OUTSTANDING_TICKETS_PER_USER = 10;
+    /** 单用户签发频次上限（r1 P2-8/P3：固定窗口签发限流——消费/过期不归还计数，非「未消费积压」口径） */
+    private static final int MAX_ISSUE_PER_WINDOW = 10;
+
+    /** 配额窗口秒数（与票据 TTL 同量级） */
+    private static final int QUOTA_WINDOW_SECONDS = 60;
+
+    /**
+     * INCR + EXPIRE 原子化（r1 P2-6：两步分离时，首次 INCR 后 EXPIRE 失败/进程退出会留下
+     * 永久键 → 用户被永久拒绝；本脚本对「无 TTL 的存量键」补设窗口，自愈历史脏键）。
+     */
+    private static final DefaultRedisScript<Long> INCR_WINDOW_SCRIPT = new DefaultRedisScript<>(
+            "local c = redis.call('INCR', KEYS[1]) "
+                    + "if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end "
+                    + "return c", Long.class);
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
     /**
-     * 按用户签发配额 +1（60s 窗口，与票据 TTL 对齐）。
+     * 按用户签发频次限流 +1（固定窗口 60s）。
      *
-     * @return false = 未消费票据积压超上限，应拒绝签发
+     * @return false = 窗口内签发次数超上限，应拒绝签发
      */
     public boolean tryAcquireIssueQuota(Long userId) {
         String key = USER_TICKET_COUNT_PREFIX + userId;
-        Long count = stringRedisTemplate.opsForValue().increment(key);
-        if (count != null && count == 1) {
-            stringRedisTemplate.expire(key, Duration.ofSeconds(60));
-        }
-        return count != null && count <= MAX_OUTSTANDING_TICKETS_PER_USER;
+        Long count = stringRedisTemplate.execute(INCR_WINDOW_SCRIPT, List.of(key), String.valueOf(QUOTA_WINDOW_SECONDS));
+        return count != null && count <= MAX_ISSUE_PER_WINDOW;
     }
 
     /**

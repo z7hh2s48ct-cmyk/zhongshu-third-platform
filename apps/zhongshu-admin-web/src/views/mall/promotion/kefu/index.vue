@@ -26,7 +26,7 @@ const kefuStore = useMallKefuStore() // 客服缓存
 const server = ref('') // WebSocket 服务地址（开启连接时以一次性短时票据动态拼装，ZS-LOGIN-001.B）
 
 /** 发起 WebSocket 连接（票据为一次性语义，autoReconnect 复用旧地址会被拒，须换票重连） */
-const { status, data, close, open } = useWebSocket(server, {
+const { status, ws, data, close, open } = useWebSocket(server, {
   immediate: false, // r0 P2-7：显式建连，防空 URL 初始连接
   autoConnect: false, // r0 P2-7：URL 变化不自动建连（否则同票据双建连、双消费）
   autoReconnect: false, // 票据一次性语义：重连须换票（下方退避链）
@@ -38,7 +38,8 @@ let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let wsReconnectAttempts = 0
 let wsDisposed = false
 const scheduleKefuWsReconnect = () => {
-  if (wsDisposed || wsReconnectTimer || getIsOpen.value) return
+  if (wsDisposed || wsReconnectTimer) return
+  if (ws.value != null || status.value === 'OPEN') return // 仍在连接，无需重连
   const delay = Math.min(1000 * 2 ** Math.min(wsReconnectAttempts, 5), 30000)
   wsReconnectAttempts++
   wsReconnectTimer = setTimeout(() => {
@@ -46,10 +47,16 @@ const scheduleKefuWsReconnect = () => {
     connectWithTicket()
   }, delay)
 }
-watch(getIsOpen, (openNow) => {
-  if (openNow) wsReconnectAttempts = 0
+// r1 P2-5：VueUse 心跳超时路径会清空 ws 实例但 status 可能停留 OPEN——
+// 以 ws 句柄清空为准触发换票重连（status=CLOSED 的常规路径同样覆盖）
+watch(ws, (instance) => {
+  if (instance == null && !wsDisposed) {
+    wsReconnectAttempts++
+    scheduleKefuWsReconnect()
+  }
 })
 watch(status, (s) => {
+  if (s === 'OPEN') wsReconnectAttempts = 0
   if (s === 'CLOSED') scheduleKefuWsReconnect()
 })
 
@@ -64,9 +71,11 @@ const connectWithTicket = async () => {
     open()
   } catch (error) {
     console.error(error)
-    message.error('获取 WebSocket 握手票据失败')
     scheduleKefuWsReconnect() // r0 P2-6：取票失败也走退避换票重连
+    return
   }
+  // r1 P2-4：取票等待期间页面可能已卸载（wsDisposed）——晚到票据不得建连
+  if (wsDisposed) return
 }
 
 /** 监听 WebSocket 数据 */
