@@ -183,7 +183,10 @@ await guard('N2', '导航反向：common 用户菜单为 admin 严格子集且�
     token: admin.accessToken, body: { userId: row.id, roleIds: [2] }, // 2=common
   });
   const rolesRead = await api('GET', `/admin-api/system/permission/list-user-roles?userId=${row.id}`, { token: admin.accessToken });
-  const bound = (rolesRead.json?.data ?? []).includes(2); // 绑定读回
+  // SEC-009.B 对账（r1 VO 包装后）：list-user-roles 返回 { roleIds: ["2"] }（ID 恒 string）；兼容旧数组形态
+  const _roleData = rolesRead.json?.data;
+  const bound = (Array.isArray(_roleData) ? _roleData : (_roleData?.roleIds ?? []))
+    .map((x) => Number(x)).includes(2); // 绑定读回（数值归一比较）
   testUser = { id: row.id, accessToken: (await login('lianyantest', 'Test123456')).accessToken };
   const mine = await api('GET', '/admin-api/system/auth/get-permission-info', { token: testUser.accessToken });
   const commonLeafs = flatLeaf(mine.json?.data?.menus);
@@ -216,14 +219,14 @@ await guard('F1', '文件存储配置创建并设 master（setup + 切换断言�
   originalMasterScanned = true;
   const create = await api('POST', '/admin-api/infra/file-config/create', {
     token: admin.accessToken,
-    body: { name: `lianyan-db-${Date.now()}`, storage: 1, remark: 'CLIENT-005.B E2E', config: { domain: 'http://127.0.0.1:48080' } },
+    body: { name: `lianyan-db-${Date.now()}`, storage: 1, remark: 'CLIENT-005.B E2E', config: { domain: new URL(BASE_URL).origin } } // 端口可移植：跟随 E2E_BASE_URL,
   });
   const configId = create.json?.data ?? null;
   if (!configId) { record('F1', '文件存储配置创建并设 master（setup + 切换断言）', false, `创建失败 code=${create.json?.code}`); return; }
   const setMaster = await api('PUT', `/admin-api/infra/file-config/update-master?id=${configId}`, { token: admin.accessToken });
   const after = await api('GET', '/admin-api/infra/file-config/page?pageNo=1&pageSize=100', { token: admin.accessToken });
   const masterRow = (after.json?.data?.list ?? []).find((c) => c.master === true);
-  const readbackOk = masterRow?.id === configId; // 读回 master 归属（防借旧配置通过）
+  const readbackOk = String(masterRow?.id) === String(configId); // 读回 master 归属（SEC-009.B：ID wire 恒 string，字符串化比较）
   record('F1', '文件存储配置创建并设 master（setup + 切换断言）',
     setMaster.json?.code === 0 && readbackOk, `configId=${configId} setMaster=${setMaster.json?.code} 读回master=${masterRow?.id}`);
 });
@@ -327,7 +330,7 @@ await guard('FX', '环境还原：恢复文件 master 原配置', async () => {
     if (originalMasterId != null) {
       const r = await api('PUT', `/admin-api/infra/file-config/update-master?id=${originalMasterId}`, { token: admin.accessToken });
       const after = await api('GET', '/admin-api/infra/file-config/page?pageNo=1&pageSize=100', { token: admin.accessToken });
-      const stillMaster = (after.json?.data?.list ?? []).find((c) => c.id === originalMasterId)?.master === true;
+      const stillMaster = (after.json?.data?.list ?? []).find((c) => String(c.id) === String(originalMasterId))?.master === true;
       restoreOk = r.json?.code === 0 && stillMaster;
       restoreNote = `恢复 ${originalMasterId}：code=${r.json?.code} 读回master=${stillMaster}`;
     } else {
