@@ -1,0 +1,58 @@
+# ZS-CLIENT-005.B B06 联验本地环境编排（infra 层）
+#
+# 用途：CLIENT-005.B 两端 E2E / SYS-001.B 页面复验 / BRAND-003.B 品牌回归共用的基础设施。
+#       zszj-server 以宿主机进程运行（local profile，见 deploy/README-local.md），不进容器。
+#
+# 使用方式：
+#   cp env.local.example .env.local        # 本地联验一次性口令（.env.local 已 gitignore）
+#   docker compose -f docker-compose.local.yml --env-file .env.local up -d
+#   docker compose -f docker-compose.local.yml --env-file .env.local down -v   # 连数据卷撤回
+#
+# 边界：
+#   - 仅绑定 127.0.0.1，不对局域网开放；口令为本地一次性值，禁止复用生产口令
+#   - PG 采用 17-alpine（ZS-ENG-002 PG17 基线）；D-08 仅 PG 禁 MySQL
+#   - 首次启动由 postgres-init 创建应用角色（ZS-DB-002 凭据分离合同；本地首启 Flyway
+#     以 owner 连接执行全迁移链，见 deploy/README-local.md）
+
+networks:
+  zszj-local:
+    driver: bridge
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: zszj-local-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zhongshu
+      POSTGRES_USER: ${ZSZJ_PG_BOOTSTRAP_USERNAME}
+      POSTGRES_PASSWORD: ${ZSZJ_PG_BOOTSTRAP_PASSWORD}
+      ZSZJ_DATASOURCE_USERNAME: ${ZSZJ_DATASOURCE_USERNAME}
+      ZSZJ_DATASOURCE_PASSWORD: ${ZSZJ_DATASOURCE_PASSWORD}
+    volumes:
+      - zszj-local-pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:15432:5432"  # 5432 已被其他联测实例占用（跨工作区协调避让）
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ZSZJ_PG_BOOTSTRAP_USERNAME} -d zhongshu"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: zszj-local-redis
+    restart: unless-stopped
+    # 本地联验：仅绑定 127.0.0.1 且不设口令（与 application-local.yaml 默认一致）
+    ports:
+      - "127.0.0.1:16379:6379"  # 同上避让
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  zszj-local-pgdata:
+    driver: local
