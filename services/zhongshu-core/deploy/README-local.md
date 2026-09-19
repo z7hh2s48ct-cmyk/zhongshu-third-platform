@@ -61,7 +61,7 @@ WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'admin');
 INSERT INTO system_user_role (id, user_id, role_id, creator, create_time, updater, update_time, deleted, tenant_id)
 SELECT 1, 1, 1, '1', now(), '1', now(), 0, 1
 WHERE NOT EXISTS (SELECT 1 FROM system_user_role WHERE user_id = 1 AND role_id = 1);
--- ③ 序列同步（显式 id 插入不推进序列；否则后续 user/create 主键冲突）
-SELECT setval(pg_get_serial_sequence('system_users','id'), (SELECT COALESCE(MAX(id),0) FROM system_users));
-SELECT setval(pg_get_serial_sequence('system_user_role','id'), (SELECT COALESCE(MAX(id),0) FROM system_user_role));
+-- ③ 序列同步（r1 P3：迁移建的是独立序列非 serial/identity——pg_get_serial_sequence 返回 NULL，须显式序列名）
+SELECT setval('system_users_seq', (SELECT COALESCE(MAX(id),0) FROM system_users));
+SELECT setval('system_user_role_seq', (SELECT COALESCE(MAX(id),0) FROM system_user_role));
 ```

@@ -100,7 +100,13 @@ await guard('L0', '管理员登录（前置）', async () => {
 });
 
 await guard('L1', '登录反向：错误口令拒绝（锁定业务码）', async () => {
-  const r = await api('POST', '/admin-api/system/auth/login', { body: { username: ADMIN_USER, password: 'wrong-password' } });
+  // r1 P2-2：L1 也排限流（连续重放时 429 被误当「非 0 码通过」）——429 等待重试后再严格断言
+  let r = await api('POST', '/admin-api/system/auth/login', { body: { username: ADMIN_USER, password: 'wrong-password' } });
+  if (r.json?.code === 429) {
+    console.log('[rate-limit] L1 遇限流，等待 65s 重试');
+    await sleep(65_000);
+    r = await api('POST', '/admin-api/system/auth/login', { body: { username: ADMIN_USER, password: 'wrong-password' } });
+  }
   record('L1', '登录反向：错误口令拒绝（锁定业务码）', r.json?.code === CODE_LOGIN_FAILED,
     `code=${r.json?.code}（期望 ${CODE_LOGIN_FAILED}；500/429 视为缺陷）`);
 });
@@ -163,10 +169,10 @@ await guard('N2', '导航反向：common 用户菜单为 admin 严格子集且�
       `用户创建失败且非已存在码：code=${create.json?.code}`);
     return;
   }
-  // 按用户名读回（不依赖分页窗口），校验夹具真实存在
+  // 按用户名读回（r1 P2-1：后端为模糊匹配，须精确校验 username 命中，防 backup 类同名账号截胡）
   const lookup = await api('GET', '/admin-api/system/user/page?pageNo=1&pageSize=10&username=lianyantest', { token: admin.accessToken });
-  const row = lookup.json?.data?.list?.[0];
-  if (!row) { record('N2', '导航反向：common 用户菜单为 admin 严格子集且判别菜单缺席', false, '用户名读回未命中'); return; }
+  const row = (lookup.json?.data?.list ?? []).find((u) => u.username === 'lianyantest');
+  if (!row) { record('N2', '导航反向：common 用户菜单为 admin 严格子集且判别菜单缺席', false, '用户名读回未命中精确账号'); return; }
   await api('PUT', '/admin-api/system/user/update-status', { token: admin.accessToken, body: { id: row.id, status: 0 } }); // 0=启用
   const assign = await api('POST', '/admin-api/system/permission/assign-user-role', {
     token: admin.accessToken, body: { userId: row.id, roleIds: [2] }, // 2=common
@@ -189,9 +195,20 @@ await guard('N2', '导航反向：common 用户菜单为 admin 严格子集且�
 
 // ========== 文件域 ==========
 let originalMasterId = null; // 环境还原
+let originalMasterScanned = false; // r1 P2-4：区分「确实无原 master」与「分页未扫全」
 await guard('F1', '文件存储配置创建并设 master（setup + 切换断言）', async () => {
-  const before = await api('GET', '/admin-api/infra/file-config/page?pageNo=1&pageSize=100', { token: admin.accessToken });
-  originalMasterId = (before.json?.data?.list ?? []).find((c) => c.master === true)?.id ?? null;
+  // r1 P2-4：完整分页扫描原 master（每轮新增一条配置，单页 100 会漏）
+  originalMasterId = null;
+  originalMasterScanned = false;
+  for (let pageNo = 1; ; pageNo++) {
+    const page = await api('GET', `/admin-api/infra/file-config/page?pageNo=${pageNo}&pageSize=100`, { token: admin.accessToken });
+    const list = page.json?.data?.list ?? [];
+    if (!list.length) break;
+    const hit = list.find((c) => c.master === true);
+    if (hit != null) { originalMasterId = hit.id; break; }
+    if (list.length < 100) break;
+  }
+  originalMasterScanned = true;
   const create = await api('POST', '/admin-api/infra/file-config/create', {
     token: admin.accessToken,
     body: { name: `lianyan-db-${Date.now()}`, storage: 1, remark: 'CLIENT-005.B E2E', config: { domain: 'http://127.0.0.1:48080' } },
@@ -297,20 +314,27 @@ await guard('T6', '落点反向：他人消息 get-landing 被拒（MSG-003.A，
     `code=${r.json?.code}（期望 ${CODE_LANDING_NOT_FOUND}/${CODE_LANDING_ACCESS_DENIED}；500/429 视为缺陷）`);
 });
 
-// ---------- 环境还原：恢复文件 master 原状 ----------
+// ---------- 环境还原：恢复文件 master 原状（r1 P2-3：校验 code + 读回确认，结果计入报告与退出码） ----------
+let restoreOk = true;
+let restoreNote = '未执行';
 await guard('FX', '环境还原：恢复文件 master 原配置', async () => {
-  let note = '无原 master（首启），保留本套件配置供后续复跑';
   if (originalMasterId != null) {
     const r = await api('PUT', `/admin-api/infra/file-config/update-master?id=${originalMasterId}`, { token: admin.accessToken });
-    note = `恢复 ${originalMasterId}：code=${r.json?.code}`;
+    const after = await api('GET', '/admin-api/infra/file-config/page?pageNo=1&pageSize=100', { token: admin.accessToken });
+    const stillMaster = (after.json?.data?.list ?? []).find((c) => c.id === originalMasterId)?.master === true;
+    restoreOk = r.json?.code === 0 && stillMaster;
+    restoreNote = `恢复 ${originalMasterId}：code=${r.json?.code} 读回master=${stillMaster}`;
+  } else {
+    restoreNote = '无原 master（首启），保留本套件配置供后续复跑';
   }
-  console.log(`[restore] ${note}`);
+  console.log(`[restore] ${restoreNote}`);
 });
 
 // ---------- 汇总 ----------
 const pass = results.filter((r) => r.ok).length;
 const fail = results.length - pass;
-console.log(`\n合计 ${results.length} 用例：PASS ${pass} / FAIL ${fail}`);
+const finalFail = fail + (restoreOk ? 0 : 1); // r1 P2-3：restore 失败计入退出码
+console.log(`\n合计 ${results.length} 用例：PASS ${pass} / FAIL ${fail}${restoreOk ? '' : ' + 环境还原失败'}`);
 writeFileSync(join(OUT_DIR, `e2e-report-${Date.now()}.json`),
-  JSON.stringify({ baseUrl: BASE_URL, idBaseline: 'numeric（SEC-009.B 激活后须调整）', pass, fail, results }, null, 2));
-process.exit(fail ? 1 : 0);
+  JSON.stringify({ baseUrl: BASE_URL, idBaseline: 'numeric（SEC-009.B 激活后须调整）', pass, fail, restoreOk, restoreNote, results }, null, 2));
+process.exit(finalFail ? 1 : 0);
