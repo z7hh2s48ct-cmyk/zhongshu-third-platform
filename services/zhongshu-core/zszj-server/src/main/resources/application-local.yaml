@@ -6,7 +6,10 @@ spring:
   autoconfigure:
     # noinspection SpringBootApplicationYaml
     exclude:
-      - org.springframework.boot.autoconfigure.quartz.QuartzAutoConfiguration # 默认 local 环境，不开启 Quartz 的自动配置
+      # ZS-ENG-006 既定合同（CFG-1 收敛 2026-09-19）：local 恒无 Scheduler Bean——同步/触发一律 501
+      # 「定时任务-已禁用」，JobSchedulerReconciler 以 ObjectProvider<Scheduler> 空判定跳过对账（fail-safe）。
+      # 确需调试 Quartz 全链（如 BRAND-004.C 运行期证明）：CLI 覆盖本清单 + --spring.quartz.auto-startup=true
+      - org.springframework.boot.autoconfigure.quartz.QuartzAutoConfiguration
       - org.springframework.ai.vectorstore.qdrant.autoconfigure.QdrantVectorStoreAutoConfiguration # 禁用 AI 模块的 Qdrant，手动创建
       - org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreAutoConfiguration # 禁用 AI 模块的 Milvus，手动创建
   # 数据源配置项
@@ -63,7 +66,7 @@ spring:
 # Quartz 配置项，对应 QuartzProperties 配置类
 spring:
   quartz:
-    auto-startup: ${ZSZJ_APPLICATION_LOCAL_QUARTZ_AUTO_STARTUP:false} # ZS-ENG-006：本地默认不启动调度器；与 exclude QuartzAutoConfiguration 保持一致，确需调试经环境变量显式开启
+    auto-startup: ${ZSZJ_APPLICATION_LOCAL_QUARTZ_AUTO_STARTUP:false} # 注意：本门控当前被上方 exclude 架空（CFG-1 收敛登记——local 恒无 Scheduler 为既定合同）；仅当经 CLI 覆盖 exclude 清单重新装配 Quartz 时生效（BRAND-004.C 运行期证明即此用法），届时默认 false 待机、需 true 才启动
     scheduler-name: schedulerName # Scheduler 名字。默认为 schedulerName
     job-store-type: jdbc # Job 存储器类型。默认为 memory 表示内存，可选 jdbc 使用数据库。
     wait-for-jobs-to-complete-on-shutdown: true # 应用关闭时，是否等待定时任务执行完成。默认为 false ，建议设置为 true

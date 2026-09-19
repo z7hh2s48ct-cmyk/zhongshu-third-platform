@@ -257,9 +257,8 @@ serverProcess = spawn(javaExe, [
   '--zszj.security.mock-enable=false',
   '--zszj.captcha.enable=false',
   '--spring.flyway.enabled=false', // 迁移已按 V1 基线序经 psql 施行（与 PG 回归同路径）
-  // local profile 默认把 QuartzAutoConfiguration 整体 exclude（application-local.yaml spring.autoconfigure.exclude），
-  // Scheduler Bean 因此恒缺失（sync/trigger 一律 501「定时任务 - 已禁用」）。本卡被测面是 Quartz 持久化全链，
-  // 命令行覆盖 exclude 清单（保留 AI 向量库两项排除），并显式开启 auto-startup——不改产品 yaml 语义。
+  // CFG-1 收敛（2026-09-19，方向②）：local 恒无 Scheduler 为既定合同（application-local.yaml exclude 保留），
+  // 本卡被测面是 Quartz 持久化全链——CLI 覆盖 exclude 清单（保留 AI 向量库两项排除）+ 显式开启 auto-startup
   '--spring.autoconfigure.exclude=org.springframework.ai.vectorstore.qdrant.autoconfigure.QdrantVectorStoreAutoConfiguration,org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreAutoConfiguration',
   '--spring.quartz.auto-startup=true',
   '--zszj.job.handler-whitelist[0]=accessLogCleanJob', // ZS-JOB-001 白名单：只有种子任务可登记/执行

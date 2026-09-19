@@ -1,0 +1,26 @@
+对本 worktree 中 feat/client-005-b 分支做 r1 轮对抗性评审。范围收敛：只评 r0 处置增量（git diff 7977f80d..HEAD，单提交 beb5bc52，3 files：E2E 套件重写/README/docker-compose 端口），r0 已审面不重复全量审查。
+
+背景：r0 FAIL（2×P1+8×P2+2×P3）全部处置：
+1) P1-1：README 启动命令补 --server.address=127.0.0.1（并重启实证，联验环境现绑回环）
+2) P1-2：T5 重设计为 T5/T6——send-notify 发两条（本人+admin 他人对照），get-landing 本人 code=0 / 他人锁定落点错误码族（1002031000/1002031001）
+3) P2-3：L1 锁 1002000000；T6 锁落点错误码族（500/429 视为缺陷）
+4) P2-4：N2 叶子名扁平化 + 判别菜单 admin 侧在场断言 + 角色绑定读回（list-user-roles 含 2）
+5) P2-5：F1 update-master 响应 + 分页读回 master==configId
+6) P2-6：F3 上传内容每轮唯一 + 匿名 403 + 认证后全等比较
+7) P2-7：login() 429 等 65s 重试一次；域级 guard 记 FAIL 不中断
+8) P2-8：用户创建仅容忍 1002003000 + username 读回校验
+9) P2-9：T2 用户定位改 username 参数
+10) P2-10：README 幂等种子 SQL + setval 序列同步
+11) P3-11：MP 表述订正（依赖内置）+ MPJ 1.5.9 边界登记
+12) P3-12：脚本头 SEC-009.B ID 基线耦合登记
+附：联验 Redis 16379→26379（16379=单测嵌入式 Redis 约定端口，占用致 jedismock 静默失败连上持久化 Redis——sms 配额桶 8→11 假失败实证；MP 3.5.12 洗清：全量 852=基线 2F+3E）；README 增端口合同/Outbox 积压告警（D-07 延后正确行为）+重置命令。
+
+验证证据：E2E 连续两轮 18/18 全绿（第二轮实测限流 429→等待 65s→恢复）；T6 实测 1002031001；F1 master 读回+还原 41；F3 匿名 403+全等；MP 降级后全量 852 用例=已知基线（OAuth2TokenServiceImplTest 2 + SmsCodeServiceImplAttemptLimitTest 3，隔离 29/29）。
+
+评审要求：
+- 验证 12 项处置是否真修（特别：T5/T6 归属边界语义是否闭合——他人消息是否真的走归属拒绝而非权限拒绝；N2 判别菜单防空断言是否成立；F3 匿名 403 判据 anon.status===403||anonJson?.code===403 在 FILE-003 私有下载实现下是否稳定）
+- 攻击重放语义：第三轮连续跑（限流窗口滚动后）是否仍绿；restore 在 originalMasterId==null 首启路径的幂等
+- 环境编排最终态：compose 26379/15432 + README 合同一致性（有无残留 16379 引用）
+- 硬性约束照旧：只读、禁 git 状态变更、HEAD 前后校验；联验环境在线（http://127.0.0.1:48080，Redis 26379）可直接跑 E2E 复验
+
+输出：按 P0/P1/P2/P3 分级列发现（含 文件:行号 证据）；最后一行 VERDICT: PASS（0×P0/P1）或 VERDICT: FAIL。
