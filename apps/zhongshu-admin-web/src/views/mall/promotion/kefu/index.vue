@@ -73,11 +73,20 @@ const connectWithTicket = async () => {
   }
   // r2 P2：取票等待期间页面可能已卸载（wsDisposed）——晚到票据不得建连（检查必须先于 open()）
   if (wsDisposed) return
+  // r3 P2：隔离旧实例回调——旧连接迟到的 close 会无条件清掉 VueUse 共享心跳定时器
+  //（新连接已被停心跳，半开连接无法自愈，codex 真实 TCP 复现）；旧实例即将销毁，解绑无副作用
+  const previousWs = ws.value
   server.value =
     (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
     '?ticket=' +
     encodeURIComponent(ticket)
   open()
+  if (previousWs && previousWs !== ws.value) {
+    previousWs.onclose = null
+    previousWs.onerror = null
+    previousWs.onmessage = null
+    previousWs.onopen = null
+  }
 }
 
 /** 监听 WebSocket 数据 */
