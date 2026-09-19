@@ -220,11 +220,12 @@ const submitForm = async () => {
 }
 
 /** 获取下拉框[上级菜单]的数据  */
-const menuTree = ref<Tree[]>([]) // 树形结构
+type MenuTreeNode = { id: string; name: string; children: any[] }
+const menuTree = ref<MenuTreeNode[]>([]) // 树形结构
 const getTree = async () => {
   menuTree.value = []
   const res = await MenuApi.getSimpleMenusList()
-  let menu: Tree = { id: 0, name: '主类目', children: [] }
+  let menu: MenuTreeNode = { id: '0', name: '主类目', children: [] }
   menu.children = handleTree(res)
   menuTree.value.push(menu)
 }

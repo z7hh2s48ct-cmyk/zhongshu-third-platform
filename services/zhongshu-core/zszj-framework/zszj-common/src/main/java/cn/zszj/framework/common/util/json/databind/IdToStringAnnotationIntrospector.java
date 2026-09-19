@@ -1,6 +1,7 @@
 package cn.zszj.framework.common.util.json.databind;
 
 import com.fasterxml.jackson.databind.introspect.Annotated;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
@@ -52,14 +53,38 @@ public class IdToStringAnnotationIntrospector extends JacksonAnnotationIntrospec
 
     /**
      * 集合/数组 ID 字段：元素序列化为 string（如 Set&lt;Long&gt; postIds）
+     *
+     * <p>扩展（ZS-SEC-009.B r0 P1）：{@code CommonResult<Set<Long>>} 一类「裸 ID 集合」响应的顶层属性名是
+     * {@code data}，不匹配 id/Id/Ids 命名约定。当属性名为 {@code data} 且元素泛型恰为 {@code Long} 时
+     * 同样按 ID 集合字符串化（permission 的 list-role-menus 等端点），避免与已迁移 string 的选项
+     * ID 比较失配（清空已授权限风险）。{@code data} 为其它元素类型（String/Integer/对象）不受影响。
      */
     @Override
     public Object findContentSerializer(Annotated am) {
         Class<?> raw = am.getRawType();
-        if ((Collection.class.isAssignableFrom(raw) || raw.isArray()) && isIdName(resolveName(am))) {
+        if (raw.isArray() && isIdName(resolveName(am))) {
+            return ToStringSerializer.class;
+        }
+        if (Collection.class.isAssignableFrom(raw) && (isIdName(resolveName(am)) || isLongIdCollection(am))) {
             return ToStringSerializer.class;
         }
         return super.findContentSerializer(am);
+    }
+
+    /**
+     * data 属性 + 集合元素类型为 Long：判定为「裸 ID 集合」响应
+     * （经 {@link Annotated#getType()} 的 {@code JavaType} 判定内容类型，不依赖反射泛型保留）
+     */
+    private static boolean isLongIdCollection(Annotated am) {
+        if (!"data".equals(resolveName(am))) {
+            return false;
+        }
+        com.fasterxml.jackson.databind.JavaType type = am.getType();
+        if (type == null || type.getContentType() == null) {
+            return false; // 非集合/数组（含 PageResult 等包装）无内容类型
+        }
+        Class<?> contentRaw = type.getContentType().getRawClass();
+        return contentRaw == Long.class || contentRaw == long.class;
     }
 
     /**

@@ -90,8 +90,40 @@ public class ZszjJacksonContractTest {
         assertEquals(200L, node.get("total").asLong());
         assertTrue(node.get("pageSize").isNumber(), "pageSize 应保持 number");
 
-        // 普通字符串不受影响
+        // 普通 string 不受影响
         assertEquals("众墅", node.get("name").asText());
+    }
+
+    @Test
+    @DisplayName("裸 ID 集合响应（r0 P1）：CommonResult<Set<Long>> 的 data 元素恒 string，非 Long 集合不误伤")
+    public void testBareIdCollectionData() throws Exception {
+        java.util.Set<Long> roleIds = new LinkedHashSet<>();
+        roleIds.add(7L);
+        roleIds.add(8L);
+        JsonNode dataNode = toNode(new SetLongResult(roleIds)).get("data");
+        assertTrue(dataNode.get(0).isTextual(), "CommonResult<Set<Long>> 的 data 元素应为 string（permission 端点裸 ID 集合）");
+        assertEquals("7", dataNode.get(0).asText());
+        assertEquals("8", dataNode.get(1).asText());
+
+        // data 为 List<String>：本就是 string，不因 data 名被二次处理（值不变）
+        JsonNode strNode = toNode(new StringListResult(java.util.Arrays.asList("a", "b"))).get("data");
+        assertEquals("a", strNode.get(0).asText());
+        assertEquals("b", strNode.get(1).asText());
+
+        // data 为 List<Integer>（计数等非 ID 语义）：保持 number 不误伤
+        JsonNode intNode = toNode(new IntegerListResult(java.util.Arrays.asList(1, 2))).get("data");
+        assertTrue(intNode.get(0).isNumber(), "CommonResult<List<Integer>> 的 data 元素应保持 number");
+        assertEquals(1, intNode.get(0).asInt());
+    }
+
+    /** 复刻 CommonResult 的 data 形态（具体类型，泛型经 erasure 后 getter 返回 ParameterizedType） */
+    record SetLongResult(java.util.Set<Long> data) {
+    }
+
+    record StringListResult(java.util.List<String> data) {
+    }
+
+    record IntegerListResult(java.util.List<Integer> data) {
     }
 
     @Test

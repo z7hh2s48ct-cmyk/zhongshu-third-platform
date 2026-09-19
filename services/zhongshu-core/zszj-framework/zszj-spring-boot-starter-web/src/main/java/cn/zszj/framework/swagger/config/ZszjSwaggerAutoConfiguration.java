@@ -130,13 +130,42 @@ public class ZszjSwaggerAutoConfiguration {
             if (resolved == null || !IdToStringAnnotationIntrospector.isIdName(propertyName(type))) {
                 return resolved;
             }
+            // 与 wire 序列化的类型限定对齐（r0 P2-4）：introspector 只改写 Long/long，
+            // Integer 字段（如 AreaNodeRespVO.id）wire 仍是 number，文档不得标 string
+            if (!isLongType(type)) {
+                return resolved;
+            }
             if (resolved instanceof ArraySchema arraySchema && arraySchema.getItems() != null) {
                 arraySchema.getItems().setType("string");
+                arraySchema.getItems().setFormat(null); // 清 int64 位移留
             } else {
                 resolved.setType("string");
+                resolved.setFormat(null); // 清 int64，string 类型不应带数值 format
             }
             return resolved;
         };
+    }
+
+    /**
+     * 与 wire 序列化的类型限定对齐（r0 P2-4）：introspector 只改写 Long/long——
+     * 标量字段类型须为 Long/long；集合字段（id/xxxIds/data）元素泛型须为 Long/long。
+     * Integer 字段（如 AreaNodeRespVO.id）wire 仍是 number，文档不得标 string。
+     */
+    private static boolean isLongType(AnnotatedType type) {
+        if (type == null || type.getType() == null) {
+            return false;
+        }
+        java.lang.reflect.Type t = type.getType();
+        if (t == Long.class || t == long.class) {
+            return true;
+        }
+        // 集合字段：元素泛型为 Long（Set<Long> menuIds / data 裸 ID 集合）
+        if (t instanceof java.lang.reflect.ParameterizedType pt
+                && pt.getRawType() instanceof Class<?> raw && java.util.Collection.class.isAssignableFrom(raw)) {
+            java.lang.reflect.Type[] args = pt.getActualTypeArguments();
+            return args.length == 1 && (args[0] == Long.class || args[0] == long.class);
+        }
+        return false;
     }
 
     private static String propertyName(AnnotatedType type) {

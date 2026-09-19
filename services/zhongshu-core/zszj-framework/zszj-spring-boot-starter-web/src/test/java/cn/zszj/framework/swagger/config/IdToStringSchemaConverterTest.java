@@ -75,6 +75,23 @@ public class IdToStringSchemaConverterTest {
     }
 
     @Test
+    @DisplayName("r0 P2-4：Integer 的 ID 名字段不改写（wire 仍 number），Long 改写时清 int64 format")
+    public void testIntegerIdFieldUntouchedAndFormatCleared() {
+        IntegerSchema integerSchema = new IntegerSchema().format("int64");
+        AnnotatedType intType = new AnnotatedType().type(Integer.class).propertyName("userId");
+        Schema<?> out = converter.resolve(intType, new StubContext(), chainOf(integerSchema));
+        assertSame(integerSchema, out, "Integer 字段（如 AreaNodeRespVO.id）不应被改写为 string");
+        assertEquals("integer", out.getType());
+        assertEquals("int64", out.getFormat(), "Integer 字段 format 不动");
+
+        IntegerSchema longSchema = new IntegerSchema().format("int64");
+        AnnotatedType longType = new AnnotatedType().type(Long.class).propertyName("userId");
+        Schema<?> out2 = converter.resolve(longType, new StubContext(), chainOf(longSchema));
+        assertEquals("string", out2.getType(), "Long 字段改写为 string");
+        assertNull(out2.getFormat(), "string 类型不应残留 int64 format");
+    }
+
+    @Test
     @DisplayName("链尾返回 null（无可解析 schema）时透传 null，不伪造")
     public void testNullResolvedPassesThrough() {
         AnnotatedType type = new AnnotatedType().type(Long.class).propertyName("id");
