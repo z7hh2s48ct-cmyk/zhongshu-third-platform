@@ -51,7 +51,17 @@ const scheduleKefuWsReconnect = () => {
 }
 // r1 P2-5：VueUse 心跳超时路径会清空 ws 实例但 status 可能停留 OPEN——
 // 以 ws 句柄清空为准触发换票重连（status=CLOSED 的常规路径同样覆盖）
-watch(ws, (instance) => {
+// r4 P2：心跳超时路径下 VueUse 先清空 ws.value、后排重连——等取票返回时 connectWithTicket 里
+// 的 previousWs 已为 undefined、隔离被跳过；故在 watcher 旧值中就地隔离旧实例回调
+//（被替换/被清空的旧实例即将销毁，解绑无副作用）
+watch(ws, (instance, previousInstance) => {
+  if (previousInstance != null && previousInstance !== instance
+    && previousInstance.readyState !== WebSocket.OPEN) {
+    previousInstance.onclose = null
+    previousInstance.onerror = null
+    previousInstance.onmessage = null
+    previousInstance.onopen = null
+  }
   if (instance == null && !wsDisposed) {
     scheduleKefuWsReconnect()
   }
