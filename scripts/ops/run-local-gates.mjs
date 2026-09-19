@@ -11,7 +11,8 @@
  *   G13 双端请求层合同回归（ZS-SEC-012.B/CLIENT-003：slow，本地 vitest 双端；CI 由 CLIENT-005.A 流水线覆盖）
  * ZS-OPS-001.B/C 已接入：PG 层走 .github/workflows/pg-regression.yml（run-pg-regression.mjs 同规则）、
  * 安全/基础管理 API 层 = G12 + G14（CI 同入口见 local-baseline-gates.yml security/sys001 job）；
- * 多端 E2E（.D）/流程（.E）按后续批次接入。
+ * G15 双端技术联调门禁（ZS-OPS-001.D：自举 sys001 夹具跑 CLIENT-005.B E2E 18 用例；slow+exclusive；
+ *   或经 E2E_BASE_URL 直连 deploy/README-local.md 长驻联验环境）；流程层（.E）按 B09 批次接入。
  *
  * 提速（ZS-GOV-001 提效方案 P1）：
  *   - 并发：默认按 CPU 核数并发跑门禁（--jobs N 覆盖），反馈时间从「各门禁耗时之和」降到「最慢门禁」。
@@ -48,6 +49,8 @@ export const GATES = [
     mvnArgs: '-pl zszj-framework/zszj-spring-boot-starter-web,zszj-framework/zszj-spring-boot-starter-biz-tenant -am -Dtest=SecurityFilterChainFixtureTest,CrossTenantVisitEnabledFixtureTest,SecurityChainJointRegressionTest,SecurityChainEmbeddedCorsTest,ApiAccessLogFilterAsyncTest -Dsurefire.failIfNoSpecifiedTests=false test' },
   { id: 'G13 双端请求层合同回归（ZS-CLIENT-003：admin-web + miniapp vitest）', areas: ['apps/', 'scripts/ops/'], slow: true,
     cmd: ['node', 'scripts/ops/run-client-contract-tests.mjs'] },
+  { id: 'G15 双端技术联调门禁（ZS-OPS-001.D：CLIENT-005.B E2E 18 用例，自举夹具或长驻联验环境）', areas: ['scripts/client005b/', 'scripts/sys001/', 'scripts/ops/', 'services/'], slow: true, exclusive: true,
+    cmd: ['node', 'scripts/ops/run-b06-joint-gate.mjs'] }, // 自举夹具含 clean 重建，与 mvn 门禁串行
   { id: 'G14 基础管理 API 层回归（ZS-SYS-001.A：七类矩阵 50 用例，Docker PG/Redis + 真实 server）', areas: ['scripts/sys001/', 'services/'], slow: true, exclusive: true,
     cmd: ['node', 'scripts/sys001/run-sys001-regression.mjs'] }, // exclusive：clean 重建共享 target，须与 mvn 门禁串行（codex r0 P2）
 ];
