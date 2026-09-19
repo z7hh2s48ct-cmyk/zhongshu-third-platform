@@ -60,7 +60,7 @@ const route = useRoute() // 路由
 const message = useMessage() // 消息弹窗
 const { currentRoute, push } = useRouter() // 路由操作
 const { delView } = useTagsViewStore() // 视图操作
-const deptId = Number(route.params.id) // 部门编号
+const deptId = String(route.params.id) // 部门编号
 const loading = ref(true) // 详情加载中
 const dept = ref<DeptApi.DeptVO>({} as DeptApi.DeptVO) // 部门详情
 const parentDeptName = ref<string>() // 上级部门名称
@@ -113,7 +113,7 @@ function openDeptManagement() {
 
 /** 初始化 */
 onMounted(() => {
-  if (!Number.isSafeInteger(deptId) || deptId <= 0) {
+  if (!deptId || deptId === '0') {
     message.warning('参数错误，部门不能为空！')
     close()
     return

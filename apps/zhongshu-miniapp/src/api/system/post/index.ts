@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 岗位信息 */
 export interface Post {
-  id?: number
+  id?: string
   name: string
   code: string
   sort: number
@@ -23,7 +23,7 @@ export function getSimplePostList() {
 }
 
 /** 获取岗位详情 */
-export function getPost(id: number) {
+export function getPost(id: string) {
   return http.get<Post>(`/system/post/get?id=${id}`)
 }
 
@@ -38,6 +38,6 @@ export function updatePost(data: Post) {
 }
 
 /** 删除岗位 */
-export function deletePost(id: number) {
+export function deletePost(id: string) {
   return http.delete<boolean>(`/system/post/delete?id=${id}`)
 }

@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 角色信息 */
 export interface Role {
-  id: number
+  id: string
   name: string
   code: string
   sort: number
@@ -11,7 +11,7 @@ export interface Role {
   type?: number
   remark?: string
   dataScope?: number
-  dataScopeDeptIds?: number[]
+  dataScopeDeptIds?: string[]
   createTime?: Date
 }
 
@@ -21,7 +21,7 @@ export function getRolePage(params: PageParam) {
 }
 
 /** 获取角色详情 */
-export function getRole(id: number) {
+export function getRole(id: string) {
   return http.get<Role>(`/system/role/get?id=${id}`)
 }
 
@@ -36,7 +36,7 @@ export function updateRole(data: Role) {
 }
 
 /** 删除角色 */
-export function deleteRole(id: number) {
+export function deleteRole(id: string) {
   return http.delete<boolean>(`/system/role/delete?id=${id}`)
 }
 

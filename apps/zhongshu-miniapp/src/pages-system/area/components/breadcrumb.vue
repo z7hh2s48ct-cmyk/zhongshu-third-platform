@@ -28,23 +28,23 @@
 import { ref, watch } from 'vue'
 
 interface BreadcrumbItem {
-  id: number
+  id: string
   name: string
 }
 
 const props = defineProps<{
-  modelValue: number
+  modelValue: string
 }>()
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number]
+  'update:modelValue': [value: string]
 }>()
 
 const breadcrumbList = ref<BreadcrumbItem[]>([])
 
 /** 监听外部值变化 */
 watch(() => props.modelValue, (val) => {
-  if (val === 0) {
+  if (String(val) === '0') {
     breadcrumbList.value = []
   }
 })
@@ -54,7 +54,7 @@ function handleClick(index: number) {
   if (index === -1) {
     // 点击"全部地区"
     breadcrumbList.value = []
-    emit('update:modelValue', 0)
+    emit('update:modelValue', '0')
   } else if (index < breadcrumbList.value.length - 1) {
     // 点击中间层级
     const item = breadcrumbList.value[index]
@@ -76,14 +76,14 @@ function back(): boolean {
   }
   breadcrumbList.value.pop()
   const lastItem = breadcrumbList.value[breadcrumbList.value.length - 1]
-  emit('update:modelValue', lastItem?.id ?? 0)
+  emit('update:modelValue', lastItem?.id ?? '0')
   return true
 }
 
 /** 重置面包屑 */
 function reset() {
   breadcrumbList.value = []
-  emit('update:modelValue', 0)
+  emit('update:modelValue', '0')
 }
 
 defineExpose({ enter, back, reset })

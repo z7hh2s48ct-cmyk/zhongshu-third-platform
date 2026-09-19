@@ -71,14 +71,14 @@ defineOptions({ name: 'UserSelectV2', inheritAttrs: false })
 
 const props = withDefaults(
   defineProps<{
-    modelValue?: number | number[] // 绑定的用户 ID
+    modelValue?: string | string[] // 绑定的用户 ID
     defaultCurrentUser?: boolean // 默认选中当前用户
     multiple?: boolean // 是否多选
     disabled?: boolean // 是否禁用
-    disabledIds?: number[] // 禁用的用户 ID
+    disabledIds?: string[] // 禁用的用户 ID
     clearable?: boolean // 是否允许清空
     placeholder?: string // 占位文字
-    deptId?: number // 部门 ID
+    deptId?: string // 部门 ID
   }>(),
   {
     defaultCurrentUser: false,
@@ -89,7 +89,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | number[] | undefined]
+  'update:modelValue': [value: string | string[] | undefined]
   change: [item: UserApi.UserVO | UserApi.UserVO[] | undefined]
 }>()
 
@@ -115,12 +115,12 @@ const suffixIcon = computed(() => {
 })
 
 /** 根据 ID 查询用户信息（用于编辑回显） */
-const resolveItemById = async (id: number | number[] | undefined) => {
+const resolveItemById = async (id: string | string[] | undefined) => {
   if (id === null || id === undefined) {
     selectedItems.value = []
     return
   }
-  const ids: number[] = Array.isArray(id) ? id : [id]
+  const ids: string[] = Array.isArray(id) ? id : [id]
   if (
     selectedItems.value.length === ids.length &&
     selectedItems.value.every((item) => ids.includes(item.id))

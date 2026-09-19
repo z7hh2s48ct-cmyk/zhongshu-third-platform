@@ -23,7 +23,7 @@
     </view>
 
     <!-- 底部操作按钮（主数据源不可编辑/删除） -->
-    <view v-if="formData && formData.id !== 0" class="yd-detail-footer">
+    <view v-if="formData && formData.id !== '0'" class="yd-detail-footer">
       <view class="yd-detail-footer-actions">
         <wd-button
           v-if="hasAccessByCodes(['infra:data-source-config:update'])"

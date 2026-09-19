@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 邮箱账号信息 */
 export interface MailAccount {
-  id?: number
+  id?: string
   mail: string
   username: string
   password?: string
@@ -25,7 +25,7 @@ export function getSimpleMailAccountList() {
 }
 
 /** 获取邮箱账号详情 */
-export function getMailAccount(id: number) {
+export function getMailAccount(id: string) {
   return http.get<MailAccount>(`/system/mail-account/get?id=${id}`)
 }
 
@@ -40,6 +40,6 @@ export function updateMailAccount(data: MailAccount) {
 }
 
 /** 删除邮箱账号 */
-export function deleteMailAccount(id: number) {
+export function deleteMailAccount(id: string) {
   return http.delete<boolean>(`/system/mail-account/delete?id=${id}`)
 }

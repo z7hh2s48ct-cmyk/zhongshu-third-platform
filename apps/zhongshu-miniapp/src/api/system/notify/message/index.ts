@@ -3,10 +3,10 @@ import { http } from '@/http/http'
 
 /** 站内信消息信息 */
 export interface NotifyMessage {
-  id: number
-  userId: number
+  id: string
+  userId: string
   userType: number
-  templateId: number
+  templateId: string
   templateCode: string
   templateNickname: string
   templateContent: string
@@ -23,7 +23,7 @@ export function getNotifyMessagePage(params: PageParam) {
 }
 
 /** 查询站内信消息详情 */
-export function getNotifyMessage(id: number) {
+export function getNotifyMessage(id: string) {
   return http.get<NotifyMessage>(`/system/notify-message/get`, { id })
 }
 
@@ -52,12 +52,12 @@ export interface NotifyMessageLandingResult {
  * 刻意不提供「我的消息按 ID 取详情」接口：个人收件箱数据一律来自 my-page 列表；
  * 按 ID 取详情属管理面（/system/notify-message/get + system:notify-message:query），不得混用。
  */
-export function resolveNotifyMessageLanding(id: number, client: 'WEB' | 'MOBILE') {
+export function resolveNotifyMessageLanding(id: string, client: 'WEB' | 'MOBILE') {
   return http.get<NotifyMessageLandingResult>('/system/notify-message/get-landing', { id, client })
 }
 
 /** 批量标记站内信已读 */
-export function updateNotifyMessageRead(ids: number | number[]) {
+export function updateNotifyMessageRead(ids: string | string[]) {
   const idsArray = Array.isArray(ids) ? ids : [ids]
   return http.put<boolean>('/system/notify-message/update-read', undefined, { ids: idsArray })
 }

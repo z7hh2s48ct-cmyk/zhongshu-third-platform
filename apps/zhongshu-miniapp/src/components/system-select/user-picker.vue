@@ -31,13 +31,13 @@ interface UserPickerOption extends User {
 }
 
 const props = withDefaults(defineProps<{
-  modelValue?: number | number[]
+  modelValue?: string | string[]
   type?: 'radio' | 'checkbox'
   title?: string
   disabled?: boolean
   filterable?: boolean
-  hideIds?: number[]
-  disabledIds?: number[]
+  hideIds?: string[]
+  disabledIds?: string[]
   disabledText?: string
 }>(), {
   type: 'radio',
@@ -50,7 +50,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | number[] | undefined]
+  'update:modelValue': [value: string | undefined]
   'confirm': [users: User[]]
 }>()
 
@@ -102,13 +102,13 @@ function handleConfirm({ value }: { value: any }) {
 }
 
 /** 获取已选择用户 */
-function getSelectedUsers(value?: number | number[]) {
+function getSelectedUsers(value?: string | string[]) {
   const userIds = Array.isArray(value) ? value : value == null ? [] : [value]
-  return userList.value.filter(user => user.id != null && userIds.includes(user.id))
+  return userList.value.filter(user => user.id != null && userIds.includes(String(user.id)))
 }
 
 /** 格式化用户编号 */
-function format(value?: number | number[]) {
+function format(value?: string | string[]) {
   const currentValue = arguments.length > 0 ? value : props.modelValue
   return getSelectedUsers(currentValue).map(user => user.nickname).filter(Boolean).join('、')
 }

@@ -40,7 +40,7 @@ withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | undefined]
+  'update:modelValue': [value: string | undefined]
   'change': [item: Role | undefined]
 }>()
 
@@ -63,7 +63,7 @@ function ensureOptions() {
 }
 
 /** 更新角色编号 */
-function handleUpdate(value?: number) {
+function handleUpdate(value?: string) {
   emit('update:modelValue', value)
   emit('change', options.value.find(item => item.id === value))
 }

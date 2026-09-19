@@ -1,7 +1,7 @@
 import request from '@/config/axios'
 
 export interface SmsTemplateVO {
-  id?: number
+  id?: string
   type?: number
   status: number
   code: string
@@ -9,7 +9,7 @@ export interface SmsTemplateVO {
   content: string
   remark: string
   apiTemplateId: string
-  channelId?: number
+  channelId?: string
   channelCode?: string
   params?: string[]
   createTime?: Date
@@ -22,7 +22,7 @@ export interface SendSmsReqVO {
 }
 
 export interface SmsTemplateSimpleVO {
-  id: number
+  id: string
   name: string
   code: string
 }
@@ -37,7 +37,7 @@ export const getSmsTemplatePage = (params: PageParam) => {
 }
 
 // 查询短信模板详情
-export const getSmsTemplate = (id: number) => {
+export const getSmsTemplate = (id: string) => {
   return request.get({ url: '/system/sms-template/get?id=' + id })
 }
 
@@ -52,12 +52,12 @@ export const updateSmsTemplate = (data: SmsTemplateVO) => {
 }
 
 // 删除短信模板
-export const deleteSmsTemplate = (id: number) => {
+export const deleteSmsTemplate = (id: string) => {
   return request.delete({ url: '/system/sms-template/delete?id=' + id })
 }
 
 // 批量删除短信模板
-export const deleteSmsTemplateList = (ids: number[]) => {
+export const deleteSmsTemplateList = (ids: string[]) => {
   return request.delete({ url: '/system/sms-template/delete-list', params: { ids: ids.join(',') } })
 }
 

@@ -2,23 +2,23 @@ import request from '@/config/axios'
 
 /** 学生课程信息 */
 export interface Demo03Course {
-  id?: number // 编号
-  studentId?: number // 学生编号
+  id?: string // 编号
+  studentId?: string // 学生编号
   name?: string // 名字
   score?: number // 分数
 }
 
 /** 学生班级信息 */
 export interface Demo03Grade {
-  id?: number // 编号
-  studentId?: number // 学生编号
+  id?: string // 编号
+  studentId?: string // 学生编号
   name?: string // 名字
   teacher?: string // 班主任
 }
 
 /** 学生信息 */
 export interface Demo03Student {
-  id?: number // 编号
+  id?: string // 编号
   name?: string // 名字
   sex?: number // 性别
   birthday?: string | number // 出生日期
@@ -35,7 +35,7 @@ export const Demo03StudentApi = {
   },
 
   // 查询学生详情
-  getDemo03Student: async (id: number) => {
+  getDemo03Student: async (id: string) => {
     return await request.get({ url: `/infra/demo03-student-normal/get?id=` + id })
   },
 
@@ -50,12 +50,12 @@ export const Demo03StudentApi = {
   },
 
   // 删除学生
-  deleteDemo03Student: async (id: number) => {
+  deleteDemo03Student: async (id: string) => {
     return await request.delete({ url: `/infra/demo03-student-normal/delete?id=` + id })
   },
 
   /** 批量删除学生 */
-  deleteDemo03StudentList: async (ids: number[]) => {
+  deleteDemo03StudentList: async (ids: string[]) => {
     return await request.delete({
       url: `/infra/demo03-student-normal/delete-list?ids=${ids.join(',')}`
     })

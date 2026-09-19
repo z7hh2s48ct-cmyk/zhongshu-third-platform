@@ -137,7 +137,7 @@ import { DICT_TYPE } from '@/utils/constants'
 import { formatDate, formatDateTime } from '@/utils/date'
 
 const props = defineProps<{
-  id?: number | string
+  id?: string
 }>()
 
 definePage({
@@ -167,7 +167,7 @@ async function loadStudent() {
   if (!props.id) {
     return
   }
-  formData.value = await getDemo03Student(Number(props.id))
+  formData.value = await getDemo03Student(props.id)
 }
 
 /** 查询课程列表 */
@@ -178,7 +178,7 @@ async function queryCourseList(pageNo: number, pageSize: number) {
     return
   }
   try {
-    const data = await getDemo03CoursePage({ studentId: Number(props.id), pageNo, pageSize })
+    const data = await getDemo03CoursePage({ studentId: props.id, pageNo, pageSize })
     courseTotal.value = data.total
     coursePagingRef.value?.completeByTotal(data.list, data.total)
   } catch {
@@ -197,7 +197,7 @@ async function loadGrades() {
     grades.value = []
     return
   }
-  const data = await getDemo03GradePage({ studentId: Number(props.id), pageNo: 1, pageSize: 1 })
+  const data = await getDemo03GradePage({ studentId: props.id, pageNo: 1, pageSize: 1 })
   grades.value = data.list
 }
 
@@ -251,7 +251,7 @@ async function handleDelete() {
   }
   deleting.value = true
   try {
-    await deleteDemo03Student(Number(props.id))
+    await deleteDemo03Student(props.id)
     toast.success('删除成功')
     uni.$emit('infra:demo03-erp:reload')
     delay(handleBack)

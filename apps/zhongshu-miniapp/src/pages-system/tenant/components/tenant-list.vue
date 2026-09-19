@@ -88,8 +88,8 @@ const pagingRef = ref<any>() // 分页组件引用
 const queryParams = ref<Record<string, any>>({}) // 查询参数
 
 /** 获取套餐名称 */
-function getPackageName(packageId?: number) {
-  if (packageId === 0) {
+function getPackageName(packageId?: string) {
+  if (packageId === '0') {
     return '系统租户'
   }
   const pkg = packageList.value.find(item => item.id === packageId)

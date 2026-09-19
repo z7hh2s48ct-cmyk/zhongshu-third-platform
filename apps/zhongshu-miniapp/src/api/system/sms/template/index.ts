@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 短信模板信息 */
 export interface SmsTemplate {
-  id?: number
+  id?: string
   type?: number
   status: number
   code: string
@@ -11,7 +11,7 @@ export interface SmsTemplate {
   content: string
   remark?: string
   apiTemplateId: string
-  channelId?: number
+  channelId?: string
   channelCode?: string
   params?: string[]
   createTime?: Date
@@ -35,7 +35,7 @@ export function getSimpleSmsTemplateList() {
 }
 
 /** 获取短信模板详情 */
-export function getSmsTemplate(id: number) {
+export function getSmsTemplate(id: string) {
   return http.get<SmsTemplate>(`/system/sms-template/get?id=${id}`)
 }
 
@@ -50,7 +50,7 @@ export function updateSmsTemplate(data: SmsTemplate) {
 }
 
 /** 删除短信模板 */
-export function deleteSmsTemplate(id: number) {
+export function deleteSmsTemplate(id: string) {
   return http.delete<boolean>(`/system/sms-template/delete?id=${id}`)
 }
 

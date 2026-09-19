@@ -171,7 +171,7 @@ function removeMember(index: number) {
 
 const addDialogVisible = ref(false) // 添加成员弹窗的是否展示
 const addFormData = ref({
-  userIds: [] as number[],
+  userIds: [] as string[],
   level: undefined as number | undefined
 }) // 添加成员表单数据
 const addFormRules = reactive<FormRules>({

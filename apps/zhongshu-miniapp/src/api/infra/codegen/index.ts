@@ -3,9 +3,9 @@ import { http } from '@/http/http'
 
 /** 代码生成表定义 */
 export interface CodegenTable {
-  id: number
-  tableId: number
-  dataSourceConfigId: number
+  id: string
+  tableId: string
+  dataSourceConfigId: string
   scene: number // 生成场景
   tableName: string // 表名
   tableComment: string // 表描述
@@ -17,15 +17,15 @@ export interface CodegenTable {
   author: string // 作者
   templateType: number // 模板类型
   frontType: number // 前端类型
-  parentMenuId: number // 上级菜单
+  parentMenuId: string // 上级菜单
   createTime: number // 创建时间
   updateTime: number // 更新时间
 }
 
 /** 代码生成字段定义 */
 export interface CodegenColumn {
-  id: number
-  tableId: number
+  id: string
+  tableId: string
   columnName: string // 字段名
   dataType: string // 数据库字段类型
   columnComment: string // 字段描述
@@ -68,22 +68,22 @@ export function getCodegenTablePage(params: PageParam) {
 }
 
 /** 获取代码生成表 + 字段详情 */
-export function getCodegenDetail(tableId: number) {
+export function getCodegenDetail(tableId: string) {
   return http.get<CodegenDetail>(`/infra/codegen/detail?tableId=${tableId}`)
 }
 
 /** 基于数据库表结构，同步表和字段定义 */
-export function syncCodegenFromDB(tableId: number) {
+export function syncCodegenFromDB(tableId: string) {
   return http.put<boolean>(`/infra/codegen/sync-from-db?tableId=${tableId}`)
 }
 
 /** 预览生成代码 */
-export function previewCodegen(tableId: number) {
+export function previewCodegen(tableId: string) {
   return http.get<CodegenPreview[]>(`/infra/codegen/preview?tableId=${tableId}`)
 }
 
 /** 删除代码生成表定义 */
-export function deleteCodegenTable(tableId: number) {
+export function deleteCodegenTable(tableId: string) {
   return http.delete<boolean>(`/infra/codegen/delete?tableId=${tableId}`)
 }
 
@@ -93,11 +93,11 @@ export function updateCodegenTable(data: CodegenDetail) {
 }
 
 /** 获取数据库自带的表列表（已导入的会被后端过滤） */
-export function getCodegenDbTableList(params: { dataSourceConfigId: number, name?: string, comment?: string }) {
+export function getCodegenDbTableList(params: { dataSourceConfigId: string, name?: string, comment?: string }) {
   return http.get<CodegenDbTable[]>('/infra/codegen/db/table/list', params)
 }
 
 /** 基于数据库表结构，批量创建代码生成表定义 */
-export function createCodegenList(data: { dataSourceConfigId: number, tableNames: string[] }) {
+export function createCodegenList(data: { dataSourceConfigId: string, tableNames: string[] }) {
   return http.post<number[]>('/infra/codegen/create-list', data)
 }

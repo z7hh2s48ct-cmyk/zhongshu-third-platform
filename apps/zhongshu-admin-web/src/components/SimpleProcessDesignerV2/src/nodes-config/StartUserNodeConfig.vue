@@ -165,7 +165,7 @@ const activeTabName = ref('user')
 const { formType, fieldsPermissionConfig, getNodeConfigFormFields } = useFormFieldsPermission(
   FieldPermissionType.WRITE
 )
-const getUserNicknames = (userIds: number[]): string => {
+const getUserNicknames = (userIds: string[]): string => {
   if (!userIds || userIds.length === 0) {
     return ''
   }
@@ -178,7 +178,7 @@ const getUserNicknames = (userIds: number[]): string => {
   })
   return nicknames.join(',')
 }
-const getDeptNames = (deptIds: number[]): string => {
+const getDeptNames = (deptIds: string[]): string => {
   if (!deptIds || deptIds.length === 0) {
     return ''
   }

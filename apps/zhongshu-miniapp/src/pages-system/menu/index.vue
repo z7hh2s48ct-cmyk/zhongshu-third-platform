@@ -91,10 +91,10 @@ const { hasAccessByCodes } = useAccess()
 const loading = ref(false) // 列表加载状态
 const list = ref<Menu[]>([]) // 完整菜单列表（树形结构）
 
-const currentParentId = ref(0) // 当前层级的父节点编号
+const currentParentId = ref('0') // 当前层级的父节点编号
 const currentList = computed(() => {
-  if (currentParentId.value === 0) {
-    return list.value.filter(item => item.parentId === 0)
+  if (currentParentId.value === '0') {
+    return list.value.filter(item => item.parentId === '0')
   }
   return findChildren(list.value, currentParentId.value)
 }) // 当前层级的菜单列表
@@ -171,7 +171,7 @@ async function getList() {
 function handleQuery(data?: Record<string, any>) {
   queryParams.value = { ...data }
   // 重置面包屑
-  currentParentId.value = 0
+  currentParentId.value = '0'
   breadcrumbRef.value?.reset()
   getList()
 }

@@ -1,19 +1,19 @@
 import request from '@/config/axios'
 
 export interface ProfileVO {
-  id: number
+  id: string
   username: string
   nickname: string
   dept: {
-    id: number
+    id: string
     name: string
   }
   roles: {
-    id: number
+    id: string
     name: string
   }[]
   posts: {
-    id: number
+    id: string
     name: string
   }[]
   email: string

@@ -135,7 +135,7 @@ const formData = ref({
   permission: '',
   type: SystemMenuTypeEnum.DIR,
   sort: Number(undefined),
-  parentId: 0,
+  parentId: '0',
   path: '',
   icon: '',
   component: '',
@@ -155,7 +155,7 @@ const formRules = reactive({
 const formRef = ref() // 表单 Ref
 
 /** 打开弹窗 */
-const open = async (type: string, id?: number, parentId?: number) => {
+const open = async (type: string, id?: string, parentId?: string) => {
   dialogVisible.value = true
   dialogTitle.value = t('action.' + type)
   formType.value = type
@@ -192,10 +192,10 @@ const submitForm = async () => {
       formData.value.type === SystemMenuTypeEnum.MENU
     ) {
       if (!isExternal(formData.value.path)) {
-        if (formData.value.parentId === 0 && formData.value.path.charAt(0) !== '/') {
+        if (formData.value.parentId === '0' && formData.value.path.charAt(0) !== '/') {
           message.error('路径必须以 / 开头')
           return
-        } else if (formData.value.parentId !== 0 && formData.value.path.charAt(0) === '/') {
+        } else if (formData.value.parentId !== '0' && formData.value.path.charAt(0) === '/') {
           message.error('路径不能以 / 开头')
           return
         }
@@ -237,7 +237,7 @@ const resetForm = () => {
     permission: '',
     type: SystemMenuTypeEnum.DIR,
     sort: Number(undefined),
-    parentId: 0,
+    parentId: '0',
     path: '',
     icon: '',
     component: '',

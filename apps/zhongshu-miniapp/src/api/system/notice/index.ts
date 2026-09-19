@@ -5,7 +5,7 @@ const baseUrl = '/system/notice'
 
 /** 通知公告信息 */
 export interface Notice {
-  id?: number
+  id?: string
   title: string
   content: string
   type: number
@@ -20,7 +20,7 @@ export function getNoticePage(params: PageParam) {
 }
 
 /** 获取通知公告详情 */
-export function getNotice(id: number) {
+export function getNotice(id: string) {
   return http.get<Notice>(`${baseUrl}/get?id=${id}`)
 }
 
@@ -35,6 +35,6 @@ export function updateNotice(data: Notice) {
 }
 
 /** 删除通知公告 */
-export function deleteNotice(id: number) {
+export function deleteNotice(id: string) {
   return http.delete<boolean>(`${baseUrl}/delete?id=${id}`)
 }

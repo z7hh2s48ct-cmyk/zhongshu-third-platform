@@ -1,12 +1,12 @@
 import request from '@/config/axios'
 
 export interface MenuVO {
-  id: number
+  id: string
   name: string
   permission: string
   type: number
   sort: number
-  parentId: number
+  parentId: string
   path: string
   icon: string
   component: string
@@ -29,7 +29,7 @@ export const getMenuList = (params) => {
 }
 
 // 获取菜单详情
-export const getMenu = (id: number) => {
+export const getMenu = (id: string) => {
   return request.get({ url: '/system/menu/get?id=' + id })
 }
 
@@ -44,6 +44,6 @@ export const updateMenu = (data: MenuVO) => {
 }
 
 // 删除菜单
-export const deleteMenu = (id: number) => {
+export const deleteMenu = (id: string) => {
   return request.delete({ url: '/system/menu/delete?id=' + id })
 }

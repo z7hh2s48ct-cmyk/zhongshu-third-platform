@@ -23,7 +23,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   label?: string
   labelWidth?: string
-  modelValue?: number
+  modelValue?: string
   placeholder?: string
   prop?: string
 }>(), {
@@ -39,7 +39,7 @@ const emit = defineEmits<{
 }>()
 
 const menuList = ref<Menu[]>([]) // 菜单列表
-const selectedValue = ref<number | undefined>(0) // 当前选中菜单编号
+const selectedValue = ref<number>(0) // 当前选中菜单编号
 const treeProps = {
   children: 'children',
   label: 'name',
@@ -57,7 +57,7 @@ const menuOptions = computed(() => { // 菜单树形选项
 watch(
   () => props.modelValue,
   (val) => {
-    selectedValue.value = val ?? 0
+    selectedValue.value = val != null ? Number(val) : 0
   },
   { immediate: true },
 )

@@ -3,10 +3,10 @@ import { http } from '@/http/http'
 
 /** 邮件模板信息 */
 export interface MailTemplate {
-  id?: number
+  id?: string
   name: string
   code: string
-  accountId?: number
+  accountId?: string
   nickname?: string
   title: string
   content: string
@@ -36,7 +36,7 @@ export function getSimpleMailTemplateList() {
 }
 
 /** 获取邮件模板详情 */
-export function getMailTemplate(id: number) {
+export function getMailTemplate(id: string) {
   return http.get<MailTemplate>(`/system/mail-template/get?id=${id}`)
 }
 
@@ -51,7 +51,7 @@ export function updateMailTemplate(data: MailTemplate) {
 }
 
 /** 删除邮件模板 */
-export function deleteMailTemplate(id: number) {
+export function deleteMailTemplate(id: string) {
   return http.delete<boolean>(`/system/mail-template/delete?id=${id}`)
 }
 

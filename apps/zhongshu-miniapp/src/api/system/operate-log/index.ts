@@ -3,14 +3,14 @@ import { http } from '@/http/http'
 
 /** 操作日志信息 */
 export interface OperateLog {
-  id?: number
+  id?: string
   traceId?: string
-  userId?: number
+  userId?: string
   userType?: number
   userName?: string
   type?: string
   subType?: string
-  bizId?: number
+  bizId?: string
   action?: string
   extra?: string
   requestMethod?: string
@@ -26,6 +26,6 @@ export function getOperateLogPage(params: PageParam) {
 }
 
 /** 获取操作日志详情 */
-export function getOperateLog(id: number) {
+export function getOperateLog(id: string) {
   return http.get<OperateLog>(`/system/operate-log/get?id=${id}`)
 }

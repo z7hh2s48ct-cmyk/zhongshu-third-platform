@@ -1,7 +1,7 @@
 import request from '@/config/axios'
 
 export interface DictDataVO {
-  id?: number
+  id?: string
   sort?: number
   label: string
   value: string
@@ -24,7 +24,7 @@ export const getDictDataPage = (params: PageParam) => {
 }
 
 // 查询字典数据详情
-export const getDictData = (id: number) => {
+export const getDictData = (id: string) => {
   return request.get({ url: '/system/dict-data/get?id=' + id })
 }
 
@@ -44,12 +44,12 @@ export const updateDictData = (data: DictDataVO) => {
 }
 
 // 删除字典数据
-export const deleteDictData = (id: number) => {
+export const deleteDictData = (id: string) => {
   return request.delete({ url: '/system/dict-data/delete?id=' + id })
 }
 
 // 批量删除字典数据
-export const deleteDictDataList = (ids: number[]) => {
+export const deleteDictDataList = (ids: string[]) => {
   return request.delete({ url: '/system/dict-data/delete-list', params: { ids: ids.join(',') } })
 }
 

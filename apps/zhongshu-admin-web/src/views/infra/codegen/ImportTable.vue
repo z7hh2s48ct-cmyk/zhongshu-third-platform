@@ -88,7 +88,7 @@ const dbTableList = ref<CodegenApi.DatabaseTableVO[]>([]) // 表的列表
 const queryParams = reactive({
   name: undefined,
   comment: undefined,
-  dataSourceConfigId: 0
+  dataSourceConfigId: '0'
 })
 const dataSourceConfigList = ref<DataSourceConfigApi.DataSourceConfigVO[]>([]) // 数据源列表
 
@@ -106,7 +106,7 @@ const getList = async () => {
 const resetQuery = async () => {
   queryParams.name = undefined
   queryParams.comment = undefined
-  queryParams.dataSourceConfigId = dataSourceConfigList.value[0].id as number
+  queryParams.dataSourceConfigId = dataSourceConfigList.value[0].id as string
   await getList()
 }
 
@@ -114,7 +114,7 @@ const resetQuery = async () => {
 const open = async () => {
   // 加载数据源的列表
   dataSourceConfigList.value = await DataSourceConfigApi.getDataSourceConfigList()
-  queryParams.dataSourceConfigId = dataSourceConfigList.value[0].id as number
+  queryParams.dataSourceConfigId = dataSourceConfigList.value[0].id as string
   dialogVisible.value = true
   // 加载表的列表
   await getList()

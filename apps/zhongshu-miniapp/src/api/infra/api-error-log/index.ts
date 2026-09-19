@@ -3,9 +3,9 @@ import { http } from '@/http/http'
 
 /** API 错误日志信息 */
 export interface ApiErrorLog {
-  id: number
+  id: string
   traceId: string
-  userId: number
+  userId: string
   userType: number
   applicationName: string
   requestMethod: string
@@ -22,7 +22,7 @@ export interface ApiErrorLog {
   exceptionFileName: string
   exceptionMethodName: string
   exceptionLineNumber: number
-  processUserId: number
+  processUserId: string
   processStatus: number
   processTime: Date
   resultCode: number
@@ -35,11 +35,11 @@ export function getApiErrorLogPage(params: PageParam) {
 }
 
 /** 获取 API 错误日志详情 */
-export function getApiErrorLog(id: number) {
+export function getApiErrorLog(id: string) {
   return http.get<ApiErrorLog>(`/infra/api-error-log/get?id=${id}`)
 }
 
 /** 更新 API 错误日志的处理状态 */
-export function updateApiErrorLogStatus(id: number, processStatus: number) {
+export function updateApiErrorLogStatus(id: string, processStatus: number) {
   return http.put<boolean>(`/infra/api-error-log/update-status?id=${id}&processStatus=${processStatus}`)
 }

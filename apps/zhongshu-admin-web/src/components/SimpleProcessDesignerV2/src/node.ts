@@ -137,12 +137,12 @@ export function useFormFieldsAndStartUser() {
 export type UserTaskFormType = {
   candidateStrategy: CandidateStrategy
   approveMethod: ApproveMethodType
-  roleIds?: number[] // 角色
-  deptIds?: number[] // 部门
+  roleIds?: string[] // 角色
+  deptIds?: string[] // 部门
   deptLevel?: number // 部门层级
-  userIds?: number[] // 用户
+  userIds?: string[] // 用户
   userGroups?: number[] // 用户组
-  postIds?: number[] // 岗位
+  postIds?: string[] // 岗位
   expression?: string // 流程表达式
   formUser?: string // 表单内用户字段
   formDept?: string // 表单内部门字段
@@ -182,12 +182,12 @@ export type UserTaskFormType = {
 
 export type CopyTaskFormType = {
   candidateStrategy: CandidateStrategy
-  roleIds?: number[] // 角色
-  deptIds?: number[] // 部门
+  roleIds?: string[] // 角色
+  deptIds?: string[] // 部门
   deptLevel?: number // 部门层级
-  userIds?: number[] // 用户
+  userIds?: string[] // 用户
   userGroups?: number[] // 用户组
-  postIds?: number[] // 岗位
+  postIds?: string[] // 岗位
   formUser?: string // 表单内用户字段
   formDept?: string // 表单内部门字段
   expression?: string // 流程表达式
@@ -408,14 +408,14 @@ export function useNodeForm(nodeType: NodeType) {
     }
     switch (candidateStrategy) {
       case CandidateStrategy.USER: {
-        configForm.value.userIds = candidateParam.split(',').map((item) => +item)
+        configForm.value.userIds = candidateParam.split(',').map((item) => item)
         break
       }
       case CandidateStrategy.ROLE:
-        configForm.value.roleIds = candidateParam.split(',').map((item) => +item)
+        configForm.value.roleIds = candidateParam.split(',').map((item) => item)
         break
       case CandidateStrategy.POST:
-        configForm.value.postIds = candidateParam.split(',').map((item) => +item)
+        configForm.value.postIds = candidateParam.split(',').map((item) => item)
         break
       case CandidateStrategy.USER_GROUP:
         configForm.value.userGroups = candidateParam.split(',').map((item) => +item)
@@ -428,7 +428,7 @@ export function useNodeForm(nodeType: NodeType) {
         break
       case CandidateStrategy.DEPT_MEMBER:
       case CandidateStrategy.DEPT_LEADER:
-        configForm.value.deptIds = candidateParam.split(',').map((item) => +item)
+        configForm.value.deptIds = candidateParam.split(',').map((item) => item)
         break
       // 发起人部门负责人
       case CandidateStrategy.START_USER_DEPT_LEADER:
@@ -439,7 +439,7 @@ export function useNodeForm(nodeType: NodeType) {
       case CandidateStrategy.MULTI_LEVEL_DEPT_LEADER: {
         // 候选人参数格式: | 分隔 。左边为部门（多个部门用 , 分隔）。 右边为部门层级
         const paramArray = candidateParam.split('|')
-        configForm.value.deptIds = paramArray[0].split(',').map((item) => +item)
+        configForm.value.deptIds = paramArray[0].split(',').map((item) => item)
         configForm.value.deptLevel = +paramArray[1]
         break
       }

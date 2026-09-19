@@ -1,7 +1,7 @@
 import request from '@/config/axios'
 
 export interface SocialUserVO {
-  id: number
+  id: string
   type: number
   openid: string
   token: string
@@ -19,7 +19,7 @@ export const getSocialUserPage = async (params: any) => {
 }
 
 // 查询社交用户详情
-export const getSocialUser = async (id: number) => {
+export const getSocialUser = async (id: string) => {
   return await request.get({ url: `/system/social-user/get?id=` + id })
 }
 

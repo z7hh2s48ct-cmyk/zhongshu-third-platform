@@ -235,7 +235,7 @@ const queryParams = reactive({
   username: undefined,
   mobile: undefined,
   status: undefined,
-  deptId: undefined as number | undefined,
+  deptId: undefined as string | undefined,
   createTime: []
 })
 const queryFormRef = ref() // 搜索的表单
@@ -265,14 +265,14 @@ const resetQuery = () => {
 }
 
 /** 处理部门被点击 */
-const handleDeptNodeClick = async (deptId: number | undefined) => {
+const handleDeptNodeClick = async (deptId: string | undefined) => {
   queryParams.deptId = deptId
   await getList()
 }
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number) => {
+const openForm = (type: string, id?: string) => {
   formRef.value.open(type, id)
 }
 
@@ -333,7 +333,7 @@ const handleCommand = (command: string, row: UserApi.UserVO) => {
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -346,7 +346,7 @@ const handleDelete = async (id: number) => {
 }
 
 /** 批量删除按钮操作 */
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (rows: UserApi.UserVO[]) => {
   checkedIds.value = rows.map((row) => row.id)
 }

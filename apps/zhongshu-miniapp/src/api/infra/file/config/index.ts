@@ -21,7 +21,7 @@ export interface FileClientConfig {
 
 /** 文件配置信息 */
 export interface FileConfig {
-  id?: number
+  id?: string
   name: string
   storage?: number
   master?: boolean
@@ -37,7 +37,7 @@ export function getFileConfigPage(params: PageParam) {
 }
 
 /** 查询文件配置详情 */
-export function getFileConfig(id: number) {
+export function getFileConfig(id: string) {
   return http.get<FileConfig>(`/infra/file-config/get?id=${id}`)
 }
 
@@ -52,16 +52,16 @@ export function updateFileConfig(data: FileConfig) {
 }
 
 /** 删除文件配置 */
-export function deleteFileConfig(id: number) {
+export function deleteFileConfig(id: string) {
   return http.delete<boolean>(`/infra/file-config/delete?id=${id}`)
 }
 
 /** 更新文件配置为主配置 */
-export function updateFileConfigMaster(id: number) {
+export function updateFileConfigMaster(id: string) {
   return http.put<boolean>(`/infra/file-config/update-master?id=${id}`)
 }
 
 /** 测试文件配置 */
-export function testFileConfig(id: number) {
+export function testFileConfig(id: string) {
   return http.get<string>(`/infra/file-config/test?id=${id}`)
 }

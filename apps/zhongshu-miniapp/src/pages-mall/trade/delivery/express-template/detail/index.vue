@@ -118,7 +118,7 @@ function openRegionPopup(type: 'charge' | 'free') {
 /** 递归展平地区树为 id→名称映射 */
 function flattenArea(list: Area[]) {
   for (const area of list || []) {
-    areaNameMap.value.set(area.id, area.name)
+    areaNameMap.value.set(Number(area.id), area.name)
     if (area.children?.length) {
       flattenArea(area.children)
     }

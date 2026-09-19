@@ -89,7 +89,7 @@ const visible = ref(false) // 搜索弹窗显示状态
 const channelPickerRef = ref<InstanceType<typeof SmsChannelSearchPicker>>() // 短信渠道选择器
 const formData = reactive({
   mobile: undefined as string | undefined,
-  channelId: undefined as number | undefined,
+  channelId: undefined as string | undefined,
   sendStatus: -1,
   receiveStatus: -1,
   sendTime: [undefined, undefined] as [number | undefined, number | undefined],

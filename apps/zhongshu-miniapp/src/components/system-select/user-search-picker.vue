@@ -1,7 +1,7 @@
 <template>
   <UserPicker
     ref="pickerRef"
-    :model-value="modelValue"
+    :model-value="modelValue != null ? String(modelValue) : undefined"
     :title="label || placeholder"
     :disabled="disabled"
     @update:model-value="handleUpdate"
@@ -57,8 +57,8 @@ const emit = defineEmits<{
 const pickerRef = ref<InstanceType<typeof UserPicker>>() // 用户选择器
 
 /** 更新用户编号 */
-function handleUpdate(value: number | number[] | undefined) {
-  emit('update:modelValue', Array.isArray(value) ? value[0] : value)
+function handleUpdate(value: string | string[] | undefined) {
+  emit('update:modelValue', Array.isArray(value) ? Number(value[0]) : value != null ? Number(value) : undefined)
 }
 
 /** 确认用户选择 */
@@ -77,7 +77,7 @@ function handleClear() {
 
 /** 格式化用户编号 */
 function format(value?: number) {
-  return arguments.length > 0 ? pickerRef.value?.format(value) || '' : pickerRef.value?.format() || ''
+  return arguments.length > 0 ? pickerRef.value?.format(value != null ? String(value) : undefined) || '' : pickerRef.value?.format() || ''
 }
 
 defineExpose({ format })

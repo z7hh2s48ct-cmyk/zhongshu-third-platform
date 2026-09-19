@@ -101,7 +101,7 @@ const deptTreeRef = ref<any>() // 部门树组件引用
 const pickerVisible = ref({
   dataScope: false,
 }) // 选择器显示状态
-const formData = ref<{ dataScope?: number, dataScopeDeptIds: number[] }>({
+const formData = ref<{ dataScope?: number, dataScopeDeptIds: string[] }>({
   dataScope: undefined,
   dataScopeDeptIds: [],
 }) // 表单数据
@@ -142,7 +142,7 @@ async function loadData() {
   treeLinkage.value = true
   formData.value = {
     dataScope: props.role.dataScope,
-    dataScopeDeptIds: props.role.dataScopeDeptIds || [],
+    dataScopeDeptIds: (props.role.dataScopeDeptIds || []) as string[],
   }
   dataLoaded.value = true
   try {

@@ -152,10 +152,10 @@ function handleGoSettings() {
 /** 切换当前访问的租户 */
 async function handleTenantConfirm(tenant: TenantVO) {
   const currentTenantId = userStore.visitTenantId || userStore.tenantId
-  if (tenant.id === currentTenantId) {
+  if (String(tenant.id) === String(currentTenantId ?? '')) {
     return
   }
-  const restoreLoginTenant = tenant.id === userStore.tenantId
+  const restoreLoginTenant = String(tenant.id) === String(userStore.tenantId ?? '')
   try {
     await dialog.confirm({
       title: '切换租户',

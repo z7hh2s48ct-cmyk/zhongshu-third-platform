@@ -67,7 +67,7 @@ const categoryList = ref<Demo02Category[]>([]) // 全部分类（构造父级选
 const formData = ref<Demo02Category>({
   id: undefined,
   name: '',
-  parentId: 0,
+  parentId: '0',
 }) // 表单数据
 const formSchema = createFormSchema({
   name: [{ required: true, message: '名字不能为空' }],
@@ -81,7 +81,7 @@ const parentOptions = computed(() => {
   const tree = handleTree(categoryList.value.filter(item => item.id !== props.id))
   const walk = (nodes: Demo02Category[], depth: number) => {
     for (const node of nodes) {
-      options.push({ id: node.id!, name: `${'　'.repeat(depth)}${node.name}` })
+      options.push({ id: node.id != null ? Number(node.id) : undefined, name: `${'　'.repeat(depth)}${node.name}` })
       if (node.children?.length) {
         walk(node.children, depth + 1)
       }

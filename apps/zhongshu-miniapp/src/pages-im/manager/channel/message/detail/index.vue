@@ -136,7 +136,7 @@ async function getDetail() {
       getSimpleUserList(),
     ])
     formData.value = message
-    userMap.value = new Map(users.filter(user => user.id != null).map(user => [user.id!, user]))
+    userMap.value = new Map(users.filter(user => user.id != null).map(user => [Number(user.id), user]))
   } finally {
     toast.close()
   }

@@ -210,21 +210,21 @@ const dialogTitle = computed(() => {
 })
 const activeTab = ref('subPackage')
 const formData = ref({
-  id: undefined as number | undefined,
+  id: undefined as string | undefined,
   code: undefined as string | undefined,
   status: undefined as number | undefined,
   packageDate: undefined as number | undefined,
   salesOrderCode: undefined as string | undefined,
   invoiceCode: undefined as string | undefined,
-  clientId: undefined as number | undefined,
+  clientId: undefined as string | undefined,
   length: undefined as number | undefined,
   width: undefined as number | undefined,
   height: undefined as number | undefined,
-  sizeUnitId: undefined as number | undefined,
+  sizeUnitId: undefined as string | undefined,
   netWeight: undefined as number | undefined,
   grossWeight: undefined as number | undefined,
-  weightUnitId: undefined as number | undefined,
-  inspectorUserId: undefined as number | undefined,
+  weightUnitId: undefined as string | undefined,
+  inspectorUserId: undefined as string | undefined,
   remark: undefined as string | undefined
 })
 const formRules = reactive({

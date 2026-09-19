@@ -2,9 +2,9 @@ import { http } from '@/http/http'
 
 /** 地区信息 */
 export interface Area {
-  id: number
+  id: string
   name: string
-  parentId?: number
+  parentId?: string
   children?: Area[]
 }
 

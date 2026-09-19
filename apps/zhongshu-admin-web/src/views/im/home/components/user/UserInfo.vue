@@ -253,7 +253,7 @@ const genderColor = computed(() => getGenderColor(full.value?.sex))
 
 /** 好友关系记录：来源 / 添加时间 / 是否拉黑从这里取（仅 friend 态下才有意义） */
 const friendInfo = computed(() =>
-  props.user?.id ? friendStore.getFriend(props.user.id) : undefined
+  props.user?.id ? friendStore.getFriend(Number(props.user.id)) : undefined
 )
 
 /** 是否已拉黑：菜单项「加入黑名单 / 移出黑名单」按这个切换 */
@@ -277,7 +277,7 @@ watch(
     if (!id) {
       return
     }
-    const data = (await getSimpleUser(id)) as User
+    const data = (await getSimpleUser(id)) as unknown as User
     full.value = { ...props.user, ...data }
   },
   { immediate: true }
@@ -315,7 +315,7 @@ async function saveRemark() {
   if (next === (props.displayName || '')) {
     return
   }
-  await friendStore.setFriendDisplayName(userId, next)
+  await friendStore.setFriendDisplayName(Number(userId), next)
   message.success('已更新备注')
   emit('saved', next)
 }
@@ -387,7 +387,7 @@ async function handleBlock() {
   } catch {
     return
   }
-  await friendStore.blockFriend(target.id)
+  await friendStore.blockFriend(Number(target.id))
   message.success('已加入黑名单')
 }
 
@@ -397,7 +397,7 @@ async function handleUnblock() {
   if (!targetId) {
     return
   }
-  await friendStore.unblockFriend(targetId)
+  await friendStore.unblockFriend(Number(targetId))
   message.success('已移出黑名单')
 }
 
@@ -434,7 +434,7 @@ async function handleDeleteFriend() {
     return
   }
   try {
-    await friendStore.deleteFriend(target.id, clearConversation.value)
+    await friendStore.deleteFriend(Number(target.id), clearConversation.value)
   } catch (error) {
     console.warn('[IM UserInfo] 删除好友失败', error)
     return

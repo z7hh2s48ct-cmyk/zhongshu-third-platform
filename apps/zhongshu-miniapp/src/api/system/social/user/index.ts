@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 社交用户信息 */
 export interface SocialUser {
-  id?: number
+  id?: string
   type: number
   openid: string
   token: string
@@ -19,7 +19,7 @@ export interface SocialUser {
 
 /** 当前用户的社交绑定信息 */
 export interface SocialUserBind {
-  id: number
+  id: string
   type: number
   openid: string
   nickname?: string
@@ -45,7 +45,7 @@ export function getSocialUserPage(params: PageParam) {
 }
 
 /** 获取社交用户详情 */
-export function getSocialUser(id: number) {
+export function getSocialUser(id: string) {
   return http.get<SocialUser>(`/system/social-user/get?id=${id}`)
 }
 

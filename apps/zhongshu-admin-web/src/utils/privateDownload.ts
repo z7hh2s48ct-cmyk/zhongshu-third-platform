@@ -17,7 +17,7 @@ export type DownloadPhase = 'idle' | 'issuing' | 'redeeming' | 'downloading' | '
 
 export interface PrivateDownloadOptions {
   /** 资产 ID（文件编号） */
-  fileId: number
+  fileId: string
   /** 下载用途（绑定票据，服务端据此校验主体/用途） */
   purpose: string
   /** 单块请求字节数（缺省 1MiB；服务端会收敛分块上限，以返回字节数推进游标） */

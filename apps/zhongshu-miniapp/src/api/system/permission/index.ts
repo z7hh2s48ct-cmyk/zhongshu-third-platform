@@ -2,19 +2,19 @@ import { http } from '@/http/http'
 
 /** 角色菜单权限分配请求 */
 export interface PermissionAssignRoleMenuReq {
-  roleId: number
-  menuIds: number[]
+  roleId: string
+  menuIds: string[]
 }
 
 /** 角色数据权限分配请求 */
 export interface PermissionAssignRoleDataScopeReq {
-  roleId: number
+  roleId: string
   dataScope: number
-  dataScopeDeptIds: number[]
+  dataScopeDeptIds: string[]
 }
 
 /** 获取角色拥有的菜单列表 */
-export function getRoleMenuList(roleId: number) {
+export function getRoleMenuList(roleId: string) {
   return http.get<number[]>(`/system/permission/list-role-menus?roleId=${roleId}`)
 }
 

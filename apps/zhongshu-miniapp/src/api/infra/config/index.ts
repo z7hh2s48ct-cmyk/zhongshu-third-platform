@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 参数配置信息 */
 export interface Config {
-  id?: number
+  id?: string
   category: string
   name: string
   key: string
@@ -20,7 +20,7 @@ export function getConfigPage(params: PageParam) {
 }
 
 /** 获取参数配置详情 */
-export function getConfig(id: number) {
+export function getConfig(id: string) {
   return http.get<Config>(`/infra/config/get?id=${id}`)
 }
 
@@ -40,6 +40,6 @@ export function updateConfig(data: Config) {
 }
 
 /** 删除参数配置 */
-export function deleteConfig(id: number) {
+export function deleteConfig(id: string) {
   return http.delete<boolean>(`/infra/config/delete?id=${id}`)
 }

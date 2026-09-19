@@ -3,7 +3,7 @@ import { http } from '@/http/http'
 
 /** 短信渠道信息 */
 export interface SmsChannel {
-  id?: number
+  id?: string
   code: string
   status: number
   signature: string
@@ -25,7 +25,7 @@ export function getSimpleSmsChannelList() {
 }
 
 /** 获取短信渠道详情 */
-export function getSmsChannel(id: number) {
+export function getSmsChannel(id: string) {
   return http.get<SmsChannel>(`/system/sms-channel/get?id=${id}`)
 }
 
@@ -40,6 +40,6 @@ export function updateSmsChannel(data: SmsChannel) {
 }
 
 /** 删除短信渠道 */
-export function deleteSmsChannel(id: number) {
+export function deleteSmsChannel(id: string) {
   return http.delete<boolean>(`/system/sms-channel/delete?id=${id}`)
 }

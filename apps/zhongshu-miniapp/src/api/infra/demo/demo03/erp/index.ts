@@ -3,23 +3,23 @@ import { http } from '@/http/http'
 
 /** 学生课程（子表，ERP 模式独立增删改查） */
 export interface Demo03Course {
-  id?: number
-  studentId?: number
+  id?: string
+  studentId?: string
   name: string // 名字
   score?: number // 分数
 }
 
 /** 学生班级（子表，ERP 模式独立增删改查） */
 export interface Demo03Grade {
-  id?: number
-  studentId?: number
+  id?: string
+  studentId?: string
   name: string // 名字
   teacher?: string // 班主任
 }
 
 /** 学生（主表，ERP 模式：子表独立提交，主表不含子表） */
 export interface Demo03Student {
-  id?: number
+  id?: string
   name: string // 名字
   sex?: number // 性别
   birthday?: number // 出生日期
@@ -35,7 +35,7 @@ export function getDemo03StudentPage(params: PageParam) {
 }
 
 /** 获取学生详情 */
-export function getDemo03Student(id: number) {
+export function getDemo03Student(id: string) {
   return http.get<Demo03Student>(`${BASE}/get?id=${id}`)
 }
 
@@ -50,19 +50,19 @@ export function updateDemo03Student(data: Demo03Student) {
 }
 
 /** 删除学生 */
-export function deleteDemo03Student(id: number) {
+export function deleteDemo03Student(id: string) {
   return http.delete<boolean>(`${BASE}/delete?id=${id}`)
 }
 
 // ==================== 子表：学生课程 ====================
 
 /** 获取学生课程分页 */
-export function getDemo03CoursePage(params: PageParam & { studentId: number }) {
+export function getDemo03CoursePage(params: PageParam & { studentId: string }) {
   return http.get<PageResult<Demo03Course>>(`${BASE}/demo03-course/page`, params)
 }
 
 /** 获取学生课程详情 */
-export function getDemo03Course(id: number) {
+export function getDemo03Course(id: string) {
   return http.get<Demo03Course>(`${BASE}/demo03-course/get?id=${id}`)
 }
 
@@ -77,19 +77,19 @@ export function updateDemo03Course(data: Demo03Course) {
 }
 
 /** 删除学生课程 */
-export function deleteDemo03Course(id: number) {
+export function deleteDemo03Course(id: string) {
   return http.delete<boolean>(`${BASE}/demo03-course/delete?id=${id}`)
 }
 
 // ==================== 子表：学生班级 ====================
 
 /** 获取学生班级分页 */
-export function getDemo03GradePage(params: PageParam & { studentId: number }) {
+export function getDemo03GradePage(params: PageParam & { studentId: string }) {
   return http.get<PageResult<Demo03Grade>>(`${BASE}/demo03-grade/page`, params)
 }
 
 /** 获取学生班级详情 */
-export function getDemo03Grade(id: number) {
+export function getDemo03Grade(id: string) {
   return http.get<Demo03Grade>(`${BASE}/demo03-grade/get?id=${id}`)
 }
 
@@ -104,6 +104,6 @@ export function updateDemo03Grade(data: Demo03Grade) {
 }
 
 /** 删除学生班级 */
-export function deleteDemo03Grade(id: number) {
+export function deleteDemo03Grade(id: string) {
   return http.delete<boolean>(`${BASE}/demo03-grade/delete?id=${id}`)
 }

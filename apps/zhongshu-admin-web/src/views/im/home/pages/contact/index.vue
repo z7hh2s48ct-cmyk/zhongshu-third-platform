@@ -212,7 +212,7 @@ const friendUser = computed<User | null>(() => {
   }
   const friend = selection.value.friend
   return {
-    id: friend.id,
+    id: Number(friend.id),
     nickname: friend.nickname,
     avatar: friend.avatar
   }

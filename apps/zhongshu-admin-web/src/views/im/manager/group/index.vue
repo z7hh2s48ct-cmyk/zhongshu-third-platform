@@ -196,7 +196,7 @@ const queryParams = reactive({
   pageNo: 1,
   pageSize: 10,
   name: undefined as string | undefined,
-  ownerUserId: undefined as number | undefined,
+  ownerUserId: undefined as string | undefined,
   status: undefined as number | undefined,
   banned: undefined as boolean | undefined,
   createTime: [] as string[]

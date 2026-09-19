@@ -3,17 +3,17 @@ import { http } from '@/http/http'
 
 /** 短信日志信息 */
 export interface SmsLog {
-  id?: number
-  channelId?: number
+  id?: string
+  channelId?: string
   channelCode: string
-  templateId?: number
+  templateId?: string
   templateCode: string
   templateType?: number
   templateContent: string
   templateParams?: Record<string, any>
   apiTemplateId: string
   mobile: string
-  userId?: number
+  userId?: string
   userType?: number
   sendStatus?: number
   sendTime?: string
@@ -34,6 +34,6 @@ export function getSmsLogPage(params: PageParam) {
 }
 
 /** 获取短信日志详情 */
-export function getSmsLog(id: number) {
+export function getSmsLog(id: string) {
   return http.get<SmsLog>(`/system/sms-log/get?id=${id}`)
 }

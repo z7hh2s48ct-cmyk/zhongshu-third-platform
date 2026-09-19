@@ -1,7 +1,7 @@
 import request from '@/config/axios'
 
 export interface PostVO {
-  id?: number
+  id?: string
   name: string
   code: string
   sort: number
@@ -21,7 +21,7 @@ export const getSimplePostList = async (): Promise<PostVO[]> => {
 }
 
 // 查询岗位详情
-export const getPost = async (id: number) => {
+export const getPost = async (id: string) => {
   return await request.get({ url: '/system/post/get?id=' + id })
 }
 
@@ -36,12 +36,12 @@ export const updatePost = async (data: PostVO) => {
 }
 
 // 删除岗位
-export const deletePost = async (id: number) => {
+export const deletePost = async (id: string) => {
   return await request.delete({ url: '/system/post/delete?id=' + id })
 }
 
 // 批量删除岗位
-export const deletePostList = async (ids: number[]) => {
+export const deletePostList = async (ids: string[]) => {
   return await request.delete({ url: '/system/post/delete-list', params: { ids: ids.join(',') } })
 }
 

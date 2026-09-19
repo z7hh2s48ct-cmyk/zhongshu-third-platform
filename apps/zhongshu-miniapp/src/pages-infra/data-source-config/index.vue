@@ -20,7 +20,7 @@
             <view class="text-32rpx text-[#333] font-semibold">
               {{ item.name }}
             </view>
-            <view v-if="item.id === 0" class="rounded-4rpx bg-[#e6f7ff] px-12rpx py-4rpx text-24rpx text-[#1890ff]">
+            <view v-if="item.id === '0'" class="rounded-4rpx bg-[#e6f7ff] px-12rpx py-4rpx text-24rpx text-[#1890ff]">
               主数据源
             </view>
           </view>

@@ -167,7 +167,7 @@ import UserSelectV2 from '@/views/system/user/components/UserSelectV2.vue'
 defineOptions({ name: 'CardProcessList' })
 
 const props = defineProps<{
-  cardId: number
+  cardId: string
   disabled?: boolean
 }>()
 
@@ -181,7 +181,7 @@ const processTotal = ref(0)
 const processQueryParams = reactive({
   pageNo: 1,
   pageSize: 10,
-  cardId: undefined as number | undefined
+  cardId: undefined as string | undefined
 })
 
 /** 查询工序记录列表 */
@@ -213,17 +213,17 @@ const processDialogTitle = ref('')
 const processFormLoading = ref(false)
 const processFormRef = ref()
 const processFormData = ref({
-  id: undefined as number | undefined,
-  cardId: undefined as number | undefined,
+  id: undefined as string | undefined,
+  cardId: undefined as string | undefined,
   sort: undefined as number | undefined,
-  processId: undefined as number | undefined,
+  processId: undefined as string | undefined,
   inputTime: undefined as any,
   outputTime: undefined as any,
   inputQuantity: undefined as number | undefined,
   outputQuantity: undefined as number | undefined,
   unqualifiedQuantity: undefined as number | undefined,
-  workstationId: undefined as number | undefined,
-  userId: undefined as number | undefined,
+  workstationId: undefined as string | undefined,
+  userId: undefined as string | undefined,
   remark: undefined as string | undefined
 })
 const processFormRules = reactive({})

@@ -93,7 +93,7 @@ async function handleSubmit() {
   try {
     const data: Demo03Grade = {
       ...formData.value,
-      studentId: Number(props.studentId) || formData.value.studentId,
+      studentId: props.studentId || formData.value.studentId,
     }
     if (props.id) {
       await updateDemo03Grade(data)

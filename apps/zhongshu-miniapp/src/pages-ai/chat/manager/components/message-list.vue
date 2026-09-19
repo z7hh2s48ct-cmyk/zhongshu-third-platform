@@ -111,7 +111,7 @@ function handleDetail(item: ChatMessage) {
 
 /** 获取用户昵称 */
 function getUserName(userId?: number) {
-  return userList.value.find(user => user.id === userId)?.nickname || String(userId || '-')
+  return userList.value.find(user => String(user.id) === String(userId))?.nickname || String(userId || '-')
 }
 
 /** 初始化 */

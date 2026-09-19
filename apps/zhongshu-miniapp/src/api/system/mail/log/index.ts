@@ -3,16 +3,16 @@ import { http } from '@/http/http'
 
 /** 邮件日志信息 */
 export interface MailLog {
-  id?: number
-  userId?: number
+  id?: string
+  userId?: string
   userType?: number
-  templateId?: number
+  templateId?: string
   templateCode?: string
   templateNickname?: string
   templateTitle?: string
   templateContent?: string
   templateParams?: Record<string, any>
-  accountId?: number
+  accountId?: string
   fromMail?: string
   toMails?: string[]
   ccMails?: string[]
@@ -30,6 +30,6 @@ export function getMailLogPage(params: PageParam) {
 }
 
 /** 获取邮件日志详情 */
-export function getMailLog(id: number) {
+export function getMailLog(id: string) {
   return http.get<MailLog>(`/system/mail-log/get?id=${id}`)
 }

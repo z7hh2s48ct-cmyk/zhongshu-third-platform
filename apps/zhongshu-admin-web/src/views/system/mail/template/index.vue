@@ -245,18 +245,18 @@ const resetQuery = () => {
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number) => {
+const openForm = (type: string, id?: string) => {
   formRef.value.open(type, id)
 }
 
 /** 发送邮件按钮 */
 const sendFormRef = ref()
-const openSendForm = (id: number) => {
+const openSendForm = (id: string) => {
   sendFormRef.value.open(id)
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -269,7 +269,7 @@ const handleDelete = async (id: number) => {
 }
 
 /** 批量删除按钮操作 */
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (rows: MailTemplateApi.MailTemplateVO[]) => {
   checkedIds.value = rows.map((row) => row.id!)
 }
@@ -288,7 +288,7 @@ const handleDeleteBatch = async () => {
 }
 
 /** 获取邮箱账号名称 */
-const getAccountMail = (accountId: number) => {
+const getAccountMail = (accountId: string) => {
   const account = accountList.value.find((account) => account.id === accountId)
   return account?.mail || ''
 }

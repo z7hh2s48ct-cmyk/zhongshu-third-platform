@@ -20,21 +20,21 @@
 import { computed, ref, watch } from 'vue'
 
 export interface BreadcrumbNode {
-  id: number
+  id: string
   name: string
   [key: string]: any
 }
 
 const props = withDefaults(defineProps<{
-  modelValue?: number // 当前父节点编号
+  modelValue?: string // 当前父节点编号
   rootName?: string // 根目录名称
 }>(), {
-  modelValue: 0,
+  modelValue: '0',
   rootName: '根目录',
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number]
+  'update:modelValue': [value: string]
   'back': [] // 返回上一层级事件
 }>()
 
@@ -56,7 +56,7 @@ function handleClick(index: number) {
     return // 点击当前层级不处理
   if (index === 0) {
     breadcrumbs.value = []
-    currentParentId.value = 0
+    currentParentId.value = '0'
   } else {
     breadcrumbs.value = breadcrumbs.value.slice(0, index)
     currentParentId.value = breadcrumbs.value[index - 1].id
@@ -75,7 +75,7 @@ function back(): boolean {
     breadcrumbs.value.pop()
     currentParentId.value = breadcrumbs.value.length > 0
       ? breadcrumbs.value[breadcrumbs.value.length - 1].id
-      : 0
+      : '0'
     return true
   }
   return false
@@ -84,12 +84,12 @@ function back(): boolean {
 /** 重置面包屑 */
 function reset() {
   breadcrumbs.value = []
-  currentParentId.value = 0
+  currentParentId.value = '0'
 }
 
 /** 监听外部 modelValue 变化，重置面包屑（用于外部重置场景） */
 watch(() => props.modelValue, (val) => {
-  if (val === 0 && breadcrumbs.value.length > 0) {
+  if (String(val) === '0' && breadcrumbs.value.length > 0) {
     breadcrumbs.value = []
   }
 })

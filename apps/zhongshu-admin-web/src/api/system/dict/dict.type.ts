@@ -1,7 +1,7 @@
 import request from '@/config/axios'
 
 export interface DictTypeVO {
-  id?: number
+  id?: string
   name: string
   type: string
   status: number
@@ -20,7 +20,7 @@ export const getDictTypePage = (params: PageParam) => {
 }
 
 // 查询字典详情
-export const getDictType = (id: number) => {
+export const getDictType = (id: string) => {
   return request.get({ url: '/system/dict-type/get?id=' + id })
 }
 
@@ -35,12 +35,12 @@ export const updateDictType = (data: DictTypeVO) => {
 }
 
 // 删除字典
-export const deleteDictType = (id: number) => {
+export const deleteDictType = (id: string) => {
   return request.delete({ url: '/system/dict-type/delete?id=' + id })
 }
 
 // 批量删除字典类型
-export const deleteDictTypeList = (ids: number[]) => {
+export const deleteDictTypeList = (ids: string[]) => {
   return request.delete({ url: '/system/dict-type/delete-list', params: { ids: ids.join(',') } })
 }
 

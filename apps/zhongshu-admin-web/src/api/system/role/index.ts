@@ -1,14 +1,14 @@
 import request from '@/config/axios'
 
 export interface RoleVO {
-  id: number
+  id: string
   name: string
   code: string
   sort: number
   status: number
   type: number
   dataScope: number
-  dataScopeDeptIds: number[]
+  dataScopeDeptIds: string[]
   createTime: Date
 }
 
@@ -23,7 +23,7 @@ export const getSimpleRoleList = async (): Promise<RoleVO[]> => {
 }
 
 // 查询角色详情
-export const getRole = async (id: number) => {
+export const getRole = async (id: string) => {
   return await request.get({ url: '/system/role/get?id=' + id })
 }
 
@@ -38,12 +38,12 @@ export const updateRole = async (data: RoleVO) => {
 }
 
 // 删除角色
-export const deleteRole = async (id: number) => {
+export const deleteRole = async (id: string) => {
   return await request.delete({ url: '/system/role/delete?id=' + id })
 }
 
 // 批量删除角色
-export const deleteRoleList = async (ids: number[]) => {
+export const deleteRoleList = async (ids: string[]) => {
   return await request.delete({ url: '/system/role/delete-list', params: { ids: ids.join(',') } })
 }
 

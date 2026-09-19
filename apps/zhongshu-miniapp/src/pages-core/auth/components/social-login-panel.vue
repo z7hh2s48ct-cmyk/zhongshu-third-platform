@@ -138,7 +138,7 @@ async function handleH5SocialLogin(type: number) {
     const started = await startH5SocialAuth({
       purpose: 'login',
       socialType: type,
-      tenantId: userStore.tenantId || undefined,
+      tenantId: userStore.tenantId ?? undefined,
       redirect: props.redirectUrl,
     })
     if (!started) {
@@ -220,7 +220,7 @@ function restoreSocialBindingContext() {
     return
   }
   if (context.tenantId) {
-    userStore.setTenantId(context.tenantId)
+    userStore.setTenantId(context.tenantId != null ? String(context.tenantId) : undefined)
   }
   emit('update:modelValue', context)
   contextReady.value = true

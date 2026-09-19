@@ -3,7 +3,7 @@ import request from '@/config/axios'
 // 文件预签名地址 Response VO
 export interface FilePresignedUrlRespVO {
   // 文件配置编号
-  configId: number
+  configId: string
   // 文件上传 URL
   uploadUrl: string
   // 文件 URL
@@ -18,12 +18,12 @@ export const getFilePage = (params: PageParam) => {
 }
 
 // 删除文件
-export const deleteFile = (id: number) => {
+export const deleteFile = (id: string) => {
   return request.delete({ url: '/infra/file/delete?id=' + id })
 }
 
 // 批量删除文件（ZS-FILE-005.A：返回逐项结果，中段失败不伪报全成功）
-export const deleteFileList = (ids: number[]) => {
+export const deleteFileList = (ids: string[]) => {
   return request.delete<{ successIds: number[]; failures: { id: number; errorMessage: string }[] }>({
     url: '/infra/file/delete-list',
     params: { ids: ids.join(',') }
@@ -75,7 +75,7 @@ export interface FileUploadCredentialCreateRespVO {
 
 /** ZS-FILE-004.A：交付票据签发请求（主体绑定，fileId + 用途）。 */
 export interface FileDeliveryTicketIssueReqVO {
-  fileId: number
+  fileId: string
   purpose: string
 }
 

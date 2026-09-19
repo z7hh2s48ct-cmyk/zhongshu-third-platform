@@ -103,11 +103,11 @@ const dialogTitle = computed(() => {
   return titles[formType.value] || formType.value
 })
 const formData = ref({
-  id: undefined as number | undefined,
-  planId: undefined as number | undefined,
-  machineryId: undefined as number | undefined,
+  id: undefined as string | undefined,
+  planId: undefined as string | undefined,
+  machineryId: undefined as string | undefined,
   maintenTime: undefined,
-  userId: undefined as number | undefined,
+  userId: undefined as string | undefined,
   status: undefined as number | undefined,
   remark: ''
 })
@@ -194,11 +194,11 @@ const handleSubmit = async () => {
 /** 重置表单 */
 const resetForm = () => {
   formData.value = {
-    id: undefined as number | undefined,
-    planId: undefined as number | undefined,
-    machineryId: undefined as number | undefined,
+    id: undefined as string | undefined,
+    planId: undefined as string | undefined,
+    machineryId: undefined as string | undefined,
     maintenTime: undefined,
-    userId: undefined as number | undefined,
+    userId: undefined as string | undefined,
     status: undefined as number | undefined,
     remark: ''
   }

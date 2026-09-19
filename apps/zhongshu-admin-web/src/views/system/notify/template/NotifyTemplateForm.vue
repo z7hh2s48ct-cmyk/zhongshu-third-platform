@@ -82,7 +82,7 @@ const formRules = reactive({
 const formRef = ref() // 表单 Ref
 
 /** 打开弹窗 */
-const open = async (type: string, id?: number) => {
+const open = async (type: string, id?: string) => {
   dialogVisible.value = true
   dialogTitle.value = type
   formType.value = type

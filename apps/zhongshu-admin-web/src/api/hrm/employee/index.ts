@@ -19,7 +19,7 @@ export interface HrmEmployeeVO {
   age?: number // 年龄
   address?: string // 户籍地址
   highestEducation?: number // 最高学历
-  deptId?: number // 部门编号
+  deptId?: string // 部门编号
   deptName?: string // 部门名称
   leaderEmployeeId?: number // 直属上级员工编号
   leaderEmployeeName?: string // 直属上级员工姓名
@@ -59,7 +59,7 @@ export interface HrmEmployeeStatusCountVO {
 
 // HRM 员工部门统计 VO
 export interface HrmEmployeeDeptStatisticsVO {
-  deptId: number // 部门编号
+  deptId: string // 部门编号
   activeCount: number // 在职员工人数
   fullTimeCount: number // 全职员工人数
   nonFullTimeCount: number // 非全职员工人数
@@ -141,7 +141,7 @@ export interface HrmEmployeeCreateFromUserReqVO {
   userId: number // 后台用户编号
   jobNumber: string // 工号
   mobile: string // 员工手机号
-  deptId?: number // 部门编号
+  deptId?: string // 部门编号
   leaderEmployeeId?: number // 直属上级员工编号
   type: number // 聘用形式
   status?: number // 非正式员工状态

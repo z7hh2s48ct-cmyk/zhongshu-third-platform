@@ -9,10 +9,10 @@ import type { RouteAccessSnapshot } from '@/router/access'
 const { wsCache } = useCache()
 
 interface UserVO {
-  id: number
+  id: string
   avatar: string
   nickname: string
-  deptId: number
+  deptId: string
 }
 
 interface UserInfoVO {
@@ -36,10 +36,10 @@ export const useUserStore = defineStore('admin-user', {
     roles: [],
     isSetUser: false,
     user: {
-      id: 0,
+      id: '0',
       avatar: '',
       nickname: '',
-      deptId: 0
+      deptId: '0'
     },
     menus: [],
     routeAccess: emptyRouteAccessSnapshot()
@@ -133,10 +133,10 @@ export const useUserStore = defineStore('admin-user', {
       this.roles = []
       this.isSetUser = false
       this.user = {
-        id: 0,
+        id: '0',
         avatar: '',
         nickname: '',
-        deptId: 0
+        deptId: '0'
       }
       // 授权快照与菜单必须一并清空：否则撤权 / 退出后旧判定依据仍被复用（卡片「验收③」）
       this.menus = []

@@ -3,8 +3,8 @@ import { http } from '@/http/http'
 
 /** 定时任务日志信息 */
 export interface JobLog {
-  id?: number
-  jobId: number
+  id?: string
+  jobId: string
   handlerName: string
   handlerParam: string
   cronExpression: string
@@ -23,6 +23,6 @@ export function getJobLogPage(params: PageParam) {
 }
 
 /** 获取定时任务日志详情 */
-export function getJobLog(id: number) {
+export function getJobLog(id: string) {
   return http.get<JobLog>(`/infra/job-log/get?id=${id}`)
 }

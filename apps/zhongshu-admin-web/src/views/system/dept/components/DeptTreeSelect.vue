@@ -49,7 +49,7 @@ withDefaults(
 )
 
 const emit = defineEmits<{
-  'node-click': [deptId: number | undefined]
+  'node-click': [deptId: string | undefined]
 }>()
 
 const filterText = ref('') // 过滤关键字
@@ -95,7 +95,7 @@ const reset = () => {
   treeRef.value?.setCurrentKey(undefined)
 }
 
-const setCurrent = (deptId: number) => {
+const setCurrent = (deptId: string) => {
   treeRef.value?.setCurrentKey(deptId)
 }
 

@@ -143,11 +143,11 @@ const dialogTitle = computed(() => {
   return titles[formType.value] || formType.value
 })
 const formData = ref({
-  id: undefined as number | undefined,
+  id: undefined as string | undefined,
   code: undefined as string | undefined,
-  workOrderId: undefined as number | undefined,
+  workOrderId: undefined as string | undefined,
   batchCode: undefined as string | undefined,
-  itemId: undefined as number | undefined,
+  itemId: undefined as string | undefined,
   transferedQuantity: undefined as number | undefined,
   status: undefined as number | undefined,
   remark: undefined as string | undefined

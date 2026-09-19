@@ -474,8 +474,8 @@ function getDefaultQueryParams() {
     pageSize: 10,
     no: undefined as string | undefined,
     status: undefined as number | undefined,
-    warehouseId: undefined as number | undefined,
-    merchantId: undefined as number | undefined,
+    warehouseId: undefined as string | undefined,
+    merchantId: undefined as string | undefined,
     orderTime: undefined as string[] | undefined,
     totalQuantityMin: undefined as number | undefined,
     totalQuantityMax: undefined as number | undefined,
@@ -483,8 +483,8 @@ function getDefaultQueryParams() {
     totalPriceMax: undefined as number | undefined,
     type: undefined as number | undefined,
     bizOrderNo: undefined as string | undefined,
-    creator: undefined as number | undefined,
-    updater: undefined as number | undefined,
+    creator: undefined as string | undefined,
+    updater: undefined as string | undefined,
     createTime: undefined as string[] | undefined,
     updateTime: undefined as string[] | undefined
   }

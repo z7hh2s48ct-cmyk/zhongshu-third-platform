@@ -1,12 +1,17 @@
 package cn.zszj.framework.swagger.config;
 
 import com.github.xiaoymin.knife4j.spring.configuration.Knife4jAutoConfiguration;
+import cn.zszj.framework.common.util.json.databind.IdToStringAnnotationIntrospector;
+import io.swagger.v3.core.converter.AnnotatedType;
+import io.swagger.v3.core.converter.ModelConverter;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
+import io.swagger.v3.oas.models.media.ArraySchema;
 import io.swagger.v3.oas.models.media.IntegerSchema;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
@@ -109,6 +114,34 @@ public class ZszjSwaggerAutoConfiguration {
     }
 
     // ========== 分组 OpenAPI 配置 ==========
+
+    /**
+     * OpenAPI schema 的 ID 类型同步（ZS-SEC-009.B）
+     *
+     * <p>{@link cn.zszj.framework.jackson.config.ZszjJacksonAutoConfiguration} 激活 ID→string wire
+     * 合同后，文档若仍把 id/*Id/*Ids 标为 integer 即与实际 wire 不符。本 converter 按与
+     * {@link IdToStringAnnotationIntrospector} 一致的命名约定把这些字段的 schema type 改写为
+     * string（含集合 items）；非 ID 的 Long（count/total）保持 number。仅影响文档生成。
+     */
+    @Bean
+    public ModelConverter idToStringSchemaConverter() {
+        return (type, context, chain) -> {
+            Schema<?> resolved = chain.hasNext() ? chain.next().resolve(type, context, chain) : null;
+            if (resolved == null || !IdToStringAnnotationIntrospector.isIdName(propertyName(type))) {
+                return resolved;
+            }
+            if (resolved instanceof ArraySchema arraySchema && arraySchema.getItems() != null) {
+                arraySchema.getItems().setType("string");
+            } else {
+                resolved.setType("string");
+            }
+            return resolved;
+        };
+    }
+
+    private static String propertyName(AnnotatedType type) {
+        return type != null ? type.getPropertyName() : null;
+    }
 
     /**
      * 所有模块的 API 分组

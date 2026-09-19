@@ -41,7 +41,7 @@ definePage({
 const tabTypes: string[] = ['job', 'log']
 const tabIndex = ref(0)
 const tabType = computed<string>(() => tabTypes[tabIndex.value])
-const selectedJobId = ref<number>() // 选中的任务 ID
+const selectedJobId = ref<string>() // 选中的任务 ID
 
 /** Tab 切换 */
 function handleTabChange({ index }: { index: number }) {
@@ -49,7 +49,7 @@ function handleTabChange({ index }: { index: number }) {
 }
 
 /** 查看调度日志 */
-function handleViewLog(jobId: number) {
+function handleViewLog(jobId: string) {
   selectedJobId.value = jobId
   tabIndex.value = 1 // 切换到调度日志 tab
 }
@@ -65,7 +65,7 @@ onMounted(() => {
   if (props.tab === 'log') {
     tabIndex.value = 1
     if (props.jobId) {
-      selectedJobId.value = Number(props.jobId)
+      selectedJobId.value = props.jobId
     }
   }
 })

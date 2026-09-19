@@ -22,7 +22,7 @@ import { onMounted, ref } from 'vue'
 import { getSimpleSmsChannelList } from '@/api/system/sms/channel'
 
 const props = withDefaults(defineProps<{
-  modelValue?: number
+  modelValue?: string
   label?: string
   labelWidth?: string
   placeholder?: string
@@ -39,7 +39,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | undefined]
+  'update:modelValue': [value: string | undefined]
   'change': [item: SmsChannel | undefined]
 }>()
 
@@ -54,12 +54,12 @@ async function loadOptions() {
 }
 
 /** 更新短信渠道 */
-function handleUpdate(value?: number) {
+function handleUpdate(value?: string) {
   emit('update:modelValue', value)
 }
 
 /** 选择短信渠道 */
-function handleConfirm(value?: number) {
+function handleConfirm(value?: string) {
   emit('change', options.value.find(item => item.id === value))
 }
 

@@ -18,7 +18,7 @@ import { onMounted, ref } from 'vue'
 import { getSimpleSmsChannelList } from '@/api/system/sms/channel'
 
 const props = withDefaults(defineProps<{
-  modelValue?: number
+  modelValue?: string
   label?: string
   placeholder?: string
 }>(), {
@@ -27,7 +27,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | undefined]
+  'update:modelValue': [value: string | undefined]
   'change': [item: SmsChannel | undefined]
 }>()
 
@@ -35,13 +35,13 @@ const pickerRef = ref<YdSearchPickerExpose>() // 通用搜索选择器
 const options = ref<SmsChannel[]>([]) // 短信渠道选项
 
 /** 更新短信渠道 */
-function handleUpdate(value?: number) {
+function handleUpdate(value?: string) {
   emit('update:modelValue', value)
   emit('change', options.value.find(item => item.id === value))
 }
 
 /** 格式化短信渠道 */
-function format(value?: number) {
+function format(value?: string) {
   return pickerRef.value?.format(value) || (value == null ? '' : String(value))
 }
 

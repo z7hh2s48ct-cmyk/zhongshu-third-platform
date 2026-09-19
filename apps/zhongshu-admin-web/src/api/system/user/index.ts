@@ -1,10 +1,10 @@
 import request from '@/config/axios'
 
 export interface UserVO {
-  id: number
+  id: string
   username: string
   nickname: string
-  deptId: number
+  deptId: string
   deptName?: string
   postIds: string[]
   email: string
@@ -42,12 +42,12 @@ export const getUserPage = (params: PageParam) => {
 }
 
 // 查询用户管理列表
-export const getUserList = (ids: number[]) => {
+export const getUserList = (ids: string[]) => {
   return request.get({ url: '/system/user/list', params: { ids: ids.join(',') } })
 }
 
 // 查询用户详情
-export const getUser = (id: number) => {
+export const getUser = (id: string) => {
   return request.get({ url: '/system/user/get?id=' + id })
 }
 
@@ -62,12 +62,12 @@ export const updateUser = (data: UserVO) => {
 }
 
 // 删除用户
-export const deleteUser = (id: number) => {
+export const deleteUser = (id: string) => {
   return request.delete({ url: '/system/user/delete?id=' + id })
 }
 
 // 批量删除用户
-export const deleteUserList = (ids: number[]) => {
+export const deleteUserList = (ids: string[]) => {
   return request.delete({ url: '/system/user/delete-list', params: { ids: ids.join(',') } })
 }
 
@@ -82,7 +82,7 @@ export const importUserTemplate = () => {
 }
 
 // 用户密码重置
-export const resetUserPassword = (id: number, password: string) => {
+export const resetUserPassword = (id: string, password: string) => {
   const data = {
     id,
     password
@@ -91,7 +91,7 @@ export const resetUserPassword = (id: number, password: string) => {
 }
 
 // 用户状态修改
-export const updateUserStatus = (id: number, status: number) => {
+export const updateUserStatus = (id: string, status: number) => {
   const data = {
     id,
     status

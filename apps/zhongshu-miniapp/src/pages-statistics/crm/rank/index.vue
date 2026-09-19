@@ -12,7 +12,7 @@
       :dept-id="filters.deptId"
       :initial-start-time="defaultStartTime"
       :initial-end-time="defaultEndTime"
-      :default-dept-id="defaultDeptId"
+      :default-dept-id="defaultDeptId != null ? String(defaultDeptId) : undefined"
       @search="handleQuery"
       @reset="handleReset"
       @ready="handleSearchReady"

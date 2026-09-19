@@ -95,7 +95,7 @@ const sendVisible = ref(false)
 const accountList = ref<MailAccount[]>([])
 
 /** 获取邮箱账号名称 */
-function getAccountMail(accountId?: number) {
+function getAccountMail(accountId?: string) {
   return accountList.value.find((item: MailAccount) => item.id === accountId)?.mail
 }
 

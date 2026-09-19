@@ -3,9 +3,9 @@ import { http } from '@/http/http'
 
 /** 登录日志信息 */
 export interface LoginLog {
-  id?: number
+  id?: string
   traceId?: string
-  userId?: number
+  userId?: string
   userType?: number
   logType?: number
   username?: string
@@ -21,6 +21,6 @@ export function getLoginLogPage(params: PageParam) {
 }
 
 /** 获取登录日志详情 */
-export function getLoginLog(id: number) {
+export function getLoginLog(id: string) {
   return http.get<LoginLog>(`/system/login-log/get?id=${id}`)
 }

@@ -56,7 +56,7 @@ const treeProps = {
   value: 'id',
 } // 树字段映射
 const deptOptions = computed<DeptOption[]>(() => { // 部门树形选项
-  const departments = handleTree<DeptOption>(deptList.value)
+  const departments = handleTree<DeptOption>(deptList.value.map(d => ({ ...d, id: d.id != null ? Number(d.id) : undefined })) as unknown as DeptOption[])
   return props.showRoot ? [{ id: 0, name: '顶级部门' }, ...departments] : departments
 })
 let loadingPromise: Promise<void> | undefined // 部门列表加载请求

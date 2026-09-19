@@ -21,8 +21,8 @@ export const useUserStore = defineStore(
   () => {
     // 定义用户信息
     const userInfo = ref<IUserInfoRes>({ ...userInfoState })
-    const tenantId = ref<number | null>(null) // 租户编号
-    const visitTenantId = ref<number | null>(null) // 当前访问的租户编号
+    const tenantId = ref<string | null>(null) // 租户编号
+    const visitTenantId = ref<string | null>(null) // 当前访问的租户编号
     const roles = ref<string[]>([]) // 角色标识列表
     const permissions = ref<string[]>([]) // 权限标识列表
     const favoriteMenus = ref<string[]>([]) // 常用菜单 key 列表
@@ -56,13 +56,13 @@ export const useUserStore = defineStore(
     }
 
     /** 设置租户编号 */
-    const setTenantId = (id: number) => {
+    const setTenantId = (id: string) => {
       tenantId.value = id
     }
 
     /** 设置当前访问的租户编号 */
     const setVisitTenantId = (id: number | null) => {
-      visitTenantId.value = id
+      visitTenantId.value = id != null ? String(id) : null
     }
 
     /** 设置常用菜单 */

@@ -177,8 +177,8 @@ const list = ref<ManagerGroupMessageApi.ImManagerGroupMessageVO[]>([]) // 列表
 const queryParams = reactive({
   pageNo: 1,
   pageSize: 10,
-  groupId: undefined as number | undefined,
-  senderId: undefined as number | undefined,
+  groupId: undefined as string | undefined,
+  senderId: undefined as string | undefined,
   type: undefined as number | undefined,
   content: undefined as string | undefined,
   sendTime: [] as string[]

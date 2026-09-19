@@ -279,18 +279,18 @@ const resetQuery = () => {
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number) => {
+const openForm = (type: string, id?: string) => {
   formRef.value.open(type, id)
 }
 
 /** 发送短信按钮 */
 const sendFormRef = ref()
-const openSendForm = (id: number) => {
+const openSendForm = (id: string) => {
   sendFormRef.value.open(id)
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -303,7 +303,7 @@ const handleDelete = async (id: number) => {
 }
 
 /** 批量删除按钮操作 */
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (rows: SmsTemplateApi.SmsTemplateVO[]) => {
   checkedIds.value = rows.map((row) => row.id!)
 }

@@ -117,11 +117,12 @@ import { getSimpleDeptList } from '@/api/system/dept'
 import { getPlaceholder } from '../../core/utils'
 import { isMultipleSelect, isSameValue, normalizeSelectValue } from './utils'
 
-type DeptOption = CascaderOption & CustomSelectOption & {
+type DeptOption = Omit<CascaderOption, 'value'> & Omit<CustomSelectOption, 'value'> & {
+  value?: string | number
   children?: DeptOption[]
-  id?: number
+  id?: string | number
   name: string
-  parentId?: number
+  parentId?: string | number
 }
 
 const props = defineProps<{
@@ -324,7 +325,7 @@ function buildNestedDeptTree(list: Dept[], parentPath = '', level = 0): DeptOpti
 }
 
 function buildFlatDeptTree(list: Dept[]) {
-  const nodeMap = new Map<number, Dept & { children: Dept[] }>()
+  const nodeMap = new Map<any, any>()
   const roots: Array<Dept & { children: Dept[] }> = []
 
   list.forEach((dept) => {

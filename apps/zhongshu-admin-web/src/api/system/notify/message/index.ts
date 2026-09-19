@@ -2,10 +2,10 @@ import request from '@/config/axios'
 import qs from 'qs'
 
 export interface NotifyMessageVO {
-  id: number
-  userId: number
+  id: string
+  userId: string
   userType: number
-  templateId: number
+  templateId: string
   templateCode: string
   templateNickname: string
   templateContent: string
@@ -65,7 +65,7 @@ export interface NotifyMessageLandingResult {
 
 // ZS-MSG-003：解析站内信落点（跳转二次授权：归属 → 注册 → 模块 → 业务重授权，服务端统一裁决）
 export const resolveNotifyMessageLanding = async (
-  id: number,
+  id: string,
   client: 'WEB' | 'MOBILE'
 ): Promise<NotifyMessageLandingResult> => {
   return await request.get({ url: '/system/notify-message/get-landing', params: { id, client } })

@@ -89,7 +89,7 @@ const dialog = useDialog()
 const toast = useToast()
 const formData = ref<DeliveryPickUpStore>({} as DeliveryPickUpStore) // 详情数据
 const deleting = ref(false) // 删除状态
-const bindStaffIds = ref<number[]>([]) // 绑定的核销员用户编号（与已绑定保持同步，打开选择器即回显）
+const bindStaffIds = ref<string[]>([]) // 绑定的核销员用户编号（与已绑定保持同步，打开选择器即回显）
 const binding = ref(false) // 绑定提交状态
 const staffPickerRef = ref<InstanceType<typeof UserPicker>>() // 核销员选择器
 
@@ -107,7 +107,7 @@ async function getDetail() {
     toast.loading('加载中...')
     formData.value = await getDeliveryPickUpStore(Number(props.id))
     // 详情 get 返回 verifyUsers（用户对象），取 id 回显已绑定核销员
-    bindStaffIds.value = (formData.value.verifyUsers || []).map(u => Number(u.id)).filter(Boolean)
+    bindStaffIds.value = (formData.value.verifyUsers || []).map(u => String(u.id)).filter(Boolean)
   } finally {
     toast.close()
   }

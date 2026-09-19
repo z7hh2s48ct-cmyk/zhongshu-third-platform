@@ -88,9 +88,9 @@ const loading = ref(false) // 地区树加载状态
 const areaList = ref<Area[]>([]) // 完整地区树数据
 const showIpQuery = ref(false) // 是否显示 IP 查询弹窗
 
-const currentParentId = ref(0) // 当前层级的父节点编号
+const currentParentId = ref('0') // 当前层级的父节点编号
 const currentList = computed(() => {
-  if (currentParentId.value === 0) {
+  if (currentParentId.value === '0') {
     return areaList.value
   }
   return findChildren(areaList.value, currentParentId.value)

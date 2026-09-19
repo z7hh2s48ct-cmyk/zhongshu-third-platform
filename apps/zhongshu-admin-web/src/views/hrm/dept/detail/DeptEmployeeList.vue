@@ -80,7 +80,7 @@ import { HrmEmployeeStatusTab } from '@/views/hrm/utils/constants'
 defineOptions({ name: 'HrmDeptEmployeeList' })
 
 const props = defineProps<{
-  deptId: number
+  deptId: string
 }>()
 
 const router = useRouter() // 路由

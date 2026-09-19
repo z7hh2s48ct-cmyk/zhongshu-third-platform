@@ -336,7 +336,7 @@ const statusIconNodeTypes = [
 const customApproveUsers = ref<Record<string, any[]>>({})
 const failedAvatarKeys = ref<Set<string>>(new Set())
 const userPickerRef = ref<InstanceType<typeof UserPicker>>() // 用户选择器
-const selectedUserIds = ref<number[]>([]) // 当前选择的用户编号
+const selectedUserIds = ref<string[]>([]) // 当前选择的用户编号
 const currentActivityId = ref<string>() // 当前审批节点编号
 
 /** 获取审批节点类型图标 */
@@ -500,9 +500,9 @@ function handleCustomUserSelectConfirm(activityId: string, users: SystemUser[]) 
 }
 
 /** 获取选中的用户ID数组 */
-function getSelectedUserIds(activityId: string): number[] {
+function getSelectedUserIds(activityId: string): string[] {
   const users = customApproveUsers.value[activityId] || []
-  return users.map(user => user.id).filter(id => id !== undefined)
+  return users.map(user => user.id != null ? String(user.id) : undefined).filter(id => id !== undefined)
 }
 
 /** 跳转子流程 */

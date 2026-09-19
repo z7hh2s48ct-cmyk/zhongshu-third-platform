@@ -46,7 +46,7 @@
             type="primary"
             @click="openForm('update', scope.row.id)"
             v-hasPermi="['infra:data-source-config:update']"
-            :disabled="scope.row.id === 0"
+            :disabled="scope.row.id === '0'"
           >
             编辑
           </el-button>
@@ -55,7 +55,7 @@
             type="danger"
             @click="handleDelete(scope.row.id)"
             v-hasPermi="['infra:data-source-config:delete']"
-            :disabled="scope.row.id === 0"
+            :disabled="scope.row.id === '0'"
           >
             删除
           </el-button>
@@ -92,12 +92,12 @@ const getList = async () => {
 
 /** 添加/修改操作 */
 const formRef = ref()
-const openForm = (type: string, id?: number) => {
+const openForm = (type: string, id?: string) => {
   formRef.value.open(type, id)
 }
 
 /** 删除按钮操作 */
-const handleDelete = async (id: number) => {
+const handleDelete = async (id: string) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
@@ -110,10 +110,10 @@ const handleDelete = async (id: number) => {
 }
 
 /** 批量删除按钮操作 */
-const checkedIds = ref<number[]>([])
+const checkedIds = ref<string[]>([])
 const handleRowCheckboxChange = (rows: DataSourceConfigApi.DataSourceConfigVO[]) => {
   // 过滤掉id为 0 的主数据源
-  checkedIds.value = rows.map((row) => row.id!).filter((id) => id !== 0 && Boolean(id))
+  checkedIds.value = rows.map((row) => row.id!).filter((id) => id !== '0' && Boolean(id))
 }
 
 const handleDeleteBatch = async () => {

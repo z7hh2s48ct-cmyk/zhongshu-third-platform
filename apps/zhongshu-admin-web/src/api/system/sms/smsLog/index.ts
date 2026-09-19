@@ -1,17 +1,17 @@
 import request from '@/config/axios'
 
 export interface SmsLogVO {
-  id: number | null
-  channelId: number | null
+  id: string | null
+  channelId: string | null
   channelCode: string
-  templateId: number | null
+  templateId: string | null
   templateCode: string
   templateType: number | null
   templateContent: string
   templateParams: Map<string, object> | null
   apiTemplateId: string
   mobile: string
-  userId: number | null
+  userId: string | null
   userType: number | null
   sendStatus: number | null
   sendTime: Date | null

@@ -81,13 +81,13 @@ const { hasAccessByCodes } = useAccess()
 const loading = ref(false) // 加载状态
 const searchName = ref('') // 名称搜索
 const list = ref<Demo02Category[]>([]) // 完整分类列表（树形结构）
-const currentParentId = ref(0) // 当前层级的父节点编号
+const currentParentId = ref('0') // 当前层级的父节点编号
 const breadcrumbRef = ref<InstanceType<typeof Breadcrumb>>()
 
 /** 当前层级的分类列表 */
 const currentList = computed(() => {
-  if (currentParentId.value === 0) {
-    return list.value.filter(item => item.parentId === 0)
+  if (currentParentId.value === '0') {
+    return list.value.filter(item => item.parentId === '0')
   }
   return findChildren(list.value, currentParentId.value)
 })
@@ -112,7 +112,7 @@ async function getList() {
 
 /** 搜索 */
 function handleSearch() {
-  currentParentId.value = 0
+  currentParentId.value = '0'
   breadcrumbRef.value?.reset()
   getList()
 }

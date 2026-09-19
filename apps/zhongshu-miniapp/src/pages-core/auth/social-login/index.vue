@@ -115,7 +115,7 @@ async function handleSocialCallback(options: Record<string, any>) {
     || state !== context.state
     || (callbackPurpose && callbackPurpose !== context.purpose)
     || (callbackSocialType && Number(callbackSocialType) !== context.socialType)
-    || (callbackTenantId && Number(callbackTenantId) !== context.tenantId)
+    || (callbackTenantId && String(callbackTenantId) !== String(context.tenantId ?? ''))
     || (tenantEnabled && !context.tenantId)
   ) {
     status.value = 'failed'
@@ -124,7 +124,7 @@ async function handleSocialCallback(options: Record<string, any>) {
   }
   const { socialType, tenantId } = context
   if (tenantId) {
-    useUserStore().setTenantId(tenantId)
+    useUserStore().setTenantId(tenantId != null ? String(tenantId) : undefined)
   }
 
   try {

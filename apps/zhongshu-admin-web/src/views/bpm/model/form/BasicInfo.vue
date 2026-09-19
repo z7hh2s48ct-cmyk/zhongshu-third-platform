@@ -308,7 +308,7 @@ const handleStartUserTypeChange = (value: number) => {
 const handleRemoveStartUser = (user: UserVO) => {
   modelData.value = {
     ...modelData.value,
-    startUserIds: modelData.value.startUserIds.filter((id: number) => id !== user.id)
+    startUserIds: modelData.value.startUserIds.filter((id) => id !== user.id)
   }
 }
 
@@ -316,7 +316,7 @@ const handleRemoveStartUser = (user: UserVO) => {
 const handleRemoveStartDept = (dept: DeptVO) => {
   modelData.value = {
     ...modelData.value,
-    startDeptIds: modelData.value.startDeptIds.filter((id: number) => id !== dept.id)
+    startDeptIds: modelData.value.startDeptIds.filter((id) => id !== dept.id)
   }
 }
 
@@ -324,7 +324,7 @@ const handleRemoveStartDept = (dept: DeptVO) => {
 const handleRemoveManagerUser = (user: UserVO) => {
   modelData.value = {
     ...modelData.value,
-    managerUserIds: modelData.value.managerUserIds.filter((id: number) => id !== user.id)
+    managerUserIds: modelData.value.managerUserIds.filter((id) => id !== user.id)
   }
 }
 

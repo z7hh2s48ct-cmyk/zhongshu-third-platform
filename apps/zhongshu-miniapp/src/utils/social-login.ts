@@ -6,7 +6,7 @@ export type SocialLoginPurpose = 'login' | 'bind'
 interface SocialLoginContextBase {
   purpose: SocialLoginPurpose
   socialType: number
-  tenantId?: number
+  tenantId?: string
   redirect?: string
   createdAt: number
 }
@@ -32,7 +32,7 @@ type SocialLoginContextInput
 interface StartH5SocialAuthOptions {
   purpose: SocialLoginPurpose
   socialType: number
-  tenantId?: number
+  tenantId?: string
   redirect?: string
 }
 
