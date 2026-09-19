@@ -20,8 +20,9 @@ import java.util.List;
  *   <li><b>短时</b>：TTL 默认 60s（{@code zszj.security.ws-ticket.ttl-seconds}），过期自动清理；</li>
  *   <li><b>一次性</b>：{@link #consumeTicket(String)} 以 GETDEL 原子取删——重放/并发握手只有一方
  *       能取到，其余返回 null（拒绝）；</li>
- *   <li><b>签发限流</b>：{@link #tryAcquireIssueQuota} 按用户约束未消费票据积压（60s 窗口内上限
- *       {@value #MAX_OUTSTANDING_TICKETS_PER_USER} 张），防取票风暴累积；</li>
+ *   <li><b>签发限流</b>：{@link #tryAcquireIssueQuota} 按用户固定窗口（60s ≤
+ *       {@value #MAX_ISSUE_PER_WINDOW} 次）限流签发频次——消费/过期不归还计数，非「未消费积压」
+ *       口径（r2 P3 正名），防取票风暴；</li>
  *   <li><b>载荷</b>：{@link OAuth2WsTicketStore}（主体快照 + 绑定访问令牌，令牌仅存服务端 Redis，
  *       不随任何响应/URL 出域）。</li>
  * </ol>
@@ -34,7 +35,7 @@ public class OAuth2WsTicketRedisDAO {
     /** 票据键前缀（一次性短时票据） */
     private static final String TICKET_KEY_PREFIX = "oauth2_ws_ticket:";
 
-    /** 按用户未消费票据积压计数键前缀 */
+    /** 按用户签发频次计数键前缀 */
     private static final String USER_TICKET_COUNT_PREFIX = "oauth2_ws_ticket_user_cnt:";
 
     /** 单用户签发频次上限（r1 P2-8/P3：固定窗口签发限流——消费/过期不归还计数，非「未消费积压」口径） */

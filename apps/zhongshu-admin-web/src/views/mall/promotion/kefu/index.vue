@@ -39,7 +39,9 @@ let wsReconnectAttempts = 0
 let wsDisposed = false
 const scheduleKefuWsReconnect = () => {
   if (wsDisposed || wsReconnectTimer) return
-  if (ws.value != null || status.value === 'OPEN') return // 仍在连接，无需重连
+  // r2 P1：连接中判定须按实例实际 readyState——VueUse 14.3.0 普通断线后保留旧 ws 引用
+  //（!=null 会误拦）、心跳超时清空 ws 但 status 停留 OPEN（===OPEN 会误拦），两种断开形态都要放行
+  if (ws.value != null && ws.value.readyState === WebSocket.OPEN) return
   const delay = Math.min(1000 * 2 ** Math.min(wsReconnectAttempts, 5), 30000)
   wsReconnectAttempts++
   wsReconnectTimer = setTimeout(() => {
@@ -51,7 +53,6 @@ const scheduleKefuWsReconnect = () => {
 // 以 ws 句柄清空为准触发换票重连（status=CLOSED 的常规路径同样覆盖）
 watch(ws, (instance) => {
   if (instance == null && !wsDisposed) {
-    wsReconnectAttempts++
     scheduleKefuWsReconnect()
   }
 })
@@ -62,20 +63,21 @@ watch(status, (s) => {
 
 /** 取票并建连：POST /system/auth/ws-ticket（登录态）换一次性票据 → ?ticket= 握手 */
 const connectWithTicket = async () => {
+  let ticket: string
   try {
-    const ticket = await getWsHandshakeTicket()
-    server.value =
-      (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
-      '?ticket=' +
-      encodeURIComponent(ticket)
-    open()
+    ticket = await getWsHandshakeTicket()
   } catch (error) {
     console.error(error)
     scheduleKefuWsReconnect() // r0 P2-6：取票失败也走退避换票重连
     return
   }
-  // r1 P2-4：取票等待期间页面可能已卸载（wsDisposed）——晚到票据不得建连
+  // r2 P2：取票等待期间页面可能已卸载（wsDisposed）——晚到票据不得建连（检查必须先于 open()）
   if (wsDisposed) return
+  server.value =
+    (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
+    '?ticket=' +
+    encodeURIComponent(ticket)
+  open()
 }
 
 /** 监听 WebSocket 数据 */
