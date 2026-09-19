@@ -13,7 +13,7 @@
 import { KeFuConversationList, KeFuMessageList, MemberInfo } from './components'
 import { WebSocketMessageTypeConstants } from './components/tools/constants'
 import { KeFuConversationRespVO } from '@/api/mall/promotion/kefu/conversation'
-import { getRefreshToken } from '@/utils/auth'
+import { getWsHandshakeTicket } from '@/api/login'
 import { useWebSocket } from '@vueuse/core'
 import { useMallKefuStore } from '@/store/modules/mall/kefu'
 
@@ -23,17 +23,81 @@ const message = useMessage() // 消息弹窗
 const kefuStore = useMallKefuStore() // 客服缓存
 
 // ======================= WebSocket start =======================
-const server = ref(
-  (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
-    '?token=' +
-    getRefreshToken() // 使用 getRefreshToken() 方法，而不使用 getAccessToken() 方法的原因：WebSocket 无法方便的刷新访问令牌
-) // WebSocket 服务地址
+const server = ref('') // WebSocket 服务地址（开启连接时以一次性短时票据动态拼装，ZS-LOGIN-001.B）
 
-/** 发起 WebSocket 连接 */
-const { data, close, open } = useWebSocket(server.value, {
-  autoReconnect: true,
+/** 发起 WebSocket 连接（票据为一次性语义，autoReconnect 复用旧地址会被拒，须换票重连） */
+const { status, ws, data, close, open } = useWebSocket(server, {
+  immediate: false, // r0 P2-7：显式建连，防空 URL 初始连接
+  autoConnect: false, // r0 P2-7：URL 变化不自动建连（否则同票据双建连、双消费）
+  autoReconnect: false, // 票据一次性语义：重连须换票（下方退避链）
   heartbeat: true
 })
+
+// r0 P2-6：断线/取票失败统一走退避换票重连
+let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let wsReconnectAttempts = 0
+let wsDisposed = false
+const scheduleKefuWsReconnect = () => {
+  if (wsDisposed || wsReconnectTimer) return
+  // r2 P1：连接中判定须按实例实际 readyState——VueUse 14.3.0 普通断线后保留旧 ws 引用
+  //（!=null 会误拦）、心跳超时清空 ws 但 status 停留 OPEN（===OPEN 会误拦），两种断开形态都要放行
+  if (ws.value != null && ws.value.readyState === WebSocket.OPEN) return
+  const delay = Math.min(1000 * 2 ** Math.min(wsReconnectAttempts, 5), 30000)
+  wsReconnectAttempts++
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null
+    connectWithTicket()
+  }, delay)
+}
+// r1 P2-5：VueUse 心跳超时路径会清空 ws 实例但 status 可能停留 OPEN——
+// 以 ws 句柄清空为准触发换票重连（status=CLOSED 的常规路径同样覆盖）
+// r4 P2：心跳超时路径下 VueUse 先清空 ws.value、后排重连——等取票返回时 connectWithTicket 里
+// 的 previousWs 已为 undefined、隔离被跳过；故在 watcher 旧值中就地隔离旧实例回调
+//（被替换/被清空的旧实例即将销毁，解绑无副作用）
+watch(ws, (instance, previousInstance) => {
+  if (previousInstance != null && previousInstance !== instance
+    && previousInstance.readyState !== WebSocket.OPEN) {
+    previousInstance.onclose = null
+    previousInstance.onerror = null
+    previousInstance.onmessage = null
+    previousInstance.onopen = null
+  }
+  if (instance == null && !wsDisposed) {
+    scheduleKefuWsReconnect()
+  }
+})
+watch(status, (s) => {
+  if (s === 'OPEN') wsReconnectAttempts = 0
+  if (s === 'CLOSED') scheduleKefuWsReconnect()
+})
+
+/** 取票并建连：POST /system/auth/ws-ticket（登录态）换一次性票据 → ?ticket= 握手 */
+const connectWithTicket = async () => {
+  let ticket: string
+  try {
+    ticket = await getWsHandshakeTicket()
+  } catch (error) {
+    console.error(error)
+    scheduleKefuWsReconnect() // r0 P2-6：取票失败也走退避换票重连
+    return
+  }
+  // r2 P2：取票等待期间页面可能已卸载（wsDisposed）——晚到票据不得建连（检查必须先于 open()）
+  if (wsDisposed) return
+  // r3 P2：隔离旧实例回调——旧连接迟到的 close 会无条件清掉 VueUse 共享心跳定时器
+  //（新连接已被停心跳，半开连接无法自愈，codex 真实 TCP 复现）；旧实例即将销毁，解绑无副作用
+  const previousWs = ws.value
+  server.value =
+    (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
+    '?ticket=' +
+    encodeURIComponent(ticket)
+  open()
+  if (previousWs && previousWs !== ws.value) {
+    previousWs.onclose = null
+    previousWs.onerror = null
+    previousWs.onmessage = null
+    previousWs.onopen = null
+  }
+}
 
 /** 监听 WebSocket 数据 */
 watch(
@@ -93,12 +157,17 @@ onMounted(() => {
   kefuStore.setConversationList().then(() => {
     keFuConversationRef.value?.calculationLastMessageTime()
   })
-  // 打开 websocket 连接
-  open()
+  // 打开 websocket 连接（先取一次性票据）
+  connectWithTicket()
 })
 
 /** 销毁 */
 onBeforeUnmount(() => {
+  wsDisposed = true // r0 P2-6：卸载后不再退避重连
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = null
+  }
   // 关闭 websocket 连接
   close()
 })

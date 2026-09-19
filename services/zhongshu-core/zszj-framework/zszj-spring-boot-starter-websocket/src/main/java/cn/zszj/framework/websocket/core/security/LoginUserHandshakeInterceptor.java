@@ -26,6 +26,11 @@ public class LoginUserHandshakeInterceptor implements HandshakeInterceptor {
     @Override
     public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
                                    WebSocketHandler wsHandler, Map<String, Object> attributes) {
+        // ZS-LOGIN-001.B：票据握手路径——先置拦截器（OAuth2WsTicketHandshakeInterceptor）已把
+        // LOGIN_USER 写入 attributes（票据主体不经 SecurityContext），此处透传放行
+        if (attributes.get(WebSocketFrameworkUtils.ATTRIBUTE_LOGIN_USER) != null) {
+            return true;
+        }
         LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
         if (loginUser == null) {
             return false;

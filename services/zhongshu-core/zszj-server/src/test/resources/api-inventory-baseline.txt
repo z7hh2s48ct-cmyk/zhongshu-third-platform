@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：349
+# 端点总数：350
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -268,6 +268,7 @@ POST|/admin-api/system/auth/reset-password|ADMIN|ANONYMOUS|-|system|AuthControll
 POST|/admin-api/system/auth/send-sms-code|ADMIN|ANONYMOUS|-|system|AuthController
 POST|/admin-api/system/auth/sms-login|ADMIN|ANONYMOUS|-|system|AuthController
 POST|/admin-api/system/auth/social-login|ADMIN|ANONYMOUS|-|system|AuthController
+POST|/admin-api/system/auth/ws-ticket|ADMIN|AUTHENTICATED|-|system|AuthController
 POST|/admin-api/system/captcha/check|ADMIN|ANONYMOUS|-|system|CaptchaController
 POST|/admin-api/system/captcha/get|ADMIN|ANONYMOUS|-|system|CaptchaController
 POST|/admin-api/system/dept/create|ADMIN|PERMISSION|system:dept:create|system|DeptController

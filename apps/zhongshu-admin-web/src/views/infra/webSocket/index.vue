@@ -71,26 +71,38 @@
 <script lang="ts" setup>
 import { formatDate } from '@/utils/formatTime'
 import { useWebSocket } from '@vueuse/core'
-import { getRefreshToken } from '@/utils/auth'
+import { getWsHandshakeTicket } from '@/api/login'
 import * as UserApi from '@/api/system/user'
 
 defineOptions({ name: 'InfraWebSocket' })
 
 const message = useMessage() // 消息弹窗
 
-const server = ref(
-  (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
-    '?token=' +
-    getRefreshToken() // 使用 getRefreshToken() 方法，而不使用 getAccessToken() 方法的原因：WebSocket 无法方便的刷新访问令牌
-) // WebSocket 服务地址
+const server = ref('') // WebSocket 服务地址（开启连接时以一次性短时票据动态拼装，ZS-LOGIN-001.B）
 const getIsOpen = computed(() => status.value === 'OPEN') // WebSocket 连接是否打开
 const getTagColor = computed(() => (getIsOpen.value ? 'success' : 'red')) // WebSocket 连接的展示颜色
 
-/** 发起 WebSocket 连接 */
-const { status, data, send, close, open } = useWebSocket(server.value, {
-  autoReconnect: true,
+/** 发起 WebSocket 连接（票据为一次性语义，autoReconnect 复用旧地址会被拒，须换票重连） */
+const { status, data, send, close, open } = useWebSocket(server, {
+  immediate: false, // r0 P2-7：显式建连，防空 URL 初始连接
+  autoConnect: false, // r0 P2-7：URL 变化不自动建连（否则同票据双建连、双消费）
   heartbeat: true
 })
+
+/** 取票并建连：POST /system/auth/ws-ticket（登录态）换一次性票据 → ?ticket= 握手 */
+const connectWithTicket = async () => {
+  try {
+    const ticket = await getWsHandshakeTicket()
+    server.value =
+      (import.meta.env.VITE_BASE_URL + '/infra/ws').replace('http', 'ws') +
+      '?ticket=' +
+      encodeURIComponent(ticket)
+    open()
+  } catch (error) {
+    console.error(error)
+    message.error('获取 WebSocket 握手票据失败')
+  }
+}
 
 /** 监听接收到的数据 */
 const messageList = ref([] as { time: number; text: string }[]) // 消息列表
@@ -172,7 +184,7 @@ const toggleConnectStatus = () => {
   if (getIsOpen.value) {
     close()
   } else {
-    open()
+    connectWithTicket()
   }
 }
 

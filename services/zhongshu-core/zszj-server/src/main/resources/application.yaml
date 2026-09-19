@@ -319,11 +319,10 @@ zszj:
   security:
     permit-all_urls:
       - /admin-api/mp/open/** # 微信公众号开放平台，微信回调接口，不需要登录
-    # ZS-LOGIN-001 令牌用途分离门控：代码默认 false（安全默认，getAccessToken 只认访问令牌）。
-    # 现网置 true 的原因：admin-web IM、miniapp IM/客服的 WebSocket 握手以 ?token=<refreshToken> 作凭据
-    # （浏览器 WS 无法自定义 Header，只能拼 URL 参数），依赖刷新令牌回退放行。此为迁移期临时兼容，
-    # 须在 LOGIN-001.B（短时握手票据 + 前端 WS 迁移）完成后改回 false 并删除本键。
-    refresh-token-as-access-token-enabled: true
+    # ZS-LOGIN-001.B：refresh-token-as-access-token-enabled 迁移期兼容键已删除（代码默认 false 生效）。
+    # WebSocket 握手已迁移为一次性短时票据（前端建连前调 POST /system/auth/ws-ticket 换票，握手带
+    # ?ticket=，GETDEL 原子消费、默认 60s 过期），不再以刷新令牌充当访问令牌；旧合成令牌路径随 gate
+    # 关闭失效（LOGIN-001 缓存自愈会清除存量污染条目）。
     # ZS-SEC-011.B 持久化幂等摘要 pepper（keyed SHA-256 密钥，codex r1 P2-C 部署期注入，不硬编码）：
     # ① 须 ≥32 字符；配置了但长度不足 → 应用启动即失败（fail-fast，明确配置错误不允许带病启动）；
     # ② 未配置（空）→ 持久化幂等模式（persistent=true）拒绝启用（请求 fail-closed + 启动 WARN 留痕），
