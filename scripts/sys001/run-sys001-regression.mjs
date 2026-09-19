@@ -290,6 +290,16 @@ async function request(method, path, { body, token, tenantId, headers } = {}) {
 }
 console.log(`[sys001] zszj-server 就绪（http://127.0.0.1:${serverPort}）`);
 
+// ---------- 7.5 --serve 驻留模式（ZS-SYS-001.B 浏览器走查用）：环境保持就绪，Ctrl+C 清理退出 ----------
+if (process.argv.includes('--serve')) {
+  console.log('[sys001] --serve 驻留模式：环境已就绪并保持，Ctrl+C 清理退出');
+  console.log('[sys001] admin-web 启动：pnpm dev（.env.local 的 VITE_BASE_URL 指向下方 API 地址）');
+  console.log(`[sys001] API: ${BASE}`);
+  console.log(`[sys001] T1 登录：tenant-id=${T1.tenantId} user=${T1.username} pass=${T1.password}`);
+  console.log(`[sys001] T2 登录：tenant-id=123 user=${T2.username} pass=${T2.password}（夹具直种租户二）`);
+  await new Promise(() => {}); // 永久驻留；SIGINT/exit 钩子触发 cleanup
+}
+
 // ---------- 8. 双技术租户账密登录 + 拉起租户 2（真实租户管理链：套餐→租户→管理员角色/用户） ----------
 async function login(tenantId, username, password) {
   let lastErr = '';
