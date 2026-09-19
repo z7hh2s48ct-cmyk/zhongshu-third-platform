@@ -169,9 +169,14 @@ await guard('N2', '导航反向：common 用户菜单为 admin 严格子集且�
       `用户创建失败且非已存在码：code=${create.json?.code}`);
     return;
   }
-  // 按用户名读回（r1 P2-1：后端为模糊匹配，须精确校验 username 命中，防 backup 类同名账号截胡）
-  const lookup = await api('GET', '/admin-api/system/user/page?pageNo=1&pageSize=10&username=lianyantest', { token: admin.accessToken });
-  const row = (lookup.json?.data?.list ?? []).find((u) => u.username === 'lianyantest');
+  // 按用户名读回（r1 P2-1 / r2 P2：后端为模糊匹配且可能超一页——精确 find + 逐页扫尽，防同名 backup 截胡或分页截断误报）
+  let row = null;
+  for (let pageNo = 1; pageNo <= 10 && !row; pageNo++) {
+    const lookup = await api('GET', `/admin-api/system/user/page?pageNo=${pageNo}&pageSize=100&username=lianyantest`, { token: admin.accessToken });
+    const list = lookup.json?.data?.list ?? [];
+    row = list.find((u) => u.username === 'lianyantest') ?? null;
+    if (list.length < 100) break;
+  }
   if (!row) { record('N2', '导航反向：common 用户菜单为 admin 严格子集且判别菜单缺席', false, '用户名读回未命中精确账号'); return; }
   await api('PUT', '/admin-api/system/user/update-status', { token: admin.accessToken, body: { id: row.id, status: 0 } }); // 0=启用
   const assign = await api('POST', '/admin-api/system/permission/assign-user-role', {
@@ -314,18 +319,23 @@ await guard('T6', '落点反向：他人消息 get-landing 被拒（MSG-003.A，
     `code=${r.json?.code}（期望 ${CODE_LANDING_NOT_FOUND}/${CODE_LANDING_ACCESS_DENIED}；500/429 视为缺陷）`);
 });
 
-// ---------- 环境还原：恢复文件 master 原状（r1 P2-3：校验 code + 读回确认，结果计入报告与退出码） ----------
+// ---------- 环境还原：恢复文件 master 原状（r1 P2-3 / r2 P3：code 校验+读回确认；异常同步 restoreOk 计入退出码） ----------
 let restoreOk = true;
 let restoreNote = '未执行';
 await guard('FX', '环境还原：恢复文件 master 原配置', async () => {
-  if (originalMasterId != null) {
-    const r = await api('PUT', `/admin-api/infra/file-config/update-master?id=${originalMasterId}`, { token: admin.accessToken });
-    const after = await api('GET', '/admin-api/infra/file-config/page?pageNo=1&pageSize=100', { token: admin.accessToken });
-    const stillMaster = (after.json?.data?.list ?? []).find((c) => c.id === originalMasterId)?.master === true;
-    restoreOk = r.json?.code === 0 && stillMaster;
-    restoreNote = `恢复 ${originalMasterId}：code=${r.json?.code} 读回master=${stillMaster}`;
-  } else {
-    restoreNote = '无原 master（首启），保留本套件配置供后续复跑';
+  try {
+    if (originalMasterId != null) {
+      const r = await api('PUT', `/admin-api/infra/file-config/update-master?id=${originalMasterId}`, { token: admin.accessToken });
+      const after = await api('GET', '/admin-api/infra/file-config/page?pageNo=1&pageSize=100', { token: admin.accessToken });
+      const stillMaster = (after.json?.data?.list ?? []).find((c) => c.id === originalMasterId)?.master === true;
+      restoreOk = r.json?.code === 0 && stillMaster;
+      restoreNote = `恢复 ${originalMasterId}：code=${r.json?.code} 读回master=${stillMaster}`;
+    } else {
+      restoreNote = '无原 master（首启），保留本套件配置供后续复跑';
+    }
+  } catch (e) {
+    restoreOk = false; // r2 P3：网络等异常不得让 JSON 报告宣称恢复成功
+    restoreNote = `恢复异常：${e.message}`;
   }
   console.log(`[restore] ${restoreNote}`);
 });
