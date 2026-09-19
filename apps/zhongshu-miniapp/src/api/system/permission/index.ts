@@ -15,7 +15,7 @@ export interface PermissionAssignRoleDataScopeReq {
 
 /** 获取角色拥有的菜单列表 */
 export function getRoleMenuList(roleId: string) {
-  return http.get<number[]>(`/system/permission/list-role-menus?roleId=${roleId}`)
+  return http.get<{ menuIds?: string[] }>(`/system/permission/list-role-menus?roleId=${roleId}`)
 }
 
 /** 分配角色菜单权限 */

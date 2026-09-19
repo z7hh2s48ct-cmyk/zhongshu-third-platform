@@ -58,11 +58,11 @@ export function updateUserStatus(id: string, status: number) {
 
 /** 获取用户拥有的角色列表 */
 export function getUserRoleIds(userId: string) {
-  return http.get<number[]>(`/system/permission/list-user-roles?userId=${userId}`)
+  return http.get<{ roleIds?: string[] }>(`/system/permission/list-user-roles?userId=${userId}`)
 }
 
 /** 分配用户角色 */
-export function assignUserRole(userId: string, roleIds: number[]) {
+export function assignUserRole(userId: string, roleIds: string[]) {
   return http.post<boolean>('/system/permission/assign-user-role', { userId, roleIds })
 }
 

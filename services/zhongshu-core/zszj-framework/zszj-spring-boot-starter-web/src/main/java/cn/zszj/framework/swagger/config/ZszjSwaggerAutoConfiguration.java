@@ -155,6 +155,11 @@ public class ZszjSwaggerAutoConfiguration {
         if (type == null || type.getType() == null) {
             return false;
         }
+        // r1 P2-A：springdoc 的 AnnotatedType.getType() 可能返回 Jackson JavaType（而非反射 Type），
+        // 两种形态都须识别，否则 Long 字段在文档里漏标 string
+        if (type.getType() instanceof com.fasterxml.jackson.databind.JavaType jt) {
+            return isLongJavaType(jt);
+        }
         java.lang.reflect.Type t = type.getType();
         if (t == Long.class || t == long.class) {
             return true;
@@ -164,6 +169,18 @@ public class ZszjSwaggerAutoConfiguration {
                 && pt.getRawType() instanceof Class<?> raw && java.util.Collection.class.isAssignableFrom(raw)) {
             java.lang.reflect.Type[] args = pt.getActualTypeArguments();
             return args.length == 1 && (args[0] == Long.class || args[0] == long.class);
+        }
+        return false;
+    }
+
+    /** Jackson JavaType 形态的 Long 判定（标量或集合内容类型） */
+    private static boolean isLongJavaType(com.fasterxml.jackson.databind.JavaType jt) {
+        Class<?> raw = jt.getRawClass();
+        if (raw == Long.class || raw == long.class) {
+            return true;
+        }
+        if (java.util.Collection.class.isAssignableFrom(raw)) {
+            return jt.hasContentType() && isLongJavaType(jt.getContentType());
         }
         return false;
     }

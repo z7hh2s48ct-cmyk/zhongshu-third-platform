@@ -81,7 +81,7 @@ const open = async (row: RoleApi.RoleVO) => {
   formData.code = row.code
   formLoading.value = true
   try {
-    formData.menuIds = await PermissionApi.getRoleMenuList(row.id)
+    formData.menuIds = (await PermissionApi.getRoleMenuList(row.id)).menuIds ?? []
     // 设置选中
     formData.menuIds.forEach((menuId: string) => {
       treeRef.value.setChecked(menuId, true, false)

@@ -51,7 +51,7 @@ const open = async (row: UserApi.UserVO) => {
   // 获得角色拥有的菜单集合
   formLoading.value = true
   try {
-    formData.value.roleIds = await PermissionApi.getUserRoleList(row.id)
+    formData.value.roleIds = (await PermissionApi.getUserRoleList(row.id)).roleIds ?? []
   } finally {
     formLoading.value = false
   }

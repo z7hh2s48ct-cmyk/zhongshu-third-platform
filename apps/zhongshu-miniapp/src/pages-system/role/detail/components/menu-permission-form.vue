@@ -70,7 +70,7 @@ const visible = computed({
 const loading = ref(false) // 表单提交状态
 const loadSucceeded = ref(false) // 权限加载状态
 const menuList = ref<Menu[]>([]) // 菜单列表
-const selectedMenuIds = ref<number[]>([]) // 已选菜单编号
+const selectedMenuIds = ref<string[]>([]) // 已选菜单编号
 const menuTreeRef = ref<any>() // 菜单树组件引用
 const treeProps = {
   children: 'children',
@@ -101,7 +101,7 @@ async function loadData() {
       getRoleMenuList(props.role.id),
     ])
     menuList.value = menus
-    selectedMenuIds.value = menuIds
+    selectedMenuIds.value = menuIds?.menuIds ?? []
     loadSucceeded.value = true
   } catch {
     selectedMenuIds.value = []
