@@ -48,14 +48,26 @@ const dockerUp = spawnSync('docker', ['version', '--format', '{{.Server.Version}
 if (dockerUp.error || dockerUp.status !== 0) fail(3, `[db018] Docker 不可用（${dockerUp.error?.message ?? `exit=${dockerUp.status}`}）：验证不得静默跳过`);
 
 const container = `zszj-db018-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-const port = 2832 + Math.floor(Math.random() * 800);
+let port = 2832 + Math.floor(Math.random() * 800);
 let cleaned = false;
 const cleanup = () => { if (!cleaned) { cleaned = true; try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { } } };
 process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(130); });
 
 console.log(`[db018] 拉起临时 PG（${container} @ 127.0.0.1:${port}）…`);
-execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=db018', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
+// FLAKY-2 收敛（循 run-db007 同款）：容器启动带端口冲突重试 + 就绪探测/建库走 TCP+PGPASSWORD 探「最终 server」
+// socket 探测可命中 init 临时 server（entrypoint 随后关闭它），导致建库/迁移落到临时库失败
+let pgStarted = false;
+for (let attempt = 0; attempt < 3 && !pgStarted; attempt++) {
+  try {
+    execFileSync('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=db018', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'], { stdio: 'ignore' });
+    pgStarted = true;
+  } catch {
+    try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { }
+    port += 37 + Math.floor(Math.random() * 100);
+  }
+}
+if (!pgStarted) fail(1, '[db018] PG 容器启动失败（含 3 次端口冲突重试）');
 
 const psql = (user, db, sql, onErrorStop = true) => spawnSync('docker', ['exec', '-i', container, 'psql', '-U', user, '-d', db,
   ...(onErrorStop ? ['-v', 'ON_ERROR_STOP=1'] : []), '-q'], { input: sql, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -66,7 +78,8 @@ const count = (sql) => psqlOut('postgres', 'zhongshu', sql).stdout.trim();
 // 就绪等待
 let ready = false;
 for (let i = 0; i < 30; i++) {
-  if (psqlOut('postgres', 'postgres', 'SELECT 1').status === 0) { ready = true; break; }
+  const probe = spawnSync('docker', ['exec', '-e', 'PGPASSWORD=db018', container, 'psql', '-h', '127.0.0.1', '-p', '5432', '-U', 'postgres', '-d', 'postgres', '-At', '-c', 'SELECT 1'], { encoding: 'utf8' });
+  if (probe.status === 0) { ready = true; break; }
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
 }
 if (!ready) { cleanup(); fail(1, '[db018] PG 未就绪'); }
@@ -76,7 +89,7 @@ const results = [];
 const record = (id, ok, note = '') => { results.push({ id, ok, note }); ok ? pass++ : failCount++; console.log(`[${ok ? 'PASS' : 'FAIL'}] ${id} ${note}`); };
 
 // 环境：建库 + 环境方案角色 + V1/V2 迁移（以 owner 身份 = 迁移账号）
-execFileSync('docker', ['exec', container, 'psql', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
+execFileSync('docker', ['exec', '-e', 'PGPASSWORD=db018', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-q', '-c', 'CREATE DATABASE zhongshu;'], { stdio: 'ignore' });
 {
   const setup = readFileSync(join(root, 'services/zhongshu-core/sql/postgresql/env-setup-test.sql'), 'utf8');
   const r = psql('postgres', 'zhongshu', setup);

@@ -173,13 +173,14 @@ function runAsync(argv, opts = {}) {
 }
 const mvnArgv = (mvnArgs) => isWin ? ['cmd.exe', '/d', '/s', '/c', 'mvn ' + mvnArgs.join(' ')] : ['mvn', ...mvnArgs];
 
-// ---- 拉起一次性 PG（负载 flaky：清理残件+换端口重试一次）----
+// ---- 拉起一次性 PG（负载 flaky：清理残件+换端口重试一次；FLAKY-2：重试前须先移除同名容器残件）----
 function dockerRunOnce() {
   const args = ['run', '-d', '--name', container, '-e', 'POSTGRES_PASSWORD=bpm001', '-p', `127.0.0.1:${port}:5432`, 'postgres:17-alpine'];
   const r = isWin ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'docker ' + args.join(' ')], { encoding: 'utf8' })
     : spawnSync('docker', args, { encoding: 'utf8' });
   if (r.status === 0) return true;
   console.error(`[bpm001] docker run 失败（port=${port}）：${((r.stderr ?? '') || '').trim().slice(0, 200)}`);
+  try { isWin ? spawnSync('cmd.exe', ['/d', '/s', '/c', `docker rm -f ${container}`], { stdio: 'ignore' }) : spawnSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); } catch { }
   return false;
 }
 
@@ -245,10 +246,10 @@ function finish() {
   }
 
   let ready = false;
-  // 就绪探测必须走 TCP（-h 127.0.0.1）：initdb 期间的临时服务器只监听 unix socket，
-  // socket 探测可能误判就绪导致 CREATE DATABASE 落到临时库上失败
+  // 就绪探测必须走 TCP+PGPASSWORD（FLAKY-2 循 run-db007 同款）：initdb 期间的临时服务器只监听
+  // unix socket，socket 探测可能误判就绪导致 CREATE DATABASE 落到临时库上失败
   for (let i = 0; i < 40; i++) {
-    const r = spawnSync('docker', ['exec', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres', '-At', '-c', 'SELECT 1'], { encoding: 'utf8' });
+    const r = spawnSync('docker', ['exec', '-e', 'PGPASSWORD=bpm001', container, 'psql', '-h', '127.0.0.1', '-p', '5432', '-U', 'postgres', '-d', 'postgres', '-At', '-c', 'SELECT 1'], { encoding: 'utf8' });
     if (r.status === 0) { ready = true; break; }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
   }
@@ -258,7 +259,8 @@ function finish() {
   {
     let created = false, last = '';
     for (let i = 0; i < 10 && !created; i++) {
-      const r = psqlRun('postgres', 'postgres', 'CREATE DATABASE zhongshu;');
+      // 建库同走 TCP+PGPASSWORD（FLAKY-2：与就绪探测同一「最终 server」通道）
+      const r = spawnSync('docker', ['exec', '-i', '-e', 'PGPASSWORD=bpm001', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q'], { input: 'CREATE DATABASE zhongshu;', encoding: 'utf8' });
       created = r.status === 0;
       if (!created) { last = ((r.stderr ?? '') + (r.stdout ?? '')).trim(); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000); }
     }
