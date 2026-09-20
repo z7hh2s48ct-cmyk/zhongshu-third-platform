@@ -198,8 +198,12 @@ public class MembershipServiceImplLifecycleTest extends BaseDbUnitTest {
      * 场景 ③：复职<b>默认任职</b>必须撤销全部会话（强制重新登录）。
      *
      * <p>codex r0 P2：并发登录签发的令牌可能逃逸停用时的撤销；停用期间 {@code checkAccessToken} 每请求
-     * fail-closed 复验会拒绝它（MEMBERSHIP_INVALID_STATUS），但复职后同一令牌会被重新接受而无需再次登录，
-     * 静默复活旧授权。复职默认任职时撤销全部会话，逃逸令牌一并失效、强制重新登录经上下文重解析，彻底关闭该窗口。
+     * fail-closed 复验会拒绝它，但复职后同一令牌会被重新接受而无需再次登录。复职默认任职时撤销全部会话，
+     * 逃逸令牌一并失效、强制重新登录经上下文重解析。<b>codex r1 复核（已验证）</b>：直接登录签发不取
+     * {@code removeAccessToken(userId)} 的用户行锁，一条「签发事务在两次撤销扫描后才提交」的并发令牌理论上仍可逃逸；
+     * 此为登录签发层既有跨切面竞态（对 LOGIN-003 禁用撤销同样存在、早于 IAM-004），根因串行化修复归后续 LOGIN 卡；
+     * 越界授权（上下文不一致）已被 {@code checkAccessToken} 每请求 {@code organizationContextMatches} 精确拦截，不会复活旧越界授权。
+     * 本用例锁住「复职默认任职 → 撤销」的可测部分（mock 断言 removeAccessToken times(1)）。
      */
     @Test
     public void testChangeStatus_resumePrimary_revokesToForceCleanReLogin() {

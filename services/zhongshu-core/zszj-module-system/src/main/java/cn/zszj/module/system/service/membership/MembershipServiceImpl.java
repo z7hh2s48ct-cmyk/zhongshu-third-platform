@@ -176,6 +176,7 @@ public class MembershipServiceImpl implements MembershipService {
         // ZS-IAM-004（D1 方案 B 精确失权）：失活类流转（停用/离职/过期）致默认任职上下文丧失时，
         // 复用 LOGIN-003 撤销链失效全部会话；在 @Transactional 内调用——撤销失败则回滚状态变更，
         // 宁可显式失败，也不留「已停用/离职但仍在线」窗口。复职默认任职时亦撤销（强制重新登录，杜绝旧令牌静默复活，codex r0 P2）。
+        // 残余：直接登录签发不取用户行锁的幻影写窗口属登录层既有跨切面竞态，越界授权已被 checkAccessToken 每请求精确拦截，根因串行化修复归后续 LOGIN 卡（详见 shouldRevokeSessions javadoc）。
         if (shouldRevokeSessions(membership.getUserId(), toStatus, Objects.equals(membership.getIsPrimary(), 1))) {
             revokeSessions(membership.getUserId(), resolveAction(toStatus).getName());
         }
@@ -187,10 +188,17 @@ public class MembershipServiceImpl implements MembershipService {
      * <p>{@link MembershipContextResolver} 仅依据<b>默认任职</b>（primary）解析并签名 token 组织上下文，且
      * {@code checkAccessToken} <b>每请求</b> fail-closed 复验，故：
      * <ol>
-     *   <li><b>复职（→ACTIVE）</b>：仅当复职的是默认任职时撤销。codex r0 P2——并发登录签发的令牌可能逃逸
-     *       停用时的撤销；停用期间每请求复验会拒绝它（{@code MEMBERSHIP_INVALID_STATUS}），但复职后同一令牌
-     *       会被重新接受而无需再次登录，静默复活旧授权。复职默认任职时撤销全部会话，令逃逸令牌一并失效、
-     *       强制重新登录，彻底关闭该窗口（无需改登录签发锁序，不越 IAM-004 职责边界）；</li>
+     *   <li><b>复职（→ACTIVE）</b>：仅当复职的是默认任职时撤销，强制重新登录。codex r0 P2——并发登录签发的
+     *       令牌可能逃逸停用时的撤销；停用期间每请求 fail-closed 复验会拒绝它，但复职后同一令牌会被重新接受
+     *       而无需再次登录。<b>codex r1 复核（已验证）</b>：复职撤销可关闭绝大多数窗口，但<b>直接登录签发路径</b>
+     *       （{@code AdminAuthServiceImpl.createTokenAfterLoginSuccess → OAuth2TokenService.createAccessToken}，无
+     *       {@code @Transactional}）<b>不取</b> {@code removeAccessToken(userId)} 所持的 {@code selectByIdForUpdate(userId)}
+     *       用户行锁，故一条「签发事务在停用/复职两次撤销扫描之后才提交」的并发令牌理论上仍可逃逸（幻影写）。
+     *       此为<b>登录签发层既有跨切面竞态</b>——对 ZS-LOGIN-003 管理员禁用撤销同样存在、且早于 IAM-004，
+     *       其根因「签发与用户级撤销串行化」修复归属后续 LOGIN 层跟进卡（见 IAM-004 开发记录 / 变更台账），
+     *       本卡<b>不越界改动登录关键路径</b>的事务与锁序语义。残余风险已收窄为「并发签发 + suspend→resume 回到
+     *       <b>完全相同</b>上下文」的低危会话卫生问题：任何<b>越界授权</b>（组织 / 角色 / 主职变更致上下文不一致）
+     *       都被 {@code checkAccessToken} 每请求 {@code organizationContextMatches} 精确拦截并 401，不会复活旧越界授权；</li>
      *   <li><b>失活类（停用/离职/过期）条件①</b>：被变更任职是默认任职——其失活即上下文丧失；</li>
      *   <li><b>条件②</b>：变更后账号已无任何 ACTIVE 任职——即便被变更行非 primary，上下文亦彻底丧失。</li>
      * </ol>
