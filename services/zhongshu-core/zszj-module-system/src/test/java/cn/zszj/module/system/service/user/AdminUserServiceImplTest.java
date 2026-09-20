@@ -38,8 +38,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collection;
@@ -413,6 +415,230 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         assertPojoEquals(dbUser, user);
     }
 
+    // ==================== ZS-DB-010：账号唯一性与规范化（D-09 批准矩阵 M1~M4）====================
+
+    @Test
+    public void testGetUserByUsername_normalizesCaseAndWhitespace() {
+        // mock 数据：库中以规范化小写存储（M2）
+        AdminUserDO dbUser = randomAdminUserDO(o -> o.setUsername("dbuser01"));
+        userMapper.insert(dbUser);
+
+        // 调用：以带大小写与首尾空格的登录名查询，应规范化后命中
+        AdminUserDO user = userService.getUserByUsername("  DBUser01  ");
+        // 断言
+        assertNotNull(user);
+        assertEquals(dbUser.getId(), user.getId());
+    }
+
+    @Test
+    public void testCreateUser_normalizesUsernameBeforePersist() {
+        // 准备参数：用户名带大小写与首尾空格
+        UserSaveReqVO reqVO = buildDb010CreateReqVO("  MixCaseUser  ");
+        mockDb010CreateDependencies(reqVO);
+
+        // 调用
+        Long userId = userService.createUser(reqVO);
+        // 断言：入库用户名已 trim + 小写（M2）
+        AdminUserDO user = userMapper.selectById(userId);
+        assertEquals("mixcaseuser", user.getUsername());
+    }
+
+    @Test
+    public void testCreateUser_translatesDuplicateKey_username() {
+        // 准备参数
+        UserSaveReqVO reqVO = buildDb010CreateReqVO("dupuser01");
+        mockDb010CreateDependencies(reqVO);
+        AdminUserMapper original = swapUserMapperWithDuplicateKeySpy("uk_system_users_username");
+        try {
+            // 调用并断言：DB 唯一约束冲突映射为稳定错误码（最终防线）
+            assertServiceException(() -> userService.createUser(reqVO), USER_USERNAME_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    @Test
+    public void testCreateUser_translatesDuplicateKey_mobile() {
+        // 准备参数
+        UserSaveReqVO reqVO = buildDb010CreateReqVO("dupuser02");
+        mockDb010CreateDependencies(reqVO);
+        AdminUserMapper original = swapUserMapperWithDuplicateKeySpy("uk_system_users_mobile");
+        try {
+            // 调用并断言
+            assertServiceException(() -> userService.createUser(reqVO), USER_MOBILE_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    @Test
+    public void testCreateUser_translatesDuplicateKey_email() {
+        // 准备参数
+        UserSaveReqVO reqVO = buildDb010CreateReqVO("dupuser03");
+        mockDb010CreateDependencies(reqVO);
+        AdminUserMapper original = swapUserMapperWithDuplicateKeySpy("uk_system_users_email");
+        try {
+            // 调用并断言
+            assertServiceException(() -> userService.createUser(reqVO), USER_EMAIL_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    @Test
+    public void testCreateUser_translatesDuplicateKey_emailNotConfusedByDetailValue() {
+        // codex r2 P2：PG 报错 DETAIL 会回显冲突值——当邮箱值恰含 "uk_system_users_mobile" 子串时，
+        // 旧的全量子串匹配会误判为手机号冲突；按约束名精确提取后应正确映射为邮箱冲突。
+        UserSaveReqVO reqVO = buildDb010CreateReqVO("dupuser04");
+        mockDb010CreateDependencies(reqVO);
+        String pgMessage = "ERROR: duplicate key value violates unique constraint \"uk_system_users_email\"\n"
+                + "  Detail: Key (email)=(uk_system_users_mobile@example.com) already exists.";
+        AdminUserMapper original = swapUserMapperWithDuplicateKeyMessage(pgMessage);
+        try {
+            assertServiceException(() -> userService.createUser(reqVO), USER_EMAIL_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    @Test
+    public void testUpdateUserProfile_translatesDuplicateKey_mobile() {
+        // mock 数据：库中已存在一名用户
+        AdminUserDO dbUser = randomAdminUserDO();
+        userMapper.insert(dbUser);
+        // 准备参数：改手机号——模拟跨租户/并发绕过租户内预校验后撞 DB 全局唯一约束
+        UserProfileUpdateReqVO reqVO = randomPojo(UserProfileUpdateReqVO.class, o -> {
+            o.setMobile(randomString());
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+        });
+        AdminUserMapper original = swapUserMapperWithDuplicateKeySpyOnUpdate("uk_system_users_mobile");
+        try {
+            // 调用并断言：最终防线冲突映射为稳定错误码（ZS-DB-010 codex r1 P2）
+            assertServiceException(() -> userService.updateUserProfile(dbUser.getId(), reqVO), USER_MOBILE_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    @Test
+    public void testUpdateUserProfile_translatesDuplicateKey_email() {
+        // mock 数据
+        AdminUserDO dbUser = randomAdminUserDO();
+        userMapper.insert(dbUser);
+        // 准备参数：改邮箱
+        UserProfileUpdateReqVO reqVO = randomPojo(UserProfileUpdateReqVO.class, o -> {
+            o.setEmail(randomEmail());
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+        });
+        AdminUserMapper original = swapUserMapperWithDuplicateKeySpyOnUpdate("uk_system_users_email");
+        try {
+            assertServiceException(() -> userService.updateUserProfile(dbUser.getId(), reqVO), USER_EMAIL_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    @Test
+    public void testImportUserList_translatesDuplicateKey_rethrows() {
+        // 准备参数：一名待导入用户，dept 校验通过
+        UserImportExcelVO importUser = randomPojo(UserImportExcelVO.class, o -> {
+            o.setStatus(randomEle(CommonStatusEnum.values()).getStatus());
+            o.setSex(randomEle(SexEnum.values()).getSex());
+            o.setEmail(randomEmail());
+            o.setMobile(randomMobile());
+            // ZS-DB-010（D-09 M2）：导入账号入库前 trim + 小写，夹具用规范化值
+            o.setUsername(o.getUsername().trim().toLowerCase());
+        });
+        DeptDO dept = randomPojo(DeptDO.class, o -> {
+            o.setId(importUser.getDeptId());
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+        });
+        when(deptService.getDept(eq(dept.getId()))).thenReturn(dept);
+        when(passwordEncoder.encode(any())).thenReturn("java");
+        // 模拟插入撞 username 唯一约束
+        AdminUserMapper original = swapUserMapperWithDuplicateKeySpy("uk_system_users_username");
+        try {
+            // 断言：整批 rethrow 稳定错误码，而非在已 abort 的事务里继续收集假台账（ZS-DB-010 codex r1 P1）
+            assertServiceException(() -> userService.importUserList(newArrayList(importUser), true), USER_USERNAME_EXISTS);
+        } finally {
+            restoreUserMapper(original);
+        }
+    }
+
+    // ---------- ZS-DB-010 测试辅助 ----------
+
+    private UserSaveReqVO buildDb010CreateReqVO(String username) {
+        return randomPojo(UserSaveReqVO.class, o -> {
+            o.setUsername(username);
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+            o.setMobile(randomString());
+            o.setPostIds(asSet(1L, 2L));
+        }).setId(null);
+    }
+
+    private void mockDb010CreateDependencies(UserSaveReqVO reqVO) {
+        // mock 账户额度充足
+        TenantDO tenant = randomPojo(TenantDO.class, o -> o.setAccountCount(10));
+        doNothing().when(tenantService).handleTenantInfo(argThat(handler -> {
+            handler.handle(tenant);
+            return true;
+        }));
+        // mock deptService
+        DeptDO dept = randomPojo(DeptDO.class, o -> {
+            o.setId(reqVO.getDeptId());
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+        });
+        when(deptService.getDept(eq(dept.getId()))).thenReturn(dept);
+        // mock postService
+        List<PostDO> posts = CollectionUtils.convertList(reqVO.getPostIds(), postId ->
+                randomPojo(PostDO.class, o -> {
+                    o.setId(postId);
+                    o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+                }));
+        when(postService.getPostList(eq(reqVO.getPostIds()), isNull())).thenReturn(posts);
+        // mock passwordEncoder
+        when(passwordEncoder.encode(any())).thenReturn("zszjyuanma");
+    }
+
+    /** 将 service 目标对象的 userMapper 换成「insert 抛指定约束名 DuplicateKeyException」的 spy，返回原 mapper 以便还原。 */
+    private AdminUserMapper swapUserMapperWithDuplicateKeySpy(String constraintName) {
+        AdminUserServiceImpl target = AopTestUtils.getUltimateTargetObject(userService);
+        AdminUserMapper original = (AdminUserMapper) ReflectionTestUtils.getField(target, "userMapper");
+        AdminUserMapper spyMapper = spy(original);
+        doThrow(new DuplicateKeyException("ERROR: duplicate key value violates unique constraint \""
+                + constraintName + "\""))
+                .when(spyMapper).insert(any(AdminUserDO.class));
+        ReflectionTestUtils.setField(target, "userMapper", spyMapper);
+        return original;
+    }
+
+    /** 用「自定义完整报错文本」的 DuplicateKeyException 打桩 insert——覆盖 PG DETAIL 回显冲突值的真实场景。 */
+    private AdminUserMapper swapUserMapperWithDuplicateKeyMessage(String fullMessage) {
+        AdminUserServiceImpl target = AopTestUtils.getUltimateTargetObject(userService);
+        AdminUserMapper original = (AdminUserMapper) ReflectionTestUtils.getField(target, "userMapper");
+        AdminUserMapper spyMapper = spy(original);
+        doThrow(new DuplicateKeyException(fullMessage)).when(spyMapper).insert(any(AdminUserDO.class));
+        ReflectionTestUtils.setField(target, "userMapper", spyMapper);
+        return original;
+    }
+
+    private void restoreUserMapper(AdminUserMapper original) {
+        AdminUserServiceImpl target = AopTestUtils.getUltimateTargetObject(userService);
+        ReflectionTestUtils.setField(target, "userMapper", original);
+    }
+
+    /** 将 service 目标对象的 userMapper 换成「updateById 抛指定约束名 DuplicateKeyException」的 spy（覆盖 updateUserProfile 写路径）。 */
+    private AdminUserMapper swapUserMapperWithDuplicateKeySpyOnUpdate(String constraintName) {
+        AdminUserServiceImpl target = AopTestUtils.getUltimateTargetObject(userService);
+        AdminUserMapper original = (AdminUserMapper) ReflectionTestUtils.getField(target, "userMapper");
+        AdminUserMapper spyMapper = spy(original);
+        doThrow(new DuplicateKeyException("ERROR: duplicate key value violates unique constraint \""
+                + constraintName + "\""))
+                .when(spyMapper).updateById(any(AdminUserDO.class));
+        ReflectionTestUtils.setField(target, "userMapper", spyMapper);
+        return original;
+    }
+
     @Test
     public void testGetUserByMobile() {
         // mock 数据
@@ -540,6 +766,8 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
             o.setSex(randomEle(SexEnum.values()).getSex()); // 保证 sex 的范围
             o.setEmail(randomEmail());
             o.setMobile(randomMobile());
+            // ZS-DB-010（D-09 M2）：导入账号入库前会 trim + 小写，夹具用规范化值避免原值/规范化值错位
+            o.setUsername(o.getUsername().trim().toLowerCase());
         });
         // mock deptService 的方法
         DeptDO dept = randomPojo(DeptDO.class, o -> {
@@ -875,6 +1103,11 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         Consumer<AdminUserDO> consumer = (o) -> {
             o.setStatus(randomEle(CommonStatusEnum.values()).getStatus()); // 保证 status 的范围
             o.setSex(randomEle(SexEnum.values()).getSex()); // 保证 sex 的范围
+            // ZS-DB-010（D-09 M2）：库内 username 恒为规范化值（trim + 小写，迁移已把存量归一），
+            // 夹具对齐该不变量，使按规范化值查询的入口（getUserByUsername / importUserList）能命中随机账号
+            if (o.getUsername() != null) {
+                o.setUsername(o.getUsername().trim().toLowerCase());
+            }
         };
         return randomPojo(AdminUserDO.class, ArrayUtils.append(consumer, consumers));
     }

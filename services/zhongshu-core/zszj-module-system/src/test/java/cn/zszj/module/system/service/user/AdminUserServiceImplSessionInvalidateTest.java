@@ -532,6 +532,11 @@ public class AdminUserServiceImplSessionInvalidateTest extends BaseDbUnitTest {
         Consumer<AdminUserDO> consumer = (o) -> {
             o.setStatus(randomEle(CommonStatusEnum.values()).getStatus()); // 保证 status 的范围
             o.setSex(randomEle(SexEnum.values()).getSex()); // 保证 sex 的范围
+            // ZS-DB-010（D-09 M2）：库内 username 恒为规范化值（trim + 小写，迁移已把存量归一），
+            // 夹具对齐该不变量，使按规范化值查询的 importUserList 能命中随机账号
+            if (o.getUsername() != null) {
+                o.setUsername(o.getUsername().trim().toLowerCase());
+            }
         };
         return randomPojo(AdminUserDO.class, ArrayUtils.append(consumer, consumers));
     }

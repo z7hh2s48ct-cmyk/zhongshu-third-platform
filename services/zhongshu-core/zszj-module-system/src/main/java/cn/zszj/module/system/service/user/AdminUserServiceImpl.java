@@ -40,6 +40,7 @@ import jakarta.annotation.Resource;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +48,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.framework.common.util.collection.CollectionUtils.*;
@@ -101,6 +104,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_CREATE_SUB_TYPE, bizNo = "{{#user.id}}",
             success = SYSTEM_USER_CREATE_SUCCESS)
     public Long createUser(UserSaveReqVO createReqVO) {
+        // ZS-DB-010（D-09 M2）：账号规范化——trim + 小写化，使校验与入库均按规范化值
+        createReqVO.setUsername(normalizeUsername(createReqVO.getUsername()));
         // 1.1 校验账户配合
         tenantService.handleTenantInfo(tenant -> {
             long count = userMapper.selectCount();
@@ -115,7 +120,12 @@ public class AdminUserServiceImpl implements AdminUserService {
         AdminUserDO user = BeanUtils.toBean(createReqVO, AdminUserDO.class);
         user.setStatus(CommonStatusEnum.ENABLE.getStatus()); // 默认开启
         user.setPassword(encodePassword(createReqVO.getPassword())); // 加密密码
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException ex) {
+            // ZS-DB-010（D-09 最终防线）：并发窗口下 DB 唯一约束冲突 → 稳定错误码
+            throw translateDuplicateKey(ex);
+        }
         // 2.2 插入关联岗位
         if (CollectionUtil.isNotEmpty(user.getPostIds())) {
             userPostMapper.insertBatch(convertList(user.getPostIds(),
@@ -140,6 +150,8 @@ public class AdminUserServiceImpl implements AdminUserService {
                 throw exception(USER_COUNT_MAX, tenant.getAccountCount());
             }
         });
+        // ZS-DB-010（D-09 M2）：注册入口同样规范化账号
+        registerReqVO.setUsername(normalizeUsername(registerReqVO.getUsername()));
         // 1.3 校验正确性
         validateUserForCreateOrUpdate(null, registerReqVO.getUsername(), null, null, null, null);
 
@@ -147,7 +159,11 @@ public class AdminUserServiceImpl implements AdminUserService {
         AdminUserDO user = BeanUtils.toBean(registerReqVO, AdminUserDO.class);
         user.setStatus(CommonStatusEnum.ENABLE.getStatus()); // 默认开启
         user.setPassword(encodePassword(registerReqVO.getPassword())); // 加密密码
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException ex) {
+            throw translateDuplicateKey(ex);
+        }
         return user;
     }
 
@@ -157,13 +173,19 @@ public class AdminUserServiceImpl implements AdminUserService {
             success = SYSTEM_USER_UPDATE_SUCCESS)
     public void updateUser(UserSaveReqVO updateReqVO) {
         updateReqVO.setPassword(null); // 特殊：此处不更新密码
+        // ZS-DB-010（D-09 M2）：账号规范化（username 为空时原样，updateById 不覆盖）
+        updateReqVO.setUsername(normalizeUsername(updateReqVO.getUsername()));
         // 1. 校验正确性
         AdminUserDO oldUser = validateUserForCreateOrUpdate(updateReqVO.getId(), updateReqVO.getUsername(),
                 updateReqVO.getMobile(), updateReqVO.getEmail(), updateReqVO.getDeptId(), updateReqVO.getPostIds());
 
         // 2.1 更新用户
         AdminUserDO updateObj = BeanUtils.toBean(updateReqVO, AdminUserDO.class);
-        userMapper.updateById(updateObj);
+        try {
+            userMapper.updateById(updateObj);
+        } catch (DuplicateKeyException ex) {
+            throw translateDuplicateKey(ex);
+        }
         // 2.2 更新岗位
         updateUserPost(updateReqVO, updateObj);
         // 2.3 昵称 / 头像变化时，发送消息供下游订阅（如 IM 模块推 FRIEND_INFO_UPDATED）
@@ -204,7 +226,13 @@ public class AdminUserServiceImpl implements AdminUserService {
         validateMobileUnique(id, reqVO.getMobile());
 
         // 2. 执行更新
-        userMapper.updateById(BeanUtils.toBean(reqVO, AdminUserDO.class).setId(id));
+        // ZS-DB-010 codex r1 P2：mobile/email 亦受全局唯一约束——跨租户或并发下 validateXxxUnique
+        // 的租户内预校验放行后，DB 约束为最终防线；冲突须转稳定错误码，不得抛裸 DuplicateKeyException
+        try {
+            userMapper.updateById(BeanUtils.toBean(reqVO, AdminUserDO.class).setId(id));
+        } catch (DuplicateKeyException ex) {
+            throw translateDuplicateKey(ex);
+        }
 
         // 3. 昵称 / 头像变化时，发送消息供下游订阅（如 IM 模块推 FRIEND_INFO_UPDATED）
         publishUserProfileUpdatedIfChanged(oldUser, reqVO.getNickname(), reqVO.getAvatar());
@@ -371,7 +399,8 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Override
     public AdminUserDO getUserByUsername(String username) {
-        return userMapper.selectByUsername(username);
+        // ZS-DB-010（D-09 M2）：登录名按规范化值查询，兼容存量小写化
+        return userMapper.selectByUsername(normalizeUsername(username));
     }
 
     @Override
@@ -552,6 +581,53 @@ public class AdminUserServiceImpl implements AdminUserService {
         }
     }
 
+    /**
+     * ZS-DB-010（D-09 M2）：账号规范化——trim + 小写化，保证登录名全平台唯一按规范化值判定。
+     * blank/null 原样返回，避免破坏可选字段语义。
+     */
+    @VisibleForTesting
+    String normalizeUsername(String username) {
+        if (StrUtil.isBlank(username)) {
+            return username;
+        }
+        return username.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * PG 唯一约束冲突报错中约束名的提取模式：形如 ... violates unique constraint "uk_xxx" ...。
+     * codex r2 P2：DETAIL 里回显的冲突值用圆括号包裹（Key (email)=(...)），不会落入本模式的双引号捕获组，
+     * 故按约束名精确比对可杜绝「邮箱值恰含 uk_system_users_mobile 子串」这类误判。
+     */
+    private static final Pattern DUPLICATE_KEY_CONSTRAINT_PATTERN = Pattern.compile("unique constraint \"([^\"]+)\"");
+
+    /**
+     * ZS-DB-010（D-09 最终防线）：将数据库唯一约束冲突（PG 23505 → Spring {@link DuplicateKeyException}）
+     * 映射为稳定业务错误码。应用层 validateXxxUnique 存在并发窗口，DB 约束为最终防线。
+     * 按约束名分派；无法辨识时保守归为用户账号冲突并记 WARN，绝不吞异常或回退成功。
+     */
+    private ServiceException translateDuplicateKey(DuplicateKeyException ex) {
+        String message = String.valueOf(ex.getMessage());
+        // codex r2 P2：精确提取真实约束名再比对，避免 PG DETAIL 回显的冲突值（如邮箱恰含 uk_system_users_mobile）造成子串误判
+        String constraint = extractConstraintName(message);
+        if ("uk_system_users_mobile".equals(constraint)) {
+            return exception(USER_MOBILE_EXISTS);
+        }
+        if ("uk_system_users_email".equals(constraint)) {
+            return exception(USER_EMAIL_EXISTS);
+        }
+        if ("uk_system_users_username".equals(constraint)) {
+            return exception(USER_USERNAME_EXISTS);
+        }
+        log.warn("[translateDuplicateKey][ZS-DB-010 未辨识的唯一约束冲突，保守归为账号冲突 constraint={} message={}]", constraint, message);
+        return exception(USER_USERNAME_EXISTS);
+    }
+
+    /** 从 PG 冲突报错中提取真实约束名（首个 unique constraint "..." 捕获组）；无法提取时返回空串走保守分支。 */
+    private String extractConstraintName(String message) {
+        Matcher matcher = DUPLICATE_KEY_CONSTRAINT_PATTERN.matcher(message);
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
     @VisibleForTesting
     void validateUsernameUnique(Long id, String username) {
         if (StrUtil.isBlank(username)) {
@@ -659,10 +735,20 @@ public class AdminUserServiceImpl implements AdminUserService {
             }
 
             // 2.2.1 判断如果不存在，在进行插入
-            AdminUserDO existUser = userMapper.selectByUsername(importUser.getUsername());
+            // ZS-DB-010（D-09 M2）：导入账号规范化——查询与入库均按 trim + 小写值
+            String normalizedUsername = normalizeUsername(importUser.getUsername());
+            AdminUserDO existUser = userMapper.selectByUsername(normalizedUsername);
             if (existUser == null) {
-                userMapper.insert(BeanUtils.toBean(importUser, AdminUserDO.class)
-                        .setPassword(encodePassword(initPassword)).setPostIds(new HashSet<>())); // 设置默认密码及空岗位编号数组
+                try {
+                    userMapper.insert(BeanUtils.toBean(importUser, AdminUserDO.class)
+                            .setUsername(normalizedUsername)
+                            .setPassword(encodePassword(initPassword)).setPostIds(new HashSet<>())); // 设置默认密码及空岗位编号数组
+                } catch (DuplicateKeyException ex) {
+                    // ZS-DB-010 codex r1 P1：撞唯一约束后 PG 事务已 abort（SQLSTATE 25P02），同事务内后续行的
+                    // selectByUsername/insert 全部失败、且此前成功行会被回滚。若 catch 后继续循环，会产出
+                    // 「已回滚却报成功」的假台账。故 rethrow 让整批失败回滚（与本方法 rollbackFor=Exception 语义一致）。
+                    throw translateDuplicateKey(ex);
+                }
                 respVO.getCreateUsernames().add(importUser.getUsername());
                 return;
             }
@@ -673,7 +759,13 @@ public class AdminUserServiceImpl implements AdminUserService {
             }
             AdminUserDO updateUser = BeanUtils.toBean(importUser, AdminUserDO.class);
             updateUser.setId(existUser.getId());
-            userMapper.updateById(updateUser);
+            updateUser.setUsername(normalizedUsername);
+            try {
+                userMapper.updateById(updateUser);
+            } catch (DuplicateKeyException ex) {
+                // ZS-DB-010 codex r1 P1：同上——事务已 abort，不可继续；rethrow 让整批回滚
+                throw translateDuplicateKey(ex);
+            }
             // ZS-LOGIN-003 codex r1 P1 + codex r2 P1：覆盖导入把账号置为禁用即撤销全部会话——
             // 该入口此前未接统一撤销；且 existUser.status 为未加锁读，依「旧状态=已禁用」跳过撤销
             // 会漏掉「导入读旧快照 → 他人启用并登录 → 导入写禁用」交错留下的存活会话，

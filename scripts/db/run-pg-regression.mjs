@@ -18,6 +18,7 @@
  *  14. ZS-SEC-011.B 持久化幂等（V20260916.101 迁移重放、ON CONFLICT 抢占、8 连接并发兜底、状态机 CHECK、跨会话重放不重复写、>2048 快照完整性）
  *  15. ZS-FILE-005.B 超时补偿（V20260916.102 重放+存量回填、并发领取 CAS 串行化、重复清理不误删、孤儿清点全局核验）
  *  16. ZS-LOGIN-005.B 补偿事件持久化（outbox_event 结构、SKIP LOCKED 双实例领取、秘密扩散防护、过期事件静默 skip）
+ *  17. ZS-DB-010 账号唯一约束与并发兜底（复现回归、结构核对、历史冲突 fail-loudly、并发兜底 23505、大小写归一、删除重建、空值多行、跨租户全局唯一）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -44,6 +45,7 @@ const cases = [
   { id: 'ZS-SEC-011.B 持久化幂等唯一约束/重放', cmd: ['node', 'scripts/db/run-sec011b-verify.mjs'] },
   { id: 'ZS-FILE-005.B 超时补偿CAS串行/孤儿清点/重复清理', cmd: ['node', 'scripts/db/run-file005b-verify.mjs'] },
   { id: 'ZS-LOGIN-005.B 补偿事件持久化/SKIP LOCKED/秘密扩散防护', cmd: ['node', 'scripts/db/run-login005b-verify.mjs'] },
+  { id: 'ZS-DB-010 账号唯一约束/并发兜底/历史冲突fail-loudly', cmd: ['node', 'scripts/db/run-db010-verify.mjs'] },
 ];
 
 let failed = false;
