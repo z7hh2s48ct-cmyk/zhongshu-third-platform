@@ -36,10 +36,11 @@ export async function run(ctx) {
   // ---------- SYS-MENU-P2：授权后导航数据一致（get-permission-info 的 menus 含套餐内菜单） ----------
   const rPermInfo = await request('GET', '/admin-api/system/auth/get-permission-info', { token: t2.token, tenantId: t2.tenantId });
   const navIds = [];
-  (function walk(nodes) { for (const n of nodes || []) { navIds.push(n.id); walk(n.children); } })(rPermInfo.body?.data?.menus || []);
+  (function walk(nodes) { for (const n of nodes || []) { navIds.push(String(n.id)); walk(n.children); } })(rPermInfo.body?.data?.menus || []);
+  // SEC-009.B 全局 ID→string 合同激活后导航 id 为字符串，比较前统一 String 归一（避免严格相等类型失配误报）
   record('SYS-MENU-P2 授权后导航数据一致（套餐内可见、套餐外不可见）',
-    rPermInfo.body?.code === 0 && navIds.includes(100) && !navIds.includes(102),
-    `T2 管理员导航 ids=${JSON.stringify(navIds)}（含套餐内 100 用户管理=${navIds.includes(100)}，不含套餐外 102 菜单管理=${!navIds.includes(102)}）`);
+    rPermInfo.body?.code === 0 && navIds.includes('100') && !navIds.includes('102'),
+    `T2 管理员导航 ids=${JSON.stringify(navIds)}（含套餐内 100 用户管理=${navIds.includes('100')}，不含套餐外 102 菜单管理=${!navIds.includes('102')}）`);
 
   // ---------- SYS-MENU-N1：非法父子受控拒绝（自父 → MENU_PARENT_ERROR） ----------
   const rSelfParent = await request('PUT', '/admin-api/system/menu/update', {

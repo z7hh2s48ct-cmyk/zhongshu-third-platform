@@ -36,7 +36,8 @@ export async function run(ctx) {
   const enabledId = rEnabled.body?.data;
   const rPageEnabled = await request('GET', `${N}/page?pageNo=1&pageSize=100&status=0`, { token: t1.token, tenantId: t1.tenantId });
   const enabledList = rPageEnabled.body?.data?.list || [];
-  const pageFilterOk = enabledList.some((n) => n.id === enabledId) && !enabledList.some((n) => n.id === noticeId);
+  // SEC-009.B 全局 ID→string 合同激活后列表项 id 为字符串而 create 返回 data 仍为数值，两侧 String 归一后再比较（否则正/负断言均因类型失配失真）
+  const pageFilterOk = enabledList.some((n) => String(n.id) === String(enabledId)) && !enabledList.some((n) => String(n.id) === String(noticeId));
   record('SYS-NOTICE-P2 编辑+状态变更+状态过滤（PG 读回）',
     rUpdate.body?.code === 0 && rEnabled.body?.code === 0 && pageFilterOk
     && pgQuery(`SELECT status FROM system_notice WHERE id=${noticeId} AND deleted=0`) === '1',
