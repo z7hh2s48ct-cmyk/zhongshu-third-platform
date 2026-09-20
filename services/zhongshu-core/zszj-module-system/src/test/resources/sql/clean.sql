@@ -40,3 +40,7 @@ DELETE FROM outbox_event;
 DELETE FROM system_notify_todo;
 DELETE FROM inbox_event;
 DELETE FROM inbox_object_watermark;
+
+DELETE FROM system_organization;
+DELETE FROM system_membership;
+DELETE FROM system_membership_history;

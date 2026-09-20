@@ -19,6 +19,7 @@
  *  15. ZS-FILE-005.B 超时补偿（V20260916.102 重放+存量回填、并发领取 CAS 串行化、重复清理不误删、孤儿清点全局核验）
  *  16. ZS-LOGIN-005.B 补偿事件持久化（outbox_event 结构、SKIP LOCKED 双实例领取、秘密扩散防护、过期事件静默 skip）
  *  17. ZS-DB-010 账号唯一约束与并发兜底（复现回归、结构核对、历史冲突 fail-loudly、并发兜底 23505、大小写归一、删除重建、空值多行、跨租户全局唯一）
+ *  18. ZS-IAM-002 组织/任职建模与历史迁移回填（V20260921.001/.002 重放、部门→组织桥接、账号→任职不误合并、默认任职/同组织去重/组织编码 3 部分唯一索引、跨组织隔离、role_ids JSON 聚合）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -46,6 +47,7 @@ const cases = [
   { id: 'ZS-FILE-005.B 超时补偿CAS串行/孤儿清点/重复清理', cmd: ['node', 'scripts/db/run-file005b-verify.mjs'] },
   { id: 'ZS-LOGIN-005.B 补偿事件持久化/SKIP LOCKED/秘密扩散防护', cmd: ['node', 'scripts/db/run-login005b-verify.mjs'] },
   { id: 'ZS-DB-010 账号唯一约束/并发兜底/历史冲突fail-loudly', cmd: ['node', 'scripts/db/run-db010-verify.mjs'] },
+  { id: 'ZS-IAM-002 组织/任职建模/历史迁移回填不误合并/部分唯一约束', cmd: ['node', 'scripts/db/run-iam002-verify.mjs'] },
 ];
 
 let failed = false;

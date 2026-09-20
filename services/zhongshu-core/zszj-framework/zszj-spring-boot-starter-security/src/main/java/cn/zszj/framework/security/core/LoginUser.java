@@ -20,6 +20,10 @@ public class LoginUser {
 
     public static final String INFO_KEY_NICKNAME = "nickname";
     public static final String INFO_KEY_DEPT_ID = "deptId";
+    // ========== ZS-IAM-002：服务端签发的组织上下文（源于 token userInfo，非客户端入参） ==========
+    public static final String INFO_KEY_ORG_ID = "orgId";
+    public static final String INFO_KEY_ORG_TYPE = "orgType";
+    public static final String INFO_KEY_MEMBERSHIP_ID = "membershipId";
 
     /**
      * 用户编号
@@ -70,6 +74,29 @@ public class LoginUser {
 
     public <T> T getContext(String key, Class<T> type) {
         return MapUtil.get(context, key, type);
+    }
+
+    // ========== ZS-IAM-002：组织上下文便捷读取（从服务端签发的 info 取，客户端无法伪造） ==========
+
+    /**
+     * 当前组织编号；无默认任职时为 null
+     */
+    public Long getOrgId() {
+        return MapUtil.get(info, INFO_KEY_ORG_ID, Long.class);
+    }
+
+    /**
+     * 当前组织类型；关联 {@code OrganizationTypeEnum}
+     */
+    public Integer getOrgType() {
+        return MapUtil.get(info, INFO_KEY_ORG_TYPE, Integer.class);
+    }
+
+    /**
+     * 当前任职编号；无默认任职时为 null
+     */
+    public Long getMembershipId() {
+        return MapUtil.get(info, INFO_KEY_MEMBERSHIP_ID, Long.class);
     }
 
 }
