@@ -2,19 +2,24 @@ package cn.zszj.module.system.service.oauth2;
 
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.exception.ServiceException;
+import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2AccessTokenDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2CodeMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
+import cn.zszj.module.system.service.membership.MembershipContextResolver;
+import cn.zszj.module.system.service.membership.OrganizationContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -59,6 +64,12 @@ public class OAuth2TokenServiceImplAuthorityUnitTest {
         @SuppressWarnings("unchecked")
         ObjectProvider<ReliableEventPort> nullProvider = mock(ObjectProvider.class);
         ReflectionTestUtils.setField(service, "reliableEventPortProvider", nullProvider);
+        // ZS-IAM-002 codex r0 P1：checkAccessToken 复验组织上下文时懒解析 membershipContextResolverProvider，
+        // 手动构造未注入则为 null → getIfAvailable() NPE。沿用 .B 同款降级语义：注入 getIfAvailable()=null 的 mock，
+        // 与容器无 MembershipContextResolver bean 时行为一致（复验跳过，不影响 DB 权威核验放行）。
+        @SuppressWarnings("unchecked")
+        ObjectProvider<MembershipContextResolver> nullMembershipProvider = mock(ObjectProvider.class);
+        ReflectionTestUtils.setField(service, "membershipContextResolverProvider", nullMembershipProvider);
     }
 
     private OAuth2AccessTokenDO cachedToken() {
@@ -103,6 +114,97 @@ public class OAuth2TokenServiceImplAuthorityUnitTest {
         when(accessTokenMapper.selectAuthorityCountByAccessToken("at-authority")).thenReturn(1);
 
         assertDoesNotThrow(() -> service.checkAccessToken("at-authority"));
+    }
+
+    @Test
+    void checkAccessToken_embeddedOrgContextMismatch_rejected() {
+        // codex r1 P1：转岗后当前解析=组织 B，但令牌内嵌仍是组织 A → 陈旧，401 拒绝强制重签
+        OAuth2AccessTokenDO cached = cachedTokenWithOrg(1L, 6, 11L); // 内嵌组织 A(orgId=1)
+        when(redisDAO.get("at-authority")).thenReturn(cached);
+        when(accessTokenMapper.selectAuthorityCountByAccessToken("at-authority")).thenReturn(1);
+        stubResolver(new OrganizationContext(9L, 6, 55L)); // 当前解析=组织 B(orgId=9)
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> service.checkAccessToken("at-authority"));
+        assertEquals(401, ex.getCode());
+    }
+
+    @Test
+    void checkAccessToken_resolvedEmptyButEmbeddedHasOrg_rejected() {
+        // codex r1 P1：任职被移除/离任 → 当前解析降级为空，但令牌内嵌仍有组织 → 变空也算不一致，401 拒绝
+        OAuth2AccessTokenDO cached = cachedTokenWithOrg(1L, 6, 11L);
+        when(redisDAO.get("at-authority")).thenReturn(cached);
+        when(accessTokenMapper.selectAuthorityCountByAccessToken("at-authority")).thenReturn(1);
+        stubResolver(OrganizationContext.empty());
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> service.checkAccessToken("at-authority"));
+        assertEquals(401, ex.getCode());
+    }
+
+    @Test
+    void checkAccessToken_embeddedOrgContextMatches_passes() {
+        // 内嵌上下文与当前解析一致（orgId/orgType/membershipId 三维均相等）→ 放行
+        OAuth2AccessTokenDO cached = cachedTokenWithOrg(9L, 6, 55L);
+        when(redisDAO.get("at-authority")).thenReturn(cached);
+        when(accessTokenMapper.selectAuthorityCountByAccessToken("at-authority")).thenReturn(1);
+        stubResolver(new OrganizationContext(9L, 6, 55L));
+
+        assertDoesNotThrow(() -> service.checkAccessToken("at-authority"));
+    }
+
+    @Test
+    void checkAccessToken_resolverThrowsServiceException_rejectedAs401() {
+        // codex r2 P2：resolver.resolve 因任职停用/离任/未生效抛 ServiceException 时，必须以 401 拒绝——
+        // 证明 TenantUtils.execute 走的是 Runnable 重载（原样重抛 ServiceException），而非 Callable 重载
+        // （catch(Exception) 包装成 RuntimeException，会绕过 catch(ServiceException) 令全局兜底返回任职错误码而非 401）。
+        OAuth2AccessTokenDO cached = cachedTokenWithOrg(1L, 6, 11L);
+        when(redisDAO.get("at-authority")).thenReturn(cached);
+        when(accessTokenMapper.selectAuthorityCountByAccessToken("at-authority")).thenReturn(1);
+        stubResolverThrows(new ServiceException(1_002_034_008, "任职未生效"));
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> service.checkAccessToken("at-authority"));
+        // 关键断言：错误码被统一转 401（而非透传 1-002-034-008）——只有 Runnable 重载才能让 catch(ServiceException) 生效
+        assertEquals(401, ex.getCode());
+    }
+
+    /**
+     * 注入一个解析固定组织上下文的 MembershipContextResolver（覆盖 setUp 中 getIfAvailable()=null 的降级 mock）。
+     */
+    private void stubResolver(OrganizationContext context) {
+        MembershipContextResolver resolver = mock(MembershipContextResolver.class);
+        when(resolver.resolve(anyLong())).thenReturn(context);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<MembershipContextResolver> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(resolver);
+        ReflectionTestUtils.setField(service, "membershipContextResolverProvider", provider);
+    }
+
+    /**
+     * 注入一个 resolve 抛指定异常的 MembershipContextResolver（验证 Runnable 重载原样重抛语义，codex r2 P2）。
+     */
+    private void stubResolverThrows(RuntimeException toThrow) {
+        MembershipContextResolver resolver = mock(MembershipContextResolver.class);
+        when(resolver.resolve(anyLong())).thenThrow(toThrow);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<MembershipContextResolver> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(resolver);
+        ReflectionTestUtils.setField(service, "membershipContextResolverProvider", provider);
+    }
+
+    /**
+     * 构造内嵌指定组织上下文（orgId/orgType/membershipId）的 ADMIN 令牌，并回填租户（复验在令牌租户内执行）。
+     */
+    private OAuth2AccessTokenDO cachedTokenWithOrg(Long orgId, Integer orgType, Long membershipId) {
+        OAuth2AccessTokenDO at = cachedToken();
+        at.setTenantId(1L);
+        Map<String, String> info = new HashMap<>();
+        info.put(LoginUser.INFO_KEY_ORG_ID, String.valueOf(orgId));
+        info.put(LoginUser.INFO_KEY_ORG_TYPE, String.valueOf(orgType));
+        info.put(LoginUser.INFO_KEY_MEMBERSHIP_ID, String.valueOf(membershipId));
+        at.setUserInfo(info);
+        return at;
     }
 
     @Test

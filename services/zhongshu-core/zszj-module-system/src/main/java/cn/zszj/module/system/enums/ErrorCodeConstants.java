@@ -239,4 +239,25 @@ public interface ErrorCodeConstants {
     ErrorCode NOTIFY_CHANNEL_SEND_TENANT_REQUIRED = new ErrorCode(1_002_032_002, "渠道发送处理缺少租户上下文，拒绝执行");
     ErrorCode NOTIFY_CHANNEL_SEND_MANUAL_RETRY_INVALID = new ErrorCode(1_002_032_003, "当前状态({})不允许人工重试（受理/送达状态由回执与回查推进）");
     ErrorCode NOTIFY_CHANNEL_SEND_CONTACT_STILL_MISSING = new ErrorCode(1_002_032_004, "收件人仍缺少该渠道联系方式，人工重试拒绝；请先补齐联系方式后重试");
+
+    // ========== 组织 1-002-033-000（ZS-IAM-002：D-09 FND-IAM-002 组织类型与层级） ==========
+    ErrorCode ORGANIZATION_NOT_EXISTS = new ErrorCode(1_002_033_000, "组织不存在");
+    ErrorCode ORGANIZATION_CODE_DUPLICATE = new ErrorCode(1_002_033_001, "已经存在编码为【{}】的组织");
+    ErrorCode ORGANIZATION_PARENT_NOT_EXISTS = new ErrorCode(1_002_033_002, "父级组织不存在");
+    ErrorCode ORGANIZATION_PARENT_ERROR = new ErrorCode(1_002_033_003, "不能设置自己或自己的子组织为父组织");
+    ErrorCode ORGANIZATION_HAS_CHILDREN = new ErrorCode(1_002_033_004, "存在子组织，无法删除");
+    ErrorCode ORGANIZATION_NOT_ENABLE = new ErrorCode(1_002_033_005, "组织({})不处于开启状态，不允许选择");
+    ErrorCode ORGANIZATION_HAS_MEMBERSHIPS = new ErrorCode(1_002_033_006, "存在任职成员，无法删除");
+    ErrorCode ORGANIZATION_TYPE_INVALID = new ErrorCode(1_002_033_007, "组织类型({})不合法");
+
+    // ========== 任职 1-002-034-000（ZS-IAM-002：D-09 FND-IAM-001/003/004 任职与服务端上下文） ==========
+    ErrorCode MEMBERSHIP_NOT_EXISTS = new ErrorCode(1_002_034_000, "任职不存在");
+    ErrorCode MEMBERSHIP_ALREADY_EXISTS = new ErrorCode(1_002_034_001, "该账号在此组织已存在任职");
+    ErrorCode MEMBERSHIP_INVALID_STATUS = new ErrorCode(1_002_034_002, "任职状态({})非在职，拒绝进入组织上下文");
+    ErrorCode MEMBERSHIP_EXPIRED = new ErrorCode(1_002_034_003, "任职已过有效期，拒绝进入组织上下文");
+    ErrorCode MEMBERSHIP_ORGANIZATION_MISMATCH = new ErrorCode(1_002_034_004, "任职组织({})与请求组织不一致，拒绝越权");
+    ErrorCode MEMBERSHIP_PRIMARY_REQUIRED = new ErrorCode(1_002_034_005, "账号缺少默认任职，无法解析组织上下文");
+    ErrorCode MEMBERSHIP_CONTEXT_FORGED = new ErrorCode(1_002_034_006, "组织上下文须由服务端签发，拒绝客户端指定的身份");
+    ErrorCode MEMBERSHIP_ORGANIZATION_DISABLED = new ErrorCode(1_002_034_007, "任职所属组织({})不存在或已停用，拒绝进入组织上下文");
+    ErrorCode MEMBERSHIP_NOT_EFFECTIVE = new ErrorCode(1_002_034_008, "任职尚未到生效期，拒绝进入组织上下文");
 }

@@ -29,6 +29,8 @@ import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import cn.zszj.module.system.framework.outbox.SystemOutboxEventTypes;
 import cn.zszj.module.system.framework.outbox.TokenRevocationCompensationPayload.TokenType;
 import cn.zszj.module.system.service.user.AdminUserService;
+import cn.zszj.module.system.service.membership.MembershipContextResolver;
+import cn.zszj.module.system.service.membership.OrganizationContext;
 import cn.zszj.module.infra.framework.outbox.OutboxEventMessage;
 import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
 import jakarta.annotation.PostConstruct;
@@ -49,6 +51,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -96,6 +99,17 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
      */
     @Resource
     private ObjectProvider<ReliableEventPort> reliableEventPortProvider;
+
+    /**
+     * ZS-IAM-002：服务端组织上下文解析器——ObjectProvider 懒解析：
+     * <ul>
+     *   <li>完整部署（生产）：解析到 {@link MembershipContextResolver}，签发令牌时注入组织上下文（orgId/orgType/membershipId）；</li>
+     *   <li>精简测试上下文（未 Import 该 bean）：解析为 {@code null}，降级为不注入组织上下文，登录不受影响。</li>
+     * </ul>
+     * 选择 ObjectProvider 而非直接 @Resource：避免既有 OAuth2TokenServiceImplTest 等未提供该 bean 的上下文启动失败。
+     */
+    @Resource
+    private ObjectProvider<MembershipContextResolver> membershipContextResolverProvider;
 
     /**
      * ZS-LOGIN-001：令牌用途分离门控开关——是否允许把「刷新令牌」静默当作「访问令牌」使用。
@@ -281,7 +295,59 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             log.warn("[checkAccessToken][ZS-LOGIN-005.A DB 权威校验异常，失败关闭拒绝鉴权 token({})]", maskToken(accessToken), ex);
             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌不存在");
         }
+        // ZS-IAM-002（codex r0 P1）：token 消费时复验组织上下文——签发后若任职被停用/离任/过期、组织被停用，
+        // 内嵌 userInfo 的组织上下文即失效；而 checkAccessToken 原仅校验 token 过期与行存在，TokenAuthenticationFilter
+        // 原样拷贝 userInfo，导致鉴权持续返回已失效的组织上下文直至 token 过期。此处补复验：
+        // fail-closed——解析抛稳定错误码（非在职/未生效/已过期/组织停用）即按 401 拒绝，不再放行失效上下文。
+        // 无 provider（精简测试上下文）或非 ADMIN 用户跳过；无默认任职（历史无部门账号）走降级空上下文，不阻断（resolve 不抛）。
+        MembershipContextResolver resolver = membershipContextResolverProvider.getIfAvailable();
+        if (resolver != null && UserTypeEnum.ADMIN.getValue().equals(accessTokenDO.getUserType())) {
+            // 在「令牌所属租户」上下文内复验（与签发端 buildUserInfo 的 TenantUtils.execute 同口径）：
+            // 消费端 TenantContextHolder 取自请求头，未必等于令牌租户；不显式切换会因租户过滤查不到任职
+            // 而静默降级为空上下文（resolve 不抛），使复验形同虚设。userId 全局唯一，锁定令牌租户即可精确复验。
+            // 用 holder 承接解析结果，并以「void 块 lambda」强制选中 TenantUtils.execute(Long, Runnable) 重载：
+            // 赋值表达式 lambda（() -> holder[0] = ...）是值兼容的，重载解析会选中 Callable<V> 重载——它 catch(Exception)
+            // 后包装为 RuntimeException，使 ServiceException 绕过下方 catch 与 TokenAuthenticationFilter 的失效令牌处理，
+            // 全局兜底按 getCause 返回任职错误码（如 1-002-034-008）而非 401（codex r2 P2）。块 lambda 以语句结尾、仅 void 兼容，
+            // 锁定 Runnable 重载——其无 catch，ServiceException 原样重抛，被下方 catch 转 401。
+            OrganizationContext[] resolvedHolder = new OrganizationContext[1];
+            try {
+                TenantUtils.execute(accessTokenDO.getTenantId(), () -> {
+                    resolvedHolder[0] = resolver.resolve(accessTokenDO.getUserId());
+                });
+            } catch (ServiceException ex) {
+                log.warn("[checkAccessToken][ZS-IAM-002 组织上下文复验失败，拒绝鉴权 token({}) userId({})：{}]",
+                        maskToken(accessToken), accessTokenDO.getUserId(), ex.getMessage());
+                throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌对应的任职上下文已失效");
+            }
+            // codex r1 P1：仅「当前可解析」不足——转岗/主职替换后 resolve 返回新组织 B，而令牌内嵌 userInfo 仍是
+            // 旧组织 A，TokenAuthenticationFilter 原样拷贝 A 到 LoginUser；只校验 B 不抛无法发现内嵌 A 已陈旧
+            // （停用 A 也不拒）。故比对内嵌上下文与当前解析，任一维度不一致（含降级为空）即判令牌陈旧，401 拒绝强制重签。
+            if (!organizationContextMatches(resolvedHolder[0], accessTokenDO.getUserInfo())) {
+                log.warn("[checkAccessToken][ZS-IAM-002 内嵌组织上下文与当前任职不一致，拒绝鉴权 token({}) userId({})]",
+                        maskToken(accessToken), accessTokenDO.getUserId());
+                throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌对应的组织上下文已变更，请重新登录");
+            }
+        }
         return accessTokenDO;
+    }
+
+    /**
+     * 比对当前解析的组织上下文与令牌内嵌 userInfo 是否一致（ZS-IAM-002 codex r1 P1）。
+     *
+     * <p>三个维度（orgId/orgType/membershipId）逐一比对；降级空上下文对应内嵌无组织键（值为 null）。
+     * 任一维度不一致即返回 false——令牌内嵌上下文已陈旧（转岗/主职替换/任职移除），须拒绝强制重签，
+     * 杜绝 TokenAuthenticationFilter 持续拷贝失效的组织身份。
+     */
+    private boolean organizationContextMatches(OrganizationContext resolved, Map<String, String> userInfo) {
+        Map<String, String> info = userInfo != null ? userInfo : Collections.<String, String>emptyMap();
+        boolean empty = resolved == null || resolved.isEmpty();
+        String expectedOrgId = empty ? null : String.valueOf(resolved.getOrgId());
+        String expectedOrgType = empty ? null : String.valueOf(resolved.getOrgType());
+        String expectedMembershipId = empty ? null : String.valueOf(resolved.getMembershipId());
+        return Objects.equals(expectedOrgId, info.get(LoginUser.INFO_KEY_ORG_ID))
+                && Objects.equals(expectedOrgType, info.get(LoginUser.INFO_KEY_ORG_TYPE))
+                && Objects.equals(expectedMembershipId, info.get(LoginUser.INFO_KEY_MEMBERSHIP_ID));
     }
 
     /**
@@ -858,8 +924,21 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         }
         if (userType.equals(UserTypeEnum.ADMIN.getValue())) {
             AdminUserDO user = adminUserService.getUser(userId);
-            return MapUtil.builder(LoginUser.INFO_KEY_NICKNAME, user.getNickname())
+            Map<String, String> info = MapUtil.<String, String>builder()
+                    .put(LoginUser.INFO_KEY_NICKNAME, user.getNickname())
                     .put(LoginUser.INFO_KEY_DEPT_ID, StrUtil.toStringOrNull(user.getDeptId())).build();
+            // ZS-IAM-002（FND-IAM-004）：注入服务端解析的组织上下文——源于账号默认任职、由服务端签发，
+            // 客户端无法伪造；无默认任职（历史无部门账号）时降级为不注入，登录不受影响。
+            MembershipContextResolver resolver = membershipContextResolverProvider.getIfAvailable();
+            if (resolver != null) {
+                OrganizationContext orgContext = resolver.resolve(userId);
+                if (!orgContext.isEmpty()) {
+                    info.put(LoginUser.INFO_KEY_ORG_ID, String.valueOf(orgContext.getOrgId()));
+                    info.put(LoginUser.INFO_KEY_ORG_TYPE, String.valueOf(orgContext.getOrgType()));
+                    info.put(LoginUser.INFO_KEY_MEMBERSHIP_ID, String.valueOf(orgContext.getMembershipId()));
+                }
+            }
+            return info;
         } else if (userType.equals(UserTypeEnum.MEMBER.getValue())) {
             // 注意：目前 Member 暂时不读取，可以按需实现
             return Collections.emptyMap();
