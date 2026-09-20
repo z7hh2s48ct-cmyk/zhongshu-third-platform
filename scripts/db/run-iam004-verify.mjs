@@ -13,11 +13,15 @@
  * 「合格账号」定义（与 V20260921.002 回填 WHERE 完全同口径）：
  *   system_users.deleted = 0 AND dept_id IS NOT NULL AND EXISTS(匹配的同 id 组织，deleted = 0)。
  *
- * 恢复方案（rollback SQL，演练于 R4，生产回滚须先备份 + 停写窗口）：
- *   DELETE FROM system_membership_history WHERE reason = '历史账号迁移回填';
- *   DELETE FROM system_membership m WHERE NOT EXISTS (
- *     SELECT 1 FROM system_membership_history h WHERE h.membership_id = m.id AND h.reason <> '历史账号迁移回填');
- *   —— 仅回收「纯回填、无后续业务流水」的任职，绝不触碰迁移后已产生生命周期流水的行。
+ * 恢复方案（rollback SQL，演练于 R4，生产回滚须先备份 + 停写窗口）：先物化「纯回填」任职 ID 集
+ * （有迁移起点流水标记 reason='历史账号迁移回填'，且无任何其它流水——含 null reason，用 IS DISTINCT FROM
+ * 正确处理三值逻辑），再将两条 DELETE 严格限定到该 ID 集，绝不触碰迁移后已产生生命周期流水或业务新建的任职：
+ *   CREATE TEMP TABLE _iam004_pure AS
+ *   SELECT m.id FROM system_membership m
+ *    WHERE EXISTS (SELECT 1 FROM system_membership_history h WHERE h.membership_id = m.id AND h.reason = '历史账号迁移回填')
+ *      AND NOT EXISTS (SELECT 1 FROM system_membership_history h2 WHERE h2.membership_id = m.id AND h2.reason IS DISTINCT FROM '历史账号迁移回填');
+ *   DELETE FROM system_membership_history WHERE membership_id IN (SELECT id FROM _iam004_pure);
+ *   DELETE FROM system_membership WHERE id IN (SELECT id FROM _iam004_pure);
  *
  * 前置：一次性 PG17 容器 + env-setup-test 角色 + V1/V2 基线 + 播种历史 dept/users/user_role
  *       + V20260921.001（组织回填）重放；V20260921.002 的回填段由本脚本按前后核对需要分步执行。
@@ -156,22 +160,47 @@ if (!run(BACKFILL)) { cleanup(); fail(1, '[iam004] 回填段执行失败'); }
     `u1003(null部门)=${u1003} u1004(无匹配组织)=${u1004} u1005(已删除)=${u1005}`);
 }
 
-// R4 恢复方案演练：按迁移标记回滚回填任职 + 起点流水，三表回到迁移前基线
+// R4 恢复方案演练：混合 fixture 证明 rollback 只回收「纯回填」任职，保留业务/已变更任职，无孤儿流水（codex r0 P1）
 {
+  // 回填后 1001、1002 各持一条纯回填任职（起点流水 reason='历史账号迁移回填'）
+  const mem1001 = one(`SELECT id FROM system_membership WHERE user_id = 1001 AND deleted = 0`);
+  const mem1002 = one(`SELECT id FROM system_membership WHERE user_id = 1002 AND deleted = 0`);
+  // fixture A：给 1001 的回填任职追加一条 null reason 业务流水（模拟迁移后生命周期事件）→ 不再是「纯回填」
+  run(`INSERT INTO system_membership_history (id, membership_id, user_id, action, from_status, to_status, reason, creator, create_time, updater, update_time, deleted, tenant_id)
+       VALUES (nextval('system_membership_history_seq'), ${mem1001}, 1001, 7, 1, 1, NULL, '1', now(), '1', now(), 0, 1)`);
+  // fixture B：为未被回填的 1003（null 部门）新建一条纯业务任职 + null reason CREATE 流水 → 与回填无关
+  run(`INSERT INTO system_membership (id, user_id, organization_id, status, is_primary, role_ids, creator, create_time, updater, update_time, deleted, tenant_id)
+       VALUES (nextval('system_membership_seq'), 1003, 100, 1, 1, '[1]', '1', now(), '1', now(), 0, 1)`);
+  const mem1003 = one(`SELECT id FROM system_membership WHERE user_id = 1003 AND deleted = 0`);
+  run(`INSERT INTO system_membership_history (id, membership_id, user_id, action, to_organization_id, reason, creator, create_time, updater, update_time, deleted, tenant_id)
+       VALUES (nextval('system_membership_history_seq'), ${mem1003}, 1003, 1, 100, NULL, '1', now(), '1', now(), 0, 1)`);
+
+  // 恢复方案：先物化纯回填 ID 集（有回填标记且无任何其它流水，含 null reason），两条 DELETE 严格限定到该集
   const rollback = `
-DELETE FROM system_membership_history WHERE reason = '历史账号迁移回填';
-DELETE FROM system_membership m WHERE NOT EXISTS (
-  SELECT 1 FROM system_membership_history h WHERE h.membership_id = m.id AND h.reason <> '历史账号迁移回填');`;
+CREATE TEMP TABLE _iam004_pure AS
+SELECT m.id FROM system_membership m
+ WHERE EXISTS (SELECT 1 FROM system_membership_history h WHERE h.membership_id = m.id AND h.deleted = 0 AND h.reason = '历史账号迁移回填')
+   AND NOT EXISTS (SELECT 1 FROM system_membership_history h2 WHERE h2.membership_id = m.id AND h2.deleted = 0 AND h2.reason IS DISTINCT FROM '历史账号迁移回填');
+DELETE FROM system_membership_history WHERE membership_id IN (SELECT id FROM _iam004_pure);
+DELETE FROM system_membership WHERE id IN (SELECT id FROM _iam004_pure);
+DROP TABLE _iam004_pure;`;
   const rolled = run(rollback);
-  const memAfter = one(`SELECT count(*) FROM system_membership WHERE deleted = 0`);
-  const hisAfter = one(`SELECT count(*) FROM system_membership_history WHERE deleted = 0`);
-  record('R4 恢复方案演练（回滚纯回填任职 + 起点流水后，任职/历史计数归零，回到迁移前基线）',
-    rolled && memAfter === '0' && hisAfter === '0',
-    `rollback=${rolled} membershipAfter=${memAfter} historyAfter=${hisAfter}`);
+  // 纯回填的 1002 任职 + 其起点流水被回收；带业务流水的 1001、纯业务 1003 完整保留；无孤儿流水
+  const mem1002After = one(`SELECT count(*) FROM system_membership WHERE id = ${mem1002} AND deleted = 0`);
+  const his1002After = one(`SELECT count(*) FROM system_membership_history WHERE membership_id = ${mem1002}`);
+  const mem1001After = one(`SELECT count(*) FROM system_membership WHERE id = ${mem1001} AND deleted = 0`);
+  const mem1003After = one(`SELECT count(*) FROM system_membership WHERE id = ${mem1003} AND deleted = 0`);
+  // 保留任职的起点流水不被误删（旧 SQL 的首条无条件 DELETE 会连它一起删掉）
+  const his1001Backfill = one(`SELECT count(*) FROM system_membership_history WHERE membership_id = ${mem1001} AND reason = '历史账号迁移回填'`);
+  const orphanHis = one(`SELECT count(*) FROM system_membership_history h WHERE h.deleted = 0 AND NOT EXISTS (SELECT 1 FROM system_membership m WHERE m.id = h.membership_id AND m.deleted = 0)`);
+  record('R4 恢复方案演练（rollback 只回收纯回填任职 1002+其起点流水；保留已变更 1001、业务新建 1003；保留行起点流水不误删；无孤儿流水）',
+    rolled && mem1002After === '0' && his1002After === '0' && mem1001After === '1' && mem1003After === '1' && his1001Backfill === '1' && orphanHis === '0',
+    `rollback=${rolled} pure1002.mem=${mem1002After} pure1002.his=${his1002After} changed1001=${mem1001After} business1003=${mem1003After} kept1001.backfillHis=${his1001Backfill} orphanHis=${orphanHis}`);
 }
 
-// R5 幂等重放：恢复后重新回填，parity 与 R1 一致（恢复方案可安全重试）
+// R5 幂等重放：清空到迁移前基线后确定性重放回填段，parity 与 R1 一致（恢复方案可安全重试）
 {
+  if (!run(`DELETE FROM system_membership_history; DELETE FROM system_membership;`)) { cleanup(); fail(1, '[iam004] R5 基线清空失败'); }
   const reapplied = run(BACKFILL);
   const memCount = one(`SELECT count(*) FROM system_membership WHERE deleted = 0`);
   const distinctUsers = one(`SELECT count(DISTINCT user_id) FROM system_membership WHERE deleted = 0`);

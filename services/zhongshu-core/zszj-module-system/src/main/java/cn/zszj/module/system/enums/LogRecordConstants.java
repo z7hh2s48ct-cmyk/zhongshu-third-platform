@@ -35,7 +35,7 @@ public interface LogRecordConstants {
     String SYSTEM_MEMBERSHIP_TRANSFER_SUB_TYPE = "任职转岗";
     String SYSTEM_MEMBERSHIP_TRANSFER_SUCCESS = "将任职【{{#membershipId}}】转岗至组织【{{#toOrganizationId}}】，原因【{{#reason}}】；已发生业务的责任历史不被改写";
     String SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUB_TYPE = "任职状态流转";
-    String SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUCCESS = "将任职【{{#membershipId}}】状态变更为【{{#toStatus}}】，原因【{{#reason}}】；若为停用/离职/过期且致默认任职上下文丧失，则其全部登录会话已失效";
+    String SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUCCESS = "将任职【{{#membershipId}}】状态变更为【{{#toStatus}}】，原因【{{#reason}}】；若致默认任职上下文丧失（停用/离职/过期）或复职默认任职，则其全部登录会话已失效（强制重新登录）";
 
     // ======================= SYSTEM_ROLE 角色 =======================
 

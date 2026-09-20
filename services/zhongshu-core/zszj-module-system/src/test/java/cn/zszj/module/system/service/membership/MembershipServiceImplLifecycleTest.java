@@ -192,27 +192,51 @@ public class MembershipServiceImplLifecycleTest extends BaseDbUnitTest {
         verify(oauth2TokenService, times(1)).removeAccessToken(eq(userId), eq(UserTypeEnum.ADMIN.getValue()));
     }
 
-    // ========== ③ 恢复不复活旧越界授权 ==========
+    // ========== ③ 恢复不复活旧越界授权（codex r0 P2） ==========
 
     /**
-     * 场景 ③：复职（→ACTIVE）<b>不</b>主动复活任何令牌 —— 已撤销会话保持撤销，
-     * 重新登录时经 {@link MembershipContextResolver} fail-closed 重解析（有效期/组织开启重新校验），
-     * 旧越界上下文不自动回归。
+     * 场景 ③：复职<b>默认任职</b>必须撤销全部会话（强制重新登录）。
+     *
+     * <p>codex r0 P2：并发登录签发的令牌可能逃逸停用时的撤销；停用期间 {@code checkAccessToken} 每请求
+     * fail-closed 复验会拒绝它（MEMBERSHIP_INVALID_STATUS），但复职后同一令牌会被重新接受而无需再次登录，
+     * 静默复活旧授权。复职默认任职时撤销全部会话，逃逸令牌一并失效、强制重新登录经上下文重解析，彻底关闭该窗口。
      */
     @Test
-    public void testChangeStatus_resume_doesNotReviveTokens() {
+    public void testChangeStatus_resumePrimary_revokesToForceCleanReLogin() {
         Long orgId = insertOrganization(CommonStatusEnum.ENABLE);
         Long userId = randomLongId();
         insertUser(userId);
         Long id = membershipService.createMembership(newMembership(userId, orgId), userId);
+        assertEquals(1, membershipMapper.selectById(id).getIsPrimary());
         membershipService.changeStatus(id, MembershipStatusEnum.SUSPENDED.getStatus(), userId, "停职");
         reset(oauth2TokenService);
 
         membershipService.changeStatus(id, MembershipStatusEnum.ACTIVE.getStatus(), userId, "复职");
 
-        // 复职不触碰令牌：不撤销、也不「恢复」任何旧凭据（恢复授权只能经重新登录 + 上下文重解析）
-        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), anyInt());
+        // 复职默认任职：撤销全部会话（含可能逃逸停用撤销的令牌），强制重新登录 + 上下文全新解析
+        verify(oauth2TokenService, times(1)).removeAccessToken(eq(userId), eq(UserTypeEnum.ADMIN.getValue()));
         assertEquals(MembershipStatusEnum.ACTIVE.getStatus(), membershipMapper.selectById(id).getStatus());
+    }
+
+    /**
+     * 场景 ③-2：复职一条<b>非默认</b>次级任职（primary 仍在职）不得撤销会话 —— 不影响上下文，避免过度中断。
+     */
+    @Test
+    public void testChangeStatus_resumeSecondaryWhilePrimaryActive_noRevoke() {
+        Long org1 = insertOrganization(CommonStatusEnum.ENABLE);
+        Long org2 = insertOrganization(CommonStatusEnum.ENABLE);
+        Long userId = randomLongId();
+        insertUser(userId);
+        Long primaryId = membershipService.createMembership(newMembership(userId, org1), userId);
+        Long secondaryId = membershipService.createMembership(newMembership(userId, org2), userId);
+        membershipService.changeStatus(secondaryId, MembershipStatusEnum.SUSPENDED.getStatus(), userId, "兼任暂停");
+        reset(oauth2TokenService);
+
+        membershipService.changeStatus(secondaryId, MembershipStatusEnum.ACTIVE.getStatus(), userId, "兼任恢复");
+
+        // primary 仍在职，次级复职不影响已签发上下文 → 不撤销
+        verify(oauth2TokenService, never()).removeAccessToken(anyLong(), anyInt());
+        assertEquals(1, membershipMapper.selectById(primaryId).getIsPrimary());
     }
 
     // ========== ④ 撤销失败必须回滚状态变更（宁可显式失败，不留「已停用但仍在线」窗口） ==========

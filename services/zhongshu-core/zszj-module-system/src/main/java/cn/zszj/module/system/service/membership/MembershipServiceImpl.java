@@ -175,7 +175,7 @@ public class MembershipServiceImpl implements MembershipService {
                 fromStatus, toStatus, operatorId, reason);
         // ZS-IAM-004（D1 方案 B 精确失权）：失活类流转（停用/离职/过期）致默认任职上下文丧失时，
         // 复用 LOGIN-003 撤销链失效全部会话；在 @Transactional 内调用——撤销失败则回滚状态变更，
-        // 宁可显式失败，也不留「已停用/离职但仍在线」窗口。复职（→ACTIVE）不复活任何令牌。
+        // 宁可显式失败，也不留「已停用/离职但仍在线」窗口。复职默认任职时亦撤销（强制重新登录，杜绝旧令牌静默复活，codex r0 P2）。
         if (shouldRevokeSessions(membership.getUserId(), toStatus, Objects.equals(membership.getIsPrimary(), 1))) {
             revokeSessions(membership.getUserId(), resolveAction(toStatus).getName());
         }
@@ -184,24 +184,32 @@ public class MembershipServiceImpl implements MembershipService {
     /**
      * ZS-IAM-004（D1 方案 B）：判定状态流转是否应失效该账号全部会话。
      *
-     * <p>{@link MembershipContextResolver} 仅依据<b>默认任职</b>（primary）解析并签名 token 组织上下文，故：
+     * <p>{@link MembershipContextResolver} 仅依据<b>默认任职</b>（primary）解析并签名 token 组织上下文，且
+     * {@code checkAccessToken} <b>每请求</b> fail-closed 复验，故：
      * <ol>
-     *   <li>仅<b>失活类</b>流转（停用/离职/过期）才可能触发；复职（→ACTIVE）恒不触发（不复活旧越界授权）；</li>
-     *   <li>条件①：被变更任职是默认任职（primary）——其失活即上下文丧失；</li>
-     *   <li>条件②：变更后账号已无任何 ACTIVE 任职——即便被变更行非 primary，上下文亦彻底丧失。</li>
+     *   <li><b>复职（→ACTIVE）</b>：仅当复职的是默认任职时撤销。codex r0 P2——并发登录签发的令牌可能逃逸
+     *       停用时的撤销；停用期间每请求复验会拒绝它（{@code MEMBERSHIP_INVALID_STATUS}），但复职后同一令牌
+     *       会被重新接受而无需再次登录，静默复活旧授权。复职默认任职时撤销全部会话，令逃逸令牌一并失效、
+     *       强制重新登录，彻底关闭该窗口（无需改登录签发锁序，不越 IAM-004 职责边界）；</li>
+     *   <li><b>失活类（停用/离职/过期）条件①</b>：被变更任职是默认任职——其失活即上下文丧失；</li>
+     *   <li><b>条件②</b>：变更后账号已无任何 ACTIVE 任职——即便被变更行非 primary，上下文亦彻底丧失。</li>
      * </ol>
-     * 停用一条不影响上下文的次级任职（primary 仍在职）不强制全端下线，避免过度中断。
+     * 停用/复职一条不影响上下文的次级任职（primary 仍在职）不强制全端下线，避免过度中断。
      *
      * @param userId            账号编号
      * @param toStatus          目标状态
      * @param affectedIsPrimary 被变更任职是否为默认任职
      */
     private boolean shouldRevokeSessions(Long userId, Integer toStatus, boolean affectedIsPrimary) {
-        // 复职（→ACTIVE）等非失活流转不触发失权
+        // 复职（→ACTIVE）：仅默认任职复职时撤销，强制重新登录以全新解析上下文（codex r0 P2）
+        if (Objects.equals(toStatus, MembershipStatusEnum.ACTIVE.getStatus())) {
+            return affectedIsPrimary;
+        }
+        // 非失活类流转（如 UPDATE）不触发失权
         if (!isDeactivation(toStatus)) {
             return false;
         }
-        // 条件①：默认任职失活 → 上下文丧失
+        // 失活类条件①：默认任职失活 → 上下文丧失
         if (affectedIsPrimary) {
             return true;
         }
