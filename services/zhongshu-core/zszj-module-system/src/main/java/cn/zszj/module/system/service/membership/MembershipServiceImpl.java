@@ -1,5 +1,6 @@
 package cn.zszj.module.system.service.membership;
 
+import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipHistoryDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
@@ -8,8 +9,12 @@ import cn.zszj.module.system.dal.mysql.membership.MembershipMapper;
 import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.enums.membership.MembershipActionEnum;
 import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
+import cn.zszj.module.system.service.oauth2.OAuth2TokenService;
 import cn.zszj.module.system.service.organization.OrganizationService;
+import com.mzt.logapi.starter.annotation.LogRecord;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
@@ -20,6 +25,7 @@ import java.util.Objects;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
+import static cn.zszj.module.system.enums.LogRecordConstants.*;
 
 /**
  * 任职 Service 实现类
@@ -28,10 +34,15 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.*;
  * （DB 部分唯一索引 uk_system_membership_primary 兜底）；同账号同组织在职去重（uk_system_membership_user_org）。
  * 每次创建/转岗/状态流转均写 {@code system_membership_history} 流水，历史归属只增不改。
  *
+ * <p>ZS-IAM-004（D-09 FND-IAM-003/005/006、FND-AUTH-007）：生命周期入口（入职/转岗/状态流转）携 {@link LogRecord}
+ * 操作审计；停用/离职/过期致默认任职上下文丧失时，复用 LOGIN-003 撤销链失效全部登录会话（及时失权）；
+ * 复职不复活旧越界授权（只能经重新登录 + 上下文重解析）。
+ *
  * @author ZS-IAM-002
  */
 @Service
 @Validated
+@Slf4j
 public class MembershipServiceImpl implements MembershipService {
 
     @Resource
@@ -51,8 +62,19 @@ public class MembershipServiceImpl implements MembershipService {
     @Resource
     private AdminUserMapper adminUserMapper;
 
+    /**
+     * ZS-IAM-004：停用/离职/过期致默认任职上下文丧失时，复用 LOGIN-003 撤销链失效全部会话。
+     * {@code @Lazy} 懒加载避免循环依赖（镜像 {@code AdminUserServiceImpl} 对 {@code OAuth2TokenService} 的注入）；
+     * <b>不</b>另造锁、<b>不</b>另造撤销机制。
+     */
+    @Resource
+    @Lazy
+    private OAuth2TokenService oauth2TokenService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @LogRecord(type = SYSTEM_MEMBERSHIP_TYPE, subType = SYSTEM_MEMBERSHIP_CREATE_SUB_TYPE, bizNo = "{{#membership.userId}}",
+            success = SYSTEM_MEMBERSHIP_CREATE_SUCCESS)
     public Long createMembership(MembershipDO membership, Long operatorId) {
         // 校验账号存在且归属当前租户（codex r0 P2：租户过滤只限定任职查询，不校验被引用账号；
         // 跨租户/不存在账号若放行，会因 primary 唯一性按 userId 全局生效而阻断他租户合法主职）
@@ -112,6 +134,8 @@ public class MembershipServiceImpl implements MembershipService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @LogRecord(type = SYSTEM_MEMBERSHIP_TYPE, subType = SYSTEM_MEMBERSHIP_TRANSFER_SUB_TYPE, bizNo = "{{#membershipId}}",
+            success = SYSTEM_MEMBERSHIP_TRANSFER_SUCCESS)
     public void transferMembership(Long membershipId, Long toOrganizationId, Long operatorId, String reason) {
         // 先锁目标组织行再锁任职行：与 createMembership 一致的「组织→任职」全局锁序，防交叉死锁（codex r1 P2）。
         // 同时锁组织行与组织删除串行化，杜绝孤引用。
@@ -136,6 +160,8 @@ public class MembershipServiceImpl implements MembershipService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @LogRecord(type = SYSTEM_MEMBERSHIP_TYPE, subType = SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUB_TYPE, bizNo = "{{#membershipId}}",
+            success = SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUCCESS)
     public void changeStatus(Long membershipId, Integer toStatus, Long operatorId, String reason) {
         MembershipDO membership = validateMembershipExists(membershipId);
         Integer fromStatus = membership.getStatus();
@@ -147,6 +173,61 @@ public class MembershipServiceImpl implements MembershipService {
         // 写历史流水：动作按目标状态映射
         writeHistory(membership, resolveAction(toStatus), membership.getOrganizationId(), membership.getOrganizationId(),
                 fromStatus, toStatus, operatorId, reason);
+        // ZS-IAM-004（D1 方案 B 精确失权）：失活类流转（停用/离职/过期）致默认任职上下文丧失时，
+        // 复用 LOGIN-003 撤销链失效全部会话；在 @Transactional 内调用——撤销失败则回滚状态变更，
+        // 宁可显式失败，也不留「已停用/离职但仍在线」窗口。复职（→ACTIVE）不复活任何令牌。
+        if (shouldRevokeSessions(membership.getUserId(), toStatus, Objects.equals(membership.getIsPrimary(), 1))) {
+            revokeSessions(membership.getUserId(), resolveAction(toStatus).getName());
+        }
+    }
+
+    /**
+     * ZS-IAM-004（D1 方案 B）：判定状态流转是否应失效该账号全部会话。
+     *
+     * <p>{@link MembershipContextResolver} 仅依据<b>默认任职</b>（primary）解析并签名 token 组织上下文，故：
+     * <ol>
+     *   <li>仅<b>失活类</b>流转（停用/离职/过期）才可能触发；复职（→ACTIVE）恒不触发（不复活旧越界授权）；</li>
+     *   <li>条件①：被变更任职是默认任职（primary）——其失活即上下文丧失；</li>
+     *   <li>条件②：变更后账号已无任何 ACTIVE 任职——即便被变更行非 primary，上下文亦彻底丧失。</li>
+     * </ol>
+     * 停用一条不影响上下文的次级任职（primary 仍在职）不强制全端下线，避免过度中断。
+     *
+     * @param userId            账号编号
+     * @param toStatus          目标状态
+     * @param affectedIsPrimary 被变更任职是否为默认任职
+     */
+    private boolean shouldRevokeSessions(Long userId, Integer toStatus, boolean affectedIsPrimary) {
+        // 复职（→ACTIVE）等非失活流转不触发失权
+        if (!isDeactivation(toStatus)) {
+            return false;
+        }
+        // 条件①：默认任职失活 → 上下文丧失
+        if (affectedIsPrimary) {
+            return true;
+        }
+        // 条件②：变更后账号已无任何 ACTIVE 任职（当前行已在本事务内被改为失活态，重查即反映）
+        boolean anyActiveLeft = membershipMapper.selectListByUserId(userId).stream()
+                .anyMatch(m -> MembershipStatusEnum.isActive(m.getStatus()));
+        return !anyActiveLeft;
+    }
+
+    /**
+     * 是否失活类状态（停用/离职/过期）——与 {@link #resolveAction} 的非 RESUME 分支同口径。
+     */
+    private boolean isDeactivation(Integer toStatus) {
+        return Objects.equals(toStatus, MembershipStatusEnum.SUSPENDED.getStatus())
+                || Objects.equals(toStatus, MembershipStatusEnum.TERMINATED.getStatus())
+                || Objects.equals(toStatus, MembershipStatusEnum.EXPIRED.getStatus());
+    }
+
+    /**
+     * ZS-IAM-004：失效账号全部登录会话，完全复用 {@link OAuth2TokenService#removeAccessToken(Long, Integer)}
+     * （ZS-LOGIN-002 行锁 + 固定锁序 + 会话代际键，ZS-LOGIN-003 孤立刷新凭据全集 + 已缓存转换凭据清理）。
+     * 调用方<b>必须</b>处于 {@code @Transactional} 中：撤销失败则回滚状态变更。
+     */
+    private void revokeSessions(Long userId, String reason) {
+        oauth2TokenService.removeAccessToken(userId, UserTypeEnum.ADMIN.getValue());
+        log.info("[revokeSessions][ZS-IAM-004 账号({}) 因任职生命周期变更({}) 全部登录会话已失效]", userId, reason);
     }
 
     private MembershipActionEnum resolveAction(Integer toStatus) {

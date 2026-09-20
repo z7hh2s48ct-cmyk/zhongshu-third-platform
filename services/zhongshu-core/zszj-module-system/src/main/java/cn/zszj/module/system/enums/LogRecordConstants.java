@@ -25,6 +25,18 @@ public interface LogRecordConstants {
     String SYSTEM_USER_UPDATE_SELF_PASSWORD_SUB_TYPE = "修改自身密码";
     String SYSTEM_USER_UPDATE_SELF_PASSWORD_SUCCESS = "用户【{{#user.nickname}}】修改了自己的密码，其全部登录会话已失效";
 
+    // ======================= SYSTEM_MEMBERSHIP 任职（ZS-IAM-004） =======================
+    // 生命周期审计与 system_membership_history 流水互补：流水承载结构化历史归属（只增不改、业务责任溯源），
+    // @LogRecord 承载操作日志（操作者/时间/trace-id，与 LOGIN-003 会话撤销日志同 trace 关联）。
+
+    String SYSTEM_MEMBERSHIP_TYPE = "SYSTEM 任职";
+    String SYSTEM_MEMBERSHIP_CREATE_SUB_TYPE = "任职入职";
+    String SYSTEM_MEMBERSHIP_CREATE_SUCCESS = "为账号【{{#membership.userId}}】在组织【{{#membership.organizationId}}】创建任职";
+    String SYSTEM_MEMBERSHIP_TRANSFER_SUB_TYPE = "任职转岗";
+    String SYSTEM_MEMBERSHIP_TRANSFER_SUCCESS = "将任职【{{#membershipId}}】转岗至组织【{{#toOrganizationId}}】，原因【{{#reason}}】；已发生业务的责任历史不被改写";
+    String SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUB_TYPE = "任职状态流转";
+    String SYSTEM_MEMBERSHIP_CHANGE_STATUS_SUCCESS = "将任职【{{#membershipId}}】状态变更为【{{#toStatus}}】，原因【{{#reason}}】；若为停用/离职/过期且致默认任职上下文丧失，则其全部登录会话已失效";
+
     // ======================= SYSTEM_ROLE 角色 =======================
 
     String SYSTEM_ROLE_TYPE = "SYSTEM 角色";
