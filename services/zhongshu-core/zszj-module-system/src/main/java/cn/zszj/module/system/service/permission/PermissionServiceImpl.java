@@ -11,6 +11,7 @@ import cn.zszj.framework.datapermission.core.annotation.DataPermission;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
+import cn.zszj.framework.common.biz.system.permission.dto.OrgDataPermissionRespDTO;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
 import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
 import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
@@ -73,6 +74,11 @@ public class PermissionServiceImpl implements PermissionService {
     private DeptService deptService;
     @Resource
     private AdminUserService userService;
+    /**
+     * ZS-PERM-002.B：组织级（跨组织）数据范围解析器（org 轴，只读复用 IAM-002 组织/任职模型，不改其写方法）。
+     */
+    @Resource
+    private OrgDataScopeResolver orgDataScopeResolver;
 
     @Override
     public boolean hasAnyPermissions(Long userId, String... permissions) {
@@ -373,6 +379,14 @@ public class PermissionServiceImpl implements PermissionService {
             log.error("[getDeptDataPermission][LoginUser({}) role({}) 无法处理]", userId, toJsonString(result));
         }
         return result;
+    }
+
+    @Override
+    @DataPermission(enable = false) // 关闭数据权限，避免递归获取数据权限（与 getDeptDataPermission 同口径）
+    public OrgDataPermissionRespDTO getOrgDataPermission(Long userId) {
+        // ZS-PERM-002.B（org 轴）：超管豁免沿用既有 isSuperAdminUser 判定（仅启用态超管角色），
+        // 组织范围解析（平台/本组织子树/仅本人）委托 OrgDataScopeResolver（只读消费组织/任职 Mapper）。
+        return orgDataScopeResolver.resolve(userId, isSuperAdminUser(userId));
     }
 
     // ========== ZS-PERM-001.A 授权目标归属与上限校验  ==========

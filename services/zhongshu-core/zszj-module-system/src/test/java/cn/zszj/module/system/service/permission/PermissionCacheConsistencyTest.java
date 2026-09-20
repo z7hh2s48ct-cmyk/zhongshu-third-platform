@@ -50,7 +50,7 @@ import static org.mockito.Mockito.when;
  *
  * @author ZS-PERM-004.A
  */
-@Import({ZszjCacheAutoConfiguration.class, RoleServiceImpl.class, PermissionServiceImpl.class})
+@Import({ZszjCacheAutoConfiguration.class, RoleServiceImpl.class, PermissionServiceImpl.class, OrgDataScopeResolver.class})
 @TestPropertySource(properties = "spring.main.allow-circular-references=true") // 与生产 zszj-server 一致（Role↔Permission 循环依赖）
 public class PermissionCacheConsistencyTest extends BaseDbAndRedisUnitTest {
 

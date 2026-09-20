@@ -49,7 +49,7 @@ import static org.mockito.Mockito.when;
  *
  * @author ZS-CFG-003.B
  */
-@Import({PermissionServiceImpl.class, RoleServiceImpl.class, TenantServiceImpl.class})
+@Import({PermissionServiceImpl.class, RoleServiceImpl.class, TenantServiceImpl.class, OrgDataScopeResolver.class})
 @TestPropertySource(properties = "spring.main.allow-circular-references=true") // 与生产一致（三层循环依赖）
 public class TenantPackageMenuIntersectionTest extends BaseDbUnitTest {
 
