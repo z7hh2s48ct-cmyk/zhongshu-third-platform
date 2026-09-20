@@ -14,9 +14,11 @@ import cn.zszj.module.system.enums.common.SexEnum;
 import cn.zszj.module.system.enums.membership.MembershipActionEnum;
 import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
 import cn.zszj.module.system.enums.organization.OrganizationTypeEnum;
+import cn.zszj.module.system.service.oauth2.OAuth2TokenService;
 import cn.zszj.module.system.service.organization.OrganizationServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import jakarta.annotation.Resource;
 
@@ -48,6 +50,14 @@ public class MembershipServiceImplTest extends BaseDbUnitTest {
     private OrganizationMapper organizationMapper;
     @Resource
     private AdminUserMapper adminUserMapper;
+
+    /**
+     * ZS-IAM-004：MembershipServiceImpl 新增失权联动依赖 OAuth2TokenService（@Lazy），
+     * 本类 mock 之以满足 Spring 上下文装配（否则离任默认职的 changeStatus 会因无此 bean 报错）；
+     * 失权行为的定向断言由 MembershipServiceImplLifecycleTest 承担。
+     */
+    @MockitoBean
+    private OAuth2TokenService oauth2TokenService;
 
     /**
      * 插入一个指定编号的账号（codex r0 P2：createMembership 现校验账号存在与租户归属）。
