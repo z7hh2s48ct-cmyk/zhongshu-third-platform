@@ -1,6 +1,7 @@
 package cn.zszj.module.system.service.permission;
 
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
+import cn.zszj.framework.common.biz.system.permission.dto.OrgDataPermissionRespDTO;
 
 import java.util.Collection;
 import java.util.Set;
@@ -142,5 +143,13 @@ public interface PermissionService {
      * @return 部门数据权限
      */
     DeptDataPermissionRespDTO getDeptDataPermission(Long userId);
+
+    /**
+     * 获得登陆用户的组织（跨组织）数据权限（ZS-PERM-002.B，org 轴）
+     *
+     * @param userId 用户编号
+     * @return 组织数据权限
+     */
+    OrgDataPermissionRespDTO getOrgDataPermission(Long userId);
 
 }

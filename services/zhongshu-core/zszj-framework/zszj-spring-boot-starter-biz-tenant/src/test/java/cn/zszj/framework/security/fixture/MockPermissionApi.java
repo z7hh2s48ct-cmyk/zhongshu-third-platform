@@ -2,6 +2,7 @@ package cn.zszj.framework.security.fixture;
 
 import cn.zszj.framework.common.biz.system.permission.PermissionCommonApi;
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
+import cn.zszj.framework.common.biz.system.permission.dto.OrgDataPermissionRespDTO;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -88,6 +89,16 @@ public class MockPermissionApi implements PermissionCommonApi {
         dto.setAll(true);
         dto.setSelf(false);
         dto.setDeptIds(new HashSet<>());
+        return dto;
+    }
+
+    @Override
+    public OrgDataPermissionRespDTO getOrgDataPermission(Long userId) {
+        // 返回全部组织数据权限（简化测试）：安全过滤器链测试不校验 org 轴范围，与 getDeptDataPermission 同口径
+        OrgDataPermissionRespDTO dto = new OrgDataPermissionRespDTO();
+        dto.setAll(true);
+        dto.setSelf(false);
+        dto.setOrgIds(new HashSet<>());
         return dto;
     }
 }

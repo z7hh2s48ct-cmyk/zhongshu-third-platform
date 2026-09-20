@@ -1,6 +1,7 @@
 package cn.zszj.module.system.api.permission;
 
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
+import cn.zszj.framework.common.biz.system.permission.dto.OrgDataPermissionRespDTO;
 import cn.zszj.module.system.service.permission.PermissionService;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +38,11 @@ public class PermissionApiImpl implements PermissionApi {
     @Override
     public DeptDataPermissionRespDTO getDeptDataPermission(Long userId) {
         return permissionService.getDeptDataPermission(userId);
+    }
+
+    @Override
+    public OrgDataPermissionRespDTO getOrgDataPermission(Long userId) {
+        return permissionService.getOrgDataPermission(userId);
     }
 
 }

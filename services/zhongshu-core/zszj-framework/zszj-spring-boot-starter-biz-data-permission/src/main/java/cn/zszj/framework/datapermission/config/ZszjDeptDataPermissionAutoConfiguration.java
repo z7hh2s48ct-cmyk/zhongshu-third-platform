@@ -4,6 +4,7 @@ import cn.zszj.framework.common.biz.system.permission.PermissionCommonApi;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionChecker;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionRule;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionRuleCustomizer;
+import cn.zszj.framework.datapermission.core.rule.org.OrgDataPermissionChecker;
 import cn.zszj.framework.security.core.LoginUser;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -41,6 +42,17 @@ public class ZszjDeptDataPermissionAutoConfiguration {
     @Bean
     public DeptDataPermissionChecker deptDataPermissionChecker(PermissionCommonApi permissionApi) {
         return new DeptDataPermissionChecker(permissionApi);
+    }
+
+    /**
+     * ZS-PERM-002.B：组织级（跨组织）对象授权检查入口（org 轴）。
+     *
+     * <p>与 {@link DeptDataPermissionChecker}（dept/self 轴）正交并存，为详情/批量/导出路径提供
+     * 「已知他组织对象 ID 越界拒绝」能力（FND-AUTH-004），复用同一 LoginUser 上下文缓存机制。
+     */
+    @Bean
+    public OrgDataPermissionChecker orgDataPermissionChecker(PermissionCommonApi permissionApi) {
+        return new OrgDataPermissionChecker(permissionApi);
     }
 
 }

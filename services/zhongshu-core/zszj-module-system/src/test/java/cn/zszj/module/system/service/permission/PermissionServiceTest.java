@@ -44,7 +44,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-@Import({PermissionServiceImpl.class})
+@Import({PermissionServiceImpl.class, OrgDataScopeResolver.class}) // ZS-PERM-002.B：PermissionServiceImpl 新增 org 轴范围解析协作者
 public class PermissionServiceTest extends BaseDbUnitTest {
 
     @BeforeEach
