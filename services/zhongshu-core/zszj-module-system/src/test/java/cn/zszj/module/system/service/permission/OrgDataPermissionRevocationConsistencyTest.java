@@ -10,6 +10,7 @@ import cn.zszj.framework.security.core.LoginUser;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
+import cn.zszj.module.system.api.permission.PermissionApiImpl;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipHistoryDO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
@@ -44,10 +45,11 @@ import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * ZS-PERM-004.B：组织任职变更后的 org 轴撤权审计一致性测试（真实 H2 + 真实生命周期流转 + 真实范围解析）。
@@ -66,18 +68,20 @@ import static org.mockito.Mockito.when;
  *
  * @author ZS-PERM-004.B
  */
-@Import({ZszjCacheAutoConfiguration.class, PermissionServiceImpl.class, OrgDataScopeResolver.class,
+@Import({ZszjCacheAutoConfiguration.class, PermissionServiceImpl.class, PermissionApiImpl.class, OrgDataScopeResolver.class,
         MembershipServiceImpl.class, OrganizationServiceImpl.class})
 @TestPropertySource(properties = "spring.main.allow-circular-references=true") // 与生产 zszj-server 一致（Role↔Permission 循环依赖）
 public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUnitTest {
 
     /**
-     * 经真实 {@link PermissionService#getOrgDataPermission} 驱动 org 轴范围断言（而非直调 resolver）：
-     * 该方法在 {@code @EnableCaching} 代理下无 {@code @Cacheable}，故每请求实时委托 {@link OrgDataScopeResolver#resolve}。
-     * 走真实缓存代理使本套件成为「该路径不得引入跨请求缓存」的回归锁（§1.2、D2 维度4）。
+     * 经真实门面 {@link PermissionCommonApi}（{@code PermissionApiImpl} → {@link PermissionService#getOrgDataPermission}
+     * → {@link OrgDataScopeResolver#resolve}）驱动 org 轴范围断言，与产线 org 轴读路径
+     * （{@link OrgDataPermissionChecker} → {@code PermissionCommonApi} → …，见 ZszjDeptDataPermissionAutoConfiguration）<b>同构</b>。
+     * 整条链在 {@code @EnableCaching} 代理下无 {@code @Cacheable}，故每请求实时重派生；走<b>真实门面 + 缓存代理</b>
+     * 使本套件成为「门面层与服务层均不得引入跨请求缓存」的回归锁（§1.2、D2 维度4、CodeReview P1-1）。
      */
     @Resource
-    private PermissionService permissionService;
+    private PermissionCommonApi permissionApi;
     @Resource
     private MembershipServiceImpl membershipService;
     @Resource
@@ -158,14 +162,16 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
         return membershipService.createMembership(membership, userId);
     }
 
-    /** 构造一个桥接到<b>实时</b>范围解析的 org 轴检查器（每次 getOrgDataPermission 都重新 resolve，模拟每请求实时派生）。 */
+    /** 构造 org 轴检查器，注入<b>真实</b>门面 {@code permissionApi}（与产线 ZszjDeptDataPermissionAutoConfiguration 装配同构）。 */
     private OrgDataPermissionChecker newChecker() {
-        PermissionCommonApi api = mock(PermissionCommonApi.class);
-        when(api.getOrgDataPermission(anyLong())).thenAnswer(inv -> permissionService.getOrgDataPermission(inv.getArgument(0)));
-        return new OrgDataPermissionChecker(api);
+        return new OrgDataPermissionChecker(permissionApi);
     }
 
-    /** 模拟一次新请求：全新 LoginUser（请求级 CONTEXT_KEY 缓存随之为空 → 检查器必然重新解析）。 */
+    /**
+     * 模拟一次新请求：全新 LoginUser（请求级 CONTEXT_KEY 缓存随之为空 → 检查器必然重新解析）。
+     * 边界：仅复现 LoginUser 作用域缓存的失效；本套件同线程执行，ThreadLocal/RequestContextHolder 作用域的
+     * org 范围缓存（当前不存在）不在本锁范围（CodeReview P3-3）。
+     */
     private LoginUser newRequest(Long userId) {
         return randomPojo(LoginUser.class, o -> o.setId(userId).setUserType(UserTypeEnum.ADMIN.getValue()));
     }
@@ -185,7 +191,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
             ms.when(SecurityFrameworkUtils::getLoginUserId).thenReturn(userId);
             // 请求1（变更前）：门店子树在授权范围内
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            assertEquals(SetUtils.asSet(2000L, 2001L), permissionService.getOrgDataPermission(userId).getOrgIds());
+            assertEquals(SetUtils.asSet(2000L, 2001L), permissionApi.getOrgDataPermission(userId).getOrgIds());
             assertTrue(checker.isObjectVisible(2000L, null));
             assertTrue(checker.isObjectVisible(2001L, null));
 
@@ -194,7 +200,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
 
             // 请求2（变更后，全新 LoginUser）：范围即时收敛，旧组织对象拒绝
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            OrgDataPermissionRespDTO after = permissionService.getOrgDataPermission(userId);
+            OrgDataPermissionRespDTO after = permissionApi.getOrgDataPermission(userId);
             assertEquals(OrgDataScopeEnum.ORG_SELF.getScope(), after.getScopeType());
             assertTrue(after.getOrgIds().isEmpty());
             assertFalse(checker.isObjectVisible(2000L, null));
@@ -202,7 +208,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
         }
     }
 
-    @Test // 停用（SUSPEND）默认任职后同样即时失权；过期（EXPIRE）经状态承载亦即时失权
+    @Test // 停用（SUSPEND）默认任职后 org 轴范围同样即时失权（收敛 ORG_SELF，旧组织对象拒绝）
     public void testSuspendPrimaryMembership_orgScopeShrinksImmediately() {
         Long userId = randomLongId();
         insertUser(userId);
@@ -218,7 +224,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
             membershipService.changeStatus(membershipId, MembershipStatusEnum.SUSPENDED.getStatus(), userId, "停职");
 
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            assertEquals(OrgDataScopeEnum.ORG_SELF.getScope(), permissionService.getOrgDataPermission(userId).getScopeType());
+            assertEquals(OrgDataScopeEnum.ORG_SELF.getScope(), permissionApi.getOrgDataPermission(userId).getScopeType());
             assertFalse(checker.isObjectVisible(2100L, null));
         }
     }
@@ -237,15 +243,17 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
             ms.when(SecurityFrameworkUtils::getLoginUserId).thenReturn(userId);
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
             // 变更前：两组织合法互授（各自子树并集）
-            assertTrue(permissionService.getOrgDataPermission(userId).getOrgIds().containsAll(SetUtils.asSet(2200L, 2300L)));
+            assertTrue(permissionApi.getOrgDataPermission(userId).getOrgIds().containsAll(SetUtils.asSet(2200L, 2300L)));
             assertTrue(checker.isObjectVisible(2300L, null));
 
             // 停用次级任职（默认任职仍在职 → IAM-004 shouldRevokeSessions 返回 false，不撤会话）
             membershipService.changeStatus(secondaryId, MembershipStatusEnum.SUSPENDED.getStatus(), userId, "次级停职");
+            // 断言「不撤会话」半句（CodeReview P2-1）：primary 仍在职 → shouldRevokeSessions=false，会话撤销（IAM-004 独立层）不应触发
+            verify(oauth2TokenService, never()).removeAccessToken(anyLong(), anyInt());
 
             // org 轴数据授权独立即时收缩：2300 退出范围、对象拒绝；2200（默认任职）仍在范围
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            OrgDataPermissionRespDTO after = permissionService.getOrgDataPermission(userId);
+            OrgDataPermissionRespDTO after = permissionApi.getOrgDataPermission(userId);
             assertTrue(after.getOrgIds().contains(2200L));
             assertFalse(after.getOrgIds().contains(2300L));
             assertTrue(checker.isObjectVisible(2200L, null));
@@ -274,7 +282,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
             membershipService.transferMembership(membershipId, 2500L, userId, "门店调动");
 
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            OrgDataPermissionRespDTO after = permissionService.getOrgDataPermission(userId);
+            OrgDataPermissionRespDTO after = permissionApi.getOrgDataPermission(userId);
             assertFalse(after.getOrgIds().contains(2400L));
             assertTrue(after.getOrgIds().contains(2500L));
             assertFalse(checker.isObjectVisible(2400L, null));   // 旧组织对象即时拒绝
@@ -304,7 +312,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
 
             // 复职后：组织已禁用 → 任职被 isEffective 排除 → 范围 ORG_SELF，不恢复 2600
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            OrgDataPermissionRespDTO after = permissionService.getOrgDataPermission(userId);
+            OrgDataPermissionRespDTO after = permissionApi.getOrgDataPermission(userId);
             assertEquals(OrgDataScopeEnum.ORG_SELF.getScope(), after.getScopeType());
             assertFalse(after.getOrgIds().contains(2600L));
             assertFalse(checker.isObjectVisible(2600L, null));
@@ -330,7 +338,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
 
             // 复职后组织仍启用 → 合法授权重新取得（本组织 + 后代）
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            assertEquals(SetUtils.asSet(2700L, 2701L), permissionService.getOrgDataPermission(userId).getOrgIds());
+            assertEquals(SetUtils.asSet(2700L, 2701L), permissionApi.getOrgDataPermission(userId).getOrgIds());
             assertTrue(checker.isObjectVisible(2700L, null));
             assertTrue(checker.isObjectVisible(2701L, null));
         }
@@ -350,7 +358,7 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
             ms.when(SecurityFrameworkUtils::getLoginUserId).thenReturn(userId);
             // 变更前：经真实 getOrgDataPermission（@EnableCaching 代理）读取并断言在范围
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-            assertTrue(permissionService.getOrgDataPermission(userId).getOrgIds().contains(2800L));
+            assertTrue(permissionApi.getOrgDataPermission(userId).getOrgIds().contains(2800L));
             assertTrue(checker.isObjectVisible(2800L, null));
 
             // 离职默认任职
@@ -359,13 +367,13 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
             // 变更后：连续三次「独立请求」（每次全新 LoginUser）经同一缓存代理读取——必须一致收缩，无陈旧命中
             for (int i = 0; i < 3; i++) {
                 ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(newRequest(userId));
-                assertTrue(permissionService.getOrgDataPermission(userId).getOrgIds().isEmpty());
+                assertTrue(permissionApi.getOrgDataPermission(userId).getOrgIds().isEmpty());
                 assertFalse(checker.isObjectVisible(2800L, null));
             }
         }
     }
 
-    // ========== 维度5：撤权审计完整性（操作者/目标/变更/结果/trace） ==========
+    // ========== 维度5：撤权审计完整性（操作者/目标/变更/结果——MembershipHistoryDO 流水；trace-id 由操作日志层承载，本套件不断言） ==========
 
     @Test // 生命周期各流转写完整历史流水：操作者、目标、变更（动作 + from/to 组织 + from/to 状态）、原因
     public void testLifecycleTransitions_writeCompleteAuditTrail() {
@@ -414,10 +422,13 @@ public class OrgDataPermissionRevocationConsistencyTest extends BaseDbAndRedisUn
         assertEquals(MembershipActionEnum.TERMINATE.getAction(), terminate.getAction());
         assertEquals(MembershipStatusEnum.TERMINATED.getStatus(), terminate.getToStatus());
 
-        // 流水只增：入职→转岗→停用→复职→离职 共 5 行，均归属同一任职
+        // 流水只增：入职→转岗→停用→复职→离职 共 5 行，动作序列精确匹配（承载「只增不改 + 完整流转链」，CodeReview P3-1）
         List<MembershipHistoryDO> all = membershipHistoryMapper.selectListByMembershipId(membershipId);
         assertEquals(5, all.size());
-        assertTrue(all.stream().allMatch(h -> membershipId.equals(h.getMembershipId())));
+        assertEquals(List.of(MembershipActionEnum.CREATE.getAction(), MembershipActionEnum.TRANSFER.getAction(),
+                        MembershipActionEnum.SUSPEND.getAction(), MembershipActionEnum.RESUME.getAction(),
+                        MembershipActionEnum.TERMINATE.getAction()),
+                all.stream().map(MembershipHistoryDO::getAction).toList());
     }
 
     private MembershipHistoryDO lastHistory(Long membershipId) {
