@@ -38,4 +38,10 @@ public final class AuditEventTypes {
     /** Outbox 事件人工跳过成功（ZS-JOB-004：DEAD→SKIPPED 授权放弃）。 */
     public static final String OUTBOX_EVENT_SKIPPED = "OUTBOX_EVENT_SKIPPED";
 
+    /** 跨组织访问获批（ZS-SEC-001.B：受控跨组织授权记录裁决通过，随调用方事务落库）。 */
+    public static final String CROSS_ORG_VISIT_GRANTED = "CROSS_ORG_VISIT_GRANTED";
+
+    /** 跨组织访问被拒（ZS-SEC-001.B：无授权/过期/撤销/非平台角色/目标无效/动作·对象·字段越界，独立事务落库）。 */
+    public static final String CROSS_ORG_VISIT_DENIED = "CROSS_ORG_VISIT_DENIED";
+
 }

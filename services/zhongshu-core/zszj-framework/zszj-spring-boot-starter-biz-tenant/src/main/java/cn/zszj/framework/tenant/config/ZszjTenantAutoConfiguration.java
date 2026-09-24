@@ -1,10 +1,10 @@
 package cn.zszj.framework.tenant.config;
 
+import cn.zszj.framework.common.biz.system.permission.CrossOrgVisitApi;
 import cn.zszj.framework.common.biz.system.tenant.TenantCommonApi;
 import cn.zszj.framework.common.enums.WebFilterOrderEnum;
 import cn.zszj.framework.mybatis.core.util.MyBatisUtils;
 import cn.zszj.framework.redis.config.ZszjCacheProperties;
-import cn.zszj.framework.security.core.service.SecurityFrameworkService;
 import cn.zszj.framework.tenant.core.aop.TenantIgnore;
 import cn.zszj.framework.tenant.core.aop.TenantIgnoreAspect;
 import cn.zszj.framework.tenant.core.db.TenantDatabaseInterceptor;
@@ -23,6 +23,7 @@ import cn.zszj.framework.web.core.handler.GlobalExceptionHandler;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import jakarta.annotation.Resource;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -93,8 +94,8 @@ public class ZszjTenantAutoConfiguration {
 
     @Bean
     public TenantVisitContextInterceptor tenantVisitContextInterceptor(TenantProperties tenantProperties,
-                                                                       SecurityFrameworkService securityFrameworkService) {
-        return new TenantVisitContextInterceptor(tenantProperties, securityFrameworkService);
+                                                                       ObjectProvider<CrossOrgVisitApi> crossOrgVisitApiProvider) {
+        return new TenantVisitContextInterceptor(tenantProperties, crossOrgVisitApiProvider);
     }
 
     @Bean

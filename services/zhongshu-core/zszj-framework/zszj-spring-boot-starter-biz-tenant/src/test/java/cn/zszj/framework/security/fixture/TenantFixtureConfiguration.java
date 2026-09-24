@@ -1,7 +1,7 @@
 package cn.zszj.framework.security.fixture;
 
+import cn.zszj.framework.common.biz.system.permission.CrossOrgVisitApi;
 import cn.zszj.framework.common.enums.WebFilterOrderEnum;
-import cn.zszj.framework.security.core.service.SecurityFrameworkService;
 import cn.zszj.framework.tenant.config.TenantProperties;
 import cn.zszj.framework.tenant.core.security.TenantSecurityWebFilter;
 import cn.zszj.framework.tenant.core.service.TenantFrameworkService;
@@ -9,6 +9,7 @@ import cn.zszj.framework.tenant.core.web.TenantContextWebFilter;
 import cn.zszj.framework.tenant.core.web.TenantVisitContextInterceptor;
 import cn.zszj.framework.web.config.WebProperties;
 import cn.zszj.framework.web.core.handler.GlobalExceptionHandler;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -29,7 +30,7 @@ import java.util.HashSet;
  * 2. 在此仅手动装配「真实」的 3 个租户 Web 组件（不改动其源码），保留其真实行为：
  *    - {@link TenantContextWebFilter}：从 header 解析 tenant-id 写入 TenantContextHolder（order=-104）
  *    - {@link TenantSecurityWebFilter}：校验登录用户租户越权/租户合法性（order=-99，在 Spring Security 链之后）
- *    - {@link TenantVisitContextInterceptor}：跨租户切换（MVC 拦截器，需 system:tenant:visit 权限）
+ *    - {@link TenantVisitContextInterceptor}：跨租户切换（MVC 拦截器，ZS-SEC-001.B 起经 CrossOrgVisitApi 服务端授权裁决）
  *
  * 过滤器顺序严格对齐 {@link WebFilterOrderEnum}，与生产一致：
  * TenantContextWebFilter(-104) → Spring Security 链(-100) → TenantSecurityWebFilter(-99) → MVC 拦截器 → @PreAuthorize。
@@ -76,13 +77,23 @@ public class TenantFixtureConfiguration {
     }
 
     /**
-     * 跨租户切换拦截器：依赖真实的 SecurityFrameworkService（"ss" Bean，由 ZszjSecurityAutoConfiguration 提供）。
+     * ZS-SEC-001.B：Mock 跨组织授权 SPI，为拦截器提供确定性的「服务端授权记录/策略」裁决
+     * （仅 USER_T1_VISITOR→TENANT_2 获批，其余 fail-closed 拒绝），取代旧 system:tenant:visit 放大。
+     */
+    @Bean
+    public CrossOrgVisitApi crossOrgVisitApi() {
+        return new MockCrossOrgVisitApi();
+    }
+
+    /**
+     * 跨租户切换拦截器：ZS-SEC-001.B 起改依赖 {@link CrossOrgVisitApi}（经 {@link ObjectProvider} 可选注入），
+     * 以服务端授权记录/策略裁决受控范围，不再依赖 SecurityFrameworkService 的粗粒度 system:tenant:visit 权限。
      */
     @Bean
     public TenantVisitContextInterceptor tenantVisitContextInterceptor(
             TenantProperties tenantProperties,
-            SecurityFrameworkService securityFrameworkService) {
-        return new TenantVisitContextInterceptor(tenantProperties, securityFrameworkService);
+            ObjectProvider<CrossOrgVisitApi> crossOrgVisitApiProvider) {
+        return new TenantVisitContextInterceptor(tenantProperties, crossOrgVisitApiProvider);
     }
 
     /**
