@@ -242,6 +242,15 @@ public class RoleServiceImpl implements RoleService {
     }
 
     @Override
+    public boolean hasAnyTenantAdmin(Collection<Long> ids) {
+        if (CollectionUtil.isEmpty(ids)) {
+            return false;
+        }
+        RoleServiceImpl self = getSelf();
+        return ids.stream().anyMatch(id -> isTenantAdminRole(self.getRoleFromCache(id)));
+    }
+
+    @Override
     public boolean hasAnyEnabledSuperAdmin(Collection<Long> ids) {
         if (CollectionUtil.isEmpty(ids)) {
             return false;
@@ -256,6 +265,14 @@ public class RoleServiceImpl implements RoleService {
      */
     static boolean isSuperAdminRole(RoleDO role) {
         return role != null && RoleCodeEnum.isSuperAdmin(role.getCode());
+    }
+
+    /**
+     * 租户管理员角色判定（不区分状态）——供获批跨组织 visit 上限映射使用（ZS-PERM-001.B）：
+     * 禁用租户管理员角色同样不可由访客授予，与超管上限同范式堵「先授禁用角色、待解禁生效」的搜置提权。
+     */
+    static boolean isTenantAdminRole(RoleDO role) {
+        return role != null && RoleCodeEnum.isTenantAdmin(role.getCode());
     }
 
     /**

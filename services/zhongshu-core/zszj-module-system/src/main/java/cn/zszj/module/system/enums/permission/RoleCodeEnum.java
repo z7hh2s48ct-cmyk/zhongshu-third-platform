@@ -29,4 +29,11 @@ public enum RoleCodeEnum {
         return ObjectUtils.equalsAny(code, SUPER_ADMIN.getCode());
     }
 
+    /**
+     * 是否租户管理员角色（ZS-PERM-001.B：获批跨组织 visit 上限映射用，禁止跨组织铸造租户级管理员）。
+     */
+    public static boolean isTenantAdmin(String code) {
+        return ObjectUtils.equalsAny(code, TENANT_ADMIN.getCode());
+    }
+
 }

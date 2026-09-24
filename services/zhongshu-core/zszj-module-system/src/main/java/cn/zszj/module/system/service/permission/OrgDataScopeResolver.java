@@ -25,7 +25,8 @@ import java.util.Set;
  *
  * <p>落实 D-09 一期口径（docs/02 §3 / §5.3 PEND-003 采纳 A）：<b>跨组织只允许显式平台角色</b>，不发明临时跨组织授权。
  * 由 {@code PermissionServiceImpl#getOrgDataPermission}（已 {@code @DataPermission(enable = false)}）委托调用，
- * <b>只读消费</b>组织/任职 Mapper，不触碰 IAM-002/IAM-004 的写路径。
+ * <b>只读消费</b>组织/任职 Mapper，不触碰 IAM-002/IAM-004 的写路径。ZS-PERM-001.B 起另经
+ * {@link #resolveEffectiveOrgIds} 服务于授权写入的目标归属判定（获批跨组织 visit 上下文）。
  *
  * <p>范围派生规则：
  * <ol>
@@ -41,6 +42,7 @@ import java.util.Set;
  * valid_to 未过、且所属组织存在并显式开启（{@link CommonStatusEnum#isEnable}）；任一不满足即排除（fail-closed）。
  *
  * @author ZS-PERM-002.B
+ * @author ZS-PERM-001.B
  */
 @Component
 public class OrgDataScopeResolver {
@@ -75,10 +77,55 @@ public class OrgDataScopeResolver {
             return selfOnly(result);
         }
         // 3. 收集有效任职组织；命中 PLATFORM 类型即显式平台角色
+        EffectiveOrgs effective = collectEffectiveOrgs(userId);
+        // 4. 显式平台角色 → 全部组织（D-09：跨组织只允许显式平台角色）
+        if (effective.platform) {
+            return allOrgs(result);
+        }
+        // 5. 无任何有效任职 → 仅本人兜底
+        if (effective.orgIds.isEmpty()) {
+            return selfOnly(result);
+        }
+        // 6. 本组织子树并集 → ORG_AND_CHILD（两组织合法互授即各自子树并集）
+        Set<Long> scopeOrgIds = new HashSet<>();
+        for (Long orgId : effective.orgIds) {
+            collectSelfAndDescendants(orgId, scopeOrgIds);
+        }
+        result.setSelf(true);
+        result.setOrgIds(scopeOrgIds);
+        result.setScopeType(OrgDataScopeEnum.ORG_AND_CHILD.getScope());
+        return result;
+    }
+
+    /**
+     * 解析账号的【直接】有效任职组织集合（ZS-PERM-001.B 复用）：状态 ACTIVE + valid_from 已到 + valid_to 未过
+     * + 所属组织存在且显式开启，与 {@link #resolve} 及 IAM-002 {@code MembershipContextResolver} 的有效任职判定 <b>同口径</b>。
+     * 与 {@link #resolve} 有两处刻意差异（均为授权目标归属判定所必需）：① <b>不含组织树后代下钻</b>——只需目标用户
+     * 的直接任职组织；② <b>不施加</b> {@link #resolve} 的 PLATFORM→{@code ORG_ALL} 放大与超管豁免——若把「平台角色=全组织」
+     * 搬到授权目标侧，会让「仅任职于平台组织」的目标用户在 org 限定授权下被放行，等于放宽授权写入范围，与 fail-closed 相悖。
+     *
+     * <p><b>调用不变式</b>：本方法只在 {@code @DataPermission(enable = false)} 入口或 {@code skipPermissionCheck() == true}
+     * 的获批 visit 上下文下被调用；org 轴 SQL 规则（{@code OrgDataPermissionRule}）注册后如新增调用方，须自行包
+     * {@code DataPermissionUtils.executeIgnore}，避免目标用户任职行被操作者 org 范围静默收窄。
+     *
+     * @param userId 账号编号
+     * @return 直接有效任职的组织编号集合（无有效任职时为空集，fail-closed 由调用方裁决）
+     */
+    public Set<Long> resolveEffectiveOrgIds(Long userId) {
+        return collectEffectiveOrgs(userId).orgIds;
+    }
+
+    /**
+     * 收集账号的有效任职组织（去重保序）+ 是否命中 PLATFORM 类型组织（显式平台角色）。
+     * {@link #resolve}（org 轴数据范围）与 {@link #resolveEffectiveOrgIds}（授权目标归属）共用本收集逻辑，保证同口径。
+     */
+    private EffectiveOrgs collectEffectiveOrgs(Long userId) {
+        EffectiveOrgs result = new EffectiveOrgs();
+        if (userId == null || userId <= 0) {
+            return result;
+        }
         List<MembershipDO> memberships = membershipMapper.selectListByUserId(userId);
         LocalDateTime now = LocalDateTime.now();
-        Set<Long> effectiveOrgIds = new LinkedHashSet<>();
-        boolean platform = false;
         for (MembershipDO membership : memberships) {
             if (!isEffective(membership, now)) {
                 continue;
@@ -89,27 +136,19 @@ public class OrgDataScopeResolver {
                 continue;
             }
             if (OrganizationTypeEnum.PLATFORM.getType().equals(organization.getType())) {
-                platform = true;
+                result.platform = true;
             }
-            effectiveOrgIds.add(organization.getId());
+            result.orgIds.add(organization.getId());
         }
-        // 4. 显式平台角色 → 全部组织（D-09：跨组织只允许显式平台角色）
-        if (platform) {
-            return allOrgs(result);
-        }
-        // 5. 无任何有效任职 → 仅本人兜底
-        if (effectiveOrgIds.isEmpty()) {
-            return selfOnly(result);
-        }
-        // 6. 本组织子树并集 → ORG_AND_CHILD（两组织合法互授即各自子树并集）
-        Set<Long> scopeOrgIds = new HashSet<>();
-        for (Long orgId : effectiveOrgIds) {
-            collectSelfAndDescendants(orgId, scopeOrgIds);
-        }
-        result.setSelf(true);
-        result.setOrgIds(scopeOrgIds);
-        result.setScopeType(OrgDataScopeEnum.ORG_AND_CHILD.getScope());
         return result;
+    }
+
+    /**
+     * 有效任职组织收集结果：直接任职组织集合（去重保序）+ 是否含平台类型组织。
+     */
+    private static class EffectiveOrgs {
+        private final Set<Long> orgIds = new LinkedHashSet<>();
+        private boolean platform = false;
     }
 
     /**

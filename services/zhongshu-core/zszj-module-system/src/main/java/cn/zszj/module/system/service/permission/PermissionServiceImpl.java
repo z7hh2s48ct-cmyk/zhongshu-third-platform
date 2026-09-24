@@ -8,8 +8,10 @@ import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.exception.ErrorCode;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
 import cn.zszj.framework.datapermission.core.annotation.DataPermission;
+import cn.zszj.framework.security.core.util.CrossOrgVisitScopeHolder;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.common.biz.system.permission.dto.CrossOrgVisitDecisionDTO;
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
 import cn.zszj.framework.common.biz.system.permission.dto.OrgDataPermissionRespDTO;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
@@ -255,6 +257,8 @@ public class PermissionServiceImpl implements PermissionService {
         Collection<Long> deleteMenuIds = CollUtil.subtract(dbRoleIds, roleIdList);
         // ZS-PERM-001.A：写入前统一校验，防止篡改他租户 用户/角色 ID、批量混入、越权授予与自我提权
         validateUserForAssign(userId);
+        // ZS-PERM-001.B：获批跨组织 visit 上下文下，授权目标须落在批准组织范围内、且不得授予租户级管理员角色（越界拒绝，非 visit 不收敛）
+        validateCrossOrgVisitScope(userId, createRoleIds);
         validateRolesForAssign(roleIdList, createRoleIds);
         validateUserRoleGrantCeiling(userId, createRoleIds);
         // 执行新增和删除。对于已经授权的角色，不用做任何处理
@@ -389,7 +393,7 @@ public class PermissionServiceImpl implements PermissionService {
         return orgDataScopeResolver.resolve(userId, isSuperAdminUser(userId));
     }
 
-    // ========== ZS-PERM-001.A 授权目标归属与上限校验  ==========
+    // ========== ZS-PERM-001.A/.B 授权目标归属、上限与获批跨组织范围校验  ==========
 
     /**
      * 校验被授权用户：必须存在，且归属当前技术租户。
@@ -541,6 +545,53 @@ public class PermissionServiceImpl implements PermissionService {
     private boolean isSuperAdminUser(Long userId) {
         Set<Long> roleIds = getUserRoleIdListByUserId(userId);
         return CollUtil.isNotEmpty(roleIds) && roleService.hasAnyEnabledSuperAdmin(roleIds);
+    }
+
+    /**
+     * ZS-PERM-001.B：校验【获批跨组织访问】上下文下的授权写入是否越界——覆盖授权目标的组织维与角色上限维。
+     *
+     * <p>仅在获批 visit 上下文（{@link CrossOrgVisitScopeHolder#getScope()} 返回 authorized 范围快照）下施加收敛：
+     * <ul>
+     *   <li>非 visit 上下文（无范围快照 / authorized=false）→ 不收敛，保持 ZS-PERM-001.A 同技术租户归属校验语义；</li>
+     *   <li>角色上限维（.A HANDOFF 交接的「上限映射」）→ 禁止授予租户级管理员角色（super_admin/tenant_admin），
+     *       fail-closed，不受访客自身角色豁免（跨组织访问是受限的临时委派，不得铸造目标租户的管理员）；</li>
+     *   <li>whole-tenant 授权（{@code targetOrgIds == null}）→ 目标租户内任意用户放行（租户维已由
+     *       {@link #validateTenantScope} 校验，visit 拦截器已切换到目标租户）；</li>
+     *   <li>org 限定授权（{@code targetOrgIds != null}，含空集）→ 目标用户须有【有效任职】落在获批组织集合内，
+     *       否则越界拒绝（fail-closed：无有效任职 / 空集同样拒绝）。有效任职判定复用
+     *       {@link OrgDataScopeResolver#resolveEffectiveOrgIds}（与 org 轴数据范围、IAM-002 上下文同口径）。</li>
+     * </ul>
+     *
+     * <p>动作维（allowedActions）由 D6（{@code SecurityFrameworkServiceImpl#hasAnyPermissions}）在 {@code @PreAuthorize}
+     * 入口收敛；本方法聚焦【授权目标】的对象/组织维与角色上限维，落实 docs/05 line331「即使具备访问入口权限，也不能
+     * 自动获得所有目标动作/对象」与 §16.1 PERM-001.B「两组织互授/越界被拒，批准管理员操作成功」。
+     *
+     * @param userId        被授权目标用户编号
+     * @param createRoleIds 本次【新增】授予的角色编号（已排除既有角色，保证幂等）
+     */
+    private void validateCrossOrgVisitScope(Long userId, Collection<Long> createRoleIds) {
+        CrossOrgVisitDecisionDTO scope = CrossOrgVisitScopeHolder.getScope();
+        // 非 visit 上下文：保持 PERM-001.A 同技术租户校验，不施加 org 维收敛
+        if (scope == null || !scope.isAuthorized()) {
+            return;
+        }
+        // 上限映射（.A HANDOFF 交接给 .B）：获批跨组织访问是受限的临时委派，禁止跨组织铸造租户级管理员
+        // （super_admin/tenant_admin），fail-closed，不受访客自身角色豁免（访客在目标租户本非超管，isSuperAdminUser 恒否）
+        if (CollUtil.isNotEmpty(createRoleIds)
+                && (roleService.hasAnySuperAdmin(createRoleIds) || roleService.hasAnyTenantAdmin(createRoleIds))) {
+            throw exception(PERMISSION_GRANT_ADMIN_ROLE_IN_VISIT);
+        }
+        // whole-tenant 授权：目标租户内任意用户均可（租户维已由 validateTenantScope 校验）
+        if (scope.getTargetOrgIds() == null) {
+            return;
+        }
+        // org 限定授权：目标用户须有有效任职落在获批组织集合内，否则越界拒绝（fail-closed）
+        Set<Long> targetOrgIds = scope.getTargetOrgIds();
+        Set<Long> userOrgIds = orgDataScopeResolver.resolveEffectiveOrgIds(userId);
+        boolean inScope = userOrgIds.stream().anyMatch(targetOrgIds::contains);
+        if (!inScope) {
+            throw exception(PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE, userId);
+        }
     }
 
     /**
