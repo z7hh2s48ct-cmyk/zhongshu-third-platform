@@ -34,7 +34,9 @@ import org.mockito.MockedStatic;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -559,6 +561,30 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         return scope;
     }
 
+    /** 插入指定状态的 visit 组织夹具（覆盖停用组织 → 有效任职排除路径）。 */
+    private void insertVisitOrgWithStatus(Long orgId, OrganizationTypeEnum type, CommonStatusEnum status) {
+        organizationMapper.insert(randomPojo(OrganizationDO.class, o -> {
+            o.setId(orgId);
+            o.setType(type.getType());
+            o.setParentId(OrganizationDO.PARENT_ID_ROOT);
+            o.setStatus(status.getStatus());
+            o.setRefDeptId(null);
+        }));
+    }
+
+    /** 插入带到期时间的 visit 任职夹具（覆盖 valid_to 已过 → 有效任职排除路径）。 */
+    private void insertVisitMembershipWithValidTo(Long userId, Long orgId, LocalDateTime validTo) {
+        membershipMapper.insert(randomPojo(MembershipDO.class, o -> {
+            o.setId(null);
+            o.setUserId(userId);
+            o.setOrganizationId(orgId);
+            o.setStatus(MembershipStatusEnum.ACTIVE.getStatus());
+            o.setValidFrom(null);
+            o.setValidTo(validTo);
+            o.setIsPrimary(1);
+        }));
+    }
+
     @Test // 获批 visit + 目标用户有效任职落在批准组织内 → 授权成功（批准管理员操作成功）
     public void testAssignUserRole_visitScope_targetUserInApprovedOrg_success() {
         try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
@@ -577,7 +603,9 @@ public class PermissionServiceTest extends BaseDbUnitTest {
 
             permissionService.assignUserRole(userId, asSet(300L));
 
-            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+            List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
+            assertEquals(1, list.size());
+            assertEquals(300L, list.get(0).getRoleId());
         }
     }
 
@@ -615,7 +643,9 @@ public class PermissionServiceTest extends BaseDbUnitTest {
 
             permissionService.assignUserRole(userId, asSet(300L));
 
-            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+            List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
+            assertEquals(1, list.size());
+            assertEquals(300L, list.get(0).getRoleId());
         }
     }
 
@@ -653,7 +683,9 @@ public class PermissionServiceTest extends BaseDbUnitTest {
 
             permissionService.assignUserRole(userId, asSet(300L));
 
-            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+            List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
+            assertEquals(1, list.size());
+            assertEquals(300L, list.get(0).getRoleId());
         }
     }
 
@@ -672,7 +704,123 @@ public class PermissionServiceTest extends BaseDbUnitTest {
 
             permissionService.assignUserRole(userId, asSet(300L));
 
-            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+            List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
+            assertEquals(1, list.size());
+            assertEquals(300L, list.get(0).getRoleId());
+        }
+    }
+
+    @Test // 获批 visit + 授予租户管理员角色（tenant_admin）→ 上限映射拒绝（禁止跨组织铸造租户级管理员）
+    public void testAssignUserRole_visitScope_grantTenantAdmin_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L)));
+            Long userId = 8L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            // 目标用户虽在批准组织内，但授予 tenant_admin 属跨组织铸造租户级管理员 → 上限拒绝
+            when(roleService.hasAnyTenantAdmin(anyCollection())).thenReturn(true);
+            insertVisitOrg(50L, OrganizationTypeEnum.STORE);
+            insertVisitMembership(userId, 50L);
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_GRANT_ADMIN_ROLE_IN_VISIT);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 获批 visit whole-tenant + 授予超级管理员角色（super_admin）→ 上限映射拒绝（不受访客自身角色豁免）
+    public void testAssignUserRole_visitScope_grantSuperAdmin_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, null));
+            Long userId = 9L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            when(roleService.hasAnySuperAdmin(anyCollection())).thenReturn(true);
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_GRANT_ADMIN_ROLE_IN_VISIT);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 获批 visit + targetOrgIds 为空集（非 null）→ fail-closed 拒绝（空集不放行任何组织）
+    public void testAssignUserRole_visitScope_emptyTargetOrgIds_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, Collections.emptySet()));
+            Long userId = 10L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            insertVisitOrg(50L, OrganizationTypeEnum.STORE);
+            insertVisitMembership(userId, 50L);
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE, userId);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 获批 visit + 目标用户任职组织被停用 → 有效任职排除 → fail-closed 拒绝
+    public void testAssignUserRole_visitScope_targetUserOrgDisabled_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L)));
+            Long userId = 11L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            insertVisitOrgWithStatus(50L, OrganizationTypeEnum.STORE, CommonStatusEnum.DISABLE);
+            insertVisitMembership(userId, 50L);
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE, userId);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 获批 visit + 目标用户任职已过期（valid_to 已过）→ 有效任职排除 → fail-closed 拒绝
+    public void testAssignUserRole_visitScope_targetUserMembershipExpired_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L)));
+            Long userId = 12L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            insertVisitOrg(50L, OrganizationTypeEnum.STORE);
+            insertVisitMembershipWithValidTo(userId, 50L, LocalDateTime.now().minusDays(1));
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE, userId);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 未获批 visit（authorized=false）→ org 门与上限门均跳过，保持 PERM-001.A 同租户语义
+    public void testAssignUserRole_visitScopeNotAuthorized_orgGateSkipped() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(100L);
+            CrossOrgVisitDecisionDTO denied = visitScope(100L, asSet(50L));
+            denied.setAuthorized(false);
+            denied.setReason("DENIED");
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(denied);
+            Long userId = 13L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(100L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+
+            permissionService.assignUserRole(userId, asSet(300L));
+
+            List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
+            assertEquals(1, list.size());
+            assertEquals(300L, list.get(0).getRoleId());
         }
     }
 
