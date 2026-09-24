@@ -150,6 +150,12 @@ public interface ErrorCodeConstants {
     // ZS-CFG-003.B：套餐/角色权限交集——授权入口的服务端重检
     ErrorCode TENANT_PACKAGE_MENU_EXCEED = new ErrorCode(1_002_016_005, "菜单【{}】超出租户套餐【{}】的许可范围，不能授予角色");
 
+    // ========== 跨组织访问授权 1-002-017-000（ZS-SEC-001.B） ==========
+    ErrorCode CROSS_ORG_VISIT_GRANT_NOT_EXISTS = new ErrorCode(1_002_017_000, "跨组织访问授权记录不存在");
+    ErrorCode CROSS_ORG_VISIT_VISITOR_NOT_PLATFORM = new ErrorCode(1_002_017_001, "被授权访问者({})非显式平台角色，不能发放跨组织授权");
+    ErrorCode CROSS_ORG_VISIT_TARGET_INVALID = new ErrorCode(1_002_017_002, "跨组织授权目标租户({})不存在或已停用");
+    ErrorCode CROSS_ORG_VISIT_VALID_WINDOW_INVALID = new ErrorCode(1_002_017_003, "跨组织授权有效期非法（valid_to 早于 valid_from）");
+
     // ========== 社交用户 1-002-018-000 ==========
     ErrorCode SOCIAL_USER_AUTH_FAILURE = new ErrorCode(1_002_018_000, "社交授权失败，原因是：{}");
     ErrorCode SOCIAL_USER_NOT_FOUND = new ErrorCode(1_002_018_001, "社交授权失败，找不到对应的用户");
