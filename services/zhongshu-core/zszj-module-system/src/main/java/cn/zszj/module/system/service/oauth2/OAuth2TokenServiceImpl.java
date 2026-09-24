@@ -5,6 +5,7 @@ import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants;
@@ -60,6 +61,7 @@ import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.excep
 import static cn.zszj.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.OAUTH2_TOKEN_SESSION_NOT_OWNED;
 import static cn.zszj.module.system.enums.ErrorCodeConstants.OAUTH2_TOKEN_SESSION_SELF_REQUIRES_USER;
+import static cn.zszj.module.system.enums.ErrorCodeConstants.USER_NOT_EXISTS;
 
 /**
  * OAuth2.0 Token Service 实现类
@@ -139,6 +141,21 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public OAuth2AccessTokenDO createAccessToken(Long userId, Integer userType, String clientId, List<String> scopes) {
+        // ZS-LOGIN-003.B（ZS-IAM-004 codex r1 P2 移交）：签发路径纳入共享用户行锁协议——
+        // 本方法是全部签发调用方（登录成功签发、implicit、授权码兑换、password、client_credentials）的唯一咽喉点，
+        // 此前虽有 @Transactional 却不取用户行锁、不重读账号状态，与用户级撤销 doRemoveAccessTokenByUser
+        // （selectByIdForUpdate(userId)）及授权码兑换所持锁不互斥，构成「快速 suspend 先提交 → 晚到签发仍为已禁用
+        // 账号建出撤销扫描从未看见的幽灵凭据」的幻影写逃逸窗口。此处在事务内、锁序最外层对 ADMIN 真实账号
+        // （userId > 0，排除 client_credentials 机器令牌 userId=0）取 selectByIdForUpdate 用户行锁并重读状态：
+        // 账号不存在 / 已禁用即抛 USER_NOT_EXISTS，不签发任何凭据。锁序与撤销、兑换一致（用户行锁 → …→ 令牌），
+        // 使签发与用户级撤销串行化：撤销先提交则签发被拒，签发先获锁则撤销在获锁后重读并删除新令牌——
+        // 两种交错都不产可用幽灵凭据。会员（MEMBER）账号状态校验归其模块任务，沿既有边界不加锁。
+        if (UserTypeEnum.ADMIN.getValue().equals(userType) && userId != null && userId > 0L) {
+            AdminUserDO user = adminUserMapper.selectByIdForUpdate(userId);
+            if (user == null || CommonStatusEnum.isDisable(user.getStatus())) {
+                throw exception(USER_NOT_EXISTS);
+            }
+        }
         OAuth2ClientDO clientDO = oauth2ClientService.validOAuthClientFromCache(clientId);
         // 创建刷新令牌
         OAuth2RefreshTokenDO refreshTokenDO = createOAuth2RefreshToken(userId, userType, clientDO, scopes);
