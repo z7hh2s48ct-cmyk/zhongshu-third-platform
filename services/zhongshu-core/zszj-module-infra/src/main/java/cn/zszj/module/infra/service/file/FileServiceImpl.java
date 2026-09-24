@@ -11,6 +11,9 @@ import cn.hutool.crypto.digest.DigestUtil;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.http.HttpUtils;
 import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.security.core.util.CrossOrgVisitScopeHolder;
+import cn.zszj.framework.common.biz.system.permission.dto.CrossOrgVisitDecisionDTO;
+import cn.zszj.framework.datapermission.core.rule.org.OrgDataPermissionChecker;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.tenant.core.util.TenantUtils;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
@@ -36,6 +39,7 @@ import cn.zszj.module.infra.framework.file.core.utils.FileTypeUtils;
 import com.google.common.annotations.VisibleForTesting;
 import jakarta.annotation.Resource;
 import lombok.SneakyThrows;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.extern.slf4j.Slf4j;
@@ -99,6 +103,13 @@ public class FileServiceImpl implements FileService {
     private FileConfigService fileConfigService;
     @Resource
     private cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi;
+    /**
+     * ZS-FILE-001.B：org 轴对象级授权入口（ZS-PERM-002.B「入口先行」的文件域首个生产消费方）。
+     * {@code required=false}——未装配 biz-data-permission 的测试上下文（8 个 @Import FileServiceImpl 用例）
+     * 不因缺 bean 破坏装配；此时 org 门对 organizationId!=null 文件 fail-closed（见 {@link #isFileOrgAllowed}）。
+     */
+    @Autowired(required = false)
+    private OrgDataPermissionChecker orgDataPermissionChecker;
     @Resource
     private cn.zszj.module.infra.framework.file.config.FileProperties fileProperties;
     @Resource
@@ -190,7 +201,9 @@ public class FileServiceImpl implements FileService {
                 .setName(name).setPath(path).setUrl(url)
                 .setType(type).setSize((long) content.length)
                 .setFileHash(DigestUtil.sha256Hex(content))
-                .setOwnerUserId(currentUserOrZero()).setScope(FileScopeEnum.PRIVATE.getScope());
+                .setOwnerUserId(currentUserOrZero()).setScope(FileScopeEnum.PRIVATE.getScope())
+                // ZS-FILE-001.B：记录服务端签发的业务组织归属（org 轴数据载体；匿名/系统/无默认任职为 null）
+                .setOrganizationId(currentOrgIdOrNull());
         // ZS-FILE-001.A：显式记录技术租户（服务端确认归属，不依赖拦截器装配）
         file.setTenantId(TenantContextHolder.getTenantId());
         fileMapper.insert(file);
@@ -275,6 +288,8 @@ public class FileServiceImpl implements FileService {
             file.setConfigId(fileConfigService.getMasterFileClient().getId());
         }
         file.setOwnerUserId(currentUserOrZero()).setScope(FileScopeEnum.PRIVATE.getScope())
+                // ZS-FILE-001.B：presigned create 记录同样落业务组织归属
+                .setOrganizationId(currentOrgIdOrNull())
                 .setTenantId(TenantContextHolder.getTenantId());
         fileMapper.insert(file);
         return file.getId();
@@ -346,6 +361,13 @@ public class FileServiceImpl implements FileService {
         if (files.size() != CollUtil.distinct(ids).size()
                 || files.stream().anyMatch(f -> !Objects.equals(f.getTenantId(), currentTenantId))) {
             throw exception(FILE_NOT_EXISTS);
+        }
+        // ZS-FILE-001.B：org 轴批量门——混入越权组织文件整批拒绝、零删除（不泄露存在性，循 tenant 混入语义）。
+        // 先于任何 deleteFile 逐项校验，任一越权即抛 FILE_NOT_EXISTS（范围内文件不被误删；visit 上下文由 isFileOrgAllowed 收敛）
+        for (FileDO file : files) {
+            if (!isFileOrgAllowed(file)) {
+                throw exception(FILE_NOT_EXISTS);
+            }
         }
         // ZS-FILE-005.A：逐项执行并逐项记录结果——中段失败不伪报全成功
         FileDeleteBatchRespVO respVO = new FileDeleteBatchRespVO();
@@ -469,6 +491,15 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
+     * ZS-FILE-001.B：当前登录主体的业务组织编号（服务端签发，客户端无法伪造）；
+     * 匿名/系统/无默认任职返回 null——文件不归属任何组织，仍由 tenant 轴治理。
+     */
+    private Long currentOrgIdOrNull() {
+        LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
+        return loginUser != null ? loginUser.getOrgId() : null;
+    }
+
+    /**
      * ZS-FILE-001.A：统一读取授权——PUBLIC 匿名可读；PRIVATE 需登录且与文件同技术租户。
      *
      * @param file      文件（含 scope 与 tenantId）
@@ -490,6 +521,18 @@ public class FileServiceImpl implements FileService {
         if (loginUser == null) {
             throw new AccessDeniedException("私有文件禁止匿名读取");
         }
+        // ZS-FILE-001.B：org 轴对象门（含获批 visit 收敛）——organizationId!=null 的文件由组织范围独占裁决，
+        // 不在授权组织范围内即拒绝（D-09 FND-AUTH-004：本人所有权不凌驾组织排除，转岗/离任不得凭 owner 访问旧组织文件；
+        // org 轴独立于 tenant 轴，非「tenant 改名」）。org==null 历史文件放行本门，仍由下方 tenant 轴治理。
+        if (!isFileOrgAllowed(file)) {
+            throw new AccessDeniedException("私有文件超出授权业务组织范围");
+        }
+        // ZS-FILE-001.B：获批跨组织 visit 上下文——tenant 轴（home vs target）必然失配，对象维已由 SEC-001.B
+        // 授权范围快照在上一步收敛，收敛通过即放行，不再走本地 tenant 轴（否则会因 home≠target 误拒目标租户文件）
+        CrossOrgVisitDecisionDTO visitScope = CrossOrgVisitScopeHolder.getScope();
+        if (visitScope != null && visitScope.isAuthorized()) {
+            return;
+        }
         boolean ownerMatched = file.getOwnerUserId() != null && file.getOwnerUserId() > 0
                 && Objects.equals(file.getOwnerUserId(), loginUser.getId())
                 && Objects.equals(loginUser.getTenantId(), file.getTenantId());
@@ -501,6 +544,29 @@ public class FileServiceImpl implements FileService {
         if (!manager) {
             throw new AccessDeniedException("私有文件仅所有者或租户管理员可读取");
         }
+    }
+
+    /**
+     * ZS-FILE-001.B：文件 org 轴对象授权判定（读取 {@link #validateFileReadable} 与批量删除 {@link #deleteFileList} 共用）。
+     *
+     * <ol>
+     *     <li>获批跨组织 visit 上下文：由 SEC-001.B 授权范围快照按获批组织收敛对象维
+     *         （whole-tenant 放行 / 限定组织须命中），<b>不走本地 org 门</b>；</li>
+     *     <li>{@code organizationId==null}：历史/匿名文件由 tenant 轴治理，org 门不介入（不触碰 checker）；</li>
+     *     <li>{@code organizationId!=null}：交框架级 {@link OrgDataPermissionChecker}（ZS-PERM-002.B 对象级 org 轴入口，
+     *         DRY 复用 D-09 谓词）裁决；checker 未装配（biz-data-permission 缺失）时 fail-closed 拒绝。</li>
+     * </ol>
+     */
+    private boolean isFileOrgAllowed(FileDO file) {
+        CrossOrgVisitDecisionDTO visitScope = CrossOrgVisitScopeHolder.getScope();
+        if (visitScope != null && visitScope.isAuthorized()) {
+            return CrossOrgVisitScopeHolder.isObjectAllowed(file.getOrganizationId());
+        }
+        if (file.getOrganizationId() == null) {
+            return true;
+        }
+        return orgDataPermissionChecker != null
+                && orgDataPermissionChecker.isObjectVisible(file.getOrganizationId(), file.getOwnerUserId());
     }
 
     /**

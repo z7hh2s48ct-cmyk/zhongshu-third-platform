@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS "infra_file" (
     "deleting_time" timestamp DEFAULT NULL, -- ZS-FILE-005.B：删除中间态进入时刻（补偿超时/领取租约）
     "owner_user_id" bigint NOT NULL DEFAULT 0,
     "scope" varchar(16) NOT NULL DEFAULT 'PRIVATE',
+    "organization_id" bigint DEFAULT NULL, -- ZS-FILE-001.B：业务组织归属（org 轴对象授权载体；null=历史/匿名由 tenant 轴治理）
     "creator" varchar(64) DEFAULT '',
     "create_time" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updater" varchar(64) DEFAULT '',
