@@ -2,19 +2,27 @@ package cn.zszj.module.system.service.permission;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.extra.spring.SpringUtil;
+import cn.zszj.framework.common.biz.system.permission.dto.CrossOrgVisitDecisionDTO;
 import cn.zszj.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
+import cn.zszj.framework.security.core.util.CrossOrgVisitScopeHolder;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.module.system.dal.dataobject.dept.DeptDO;
+import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
+import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
 import cn.zszj.module.system.dal.dataobject.permission.MenuDO;
 import cn.zszj.module.system.dal.dataobject.permission.RoleDO;
 import cn.zszj.module.system.dal.dataobject.permission.RoleMenuDO;
 import cn.zszj.module.system.dal.dataobject.permission.UserRoleDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
+import cn.zszj.module.system.dal.mysql.membership.MembershipMapper;
+import cn.zszj.module.system.dal.mysql.organization.OrganizationMapper;
 import cn.zszj.module.system.dal.mysql.permission.RoleMenuMapper;
 import cn.zszj.module.system.dal.mysql.permission.UserRoleMapper;
+import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
+import cn.zszj.module.system.enums.organization.OrganizationTypeEnum;
 import cn.zszj.module.system.enums.permission.DataScopeEnum;
 import cn.zszj.module.system.service.dept.DeptService;
 import cn.zszj.module.system.service.user.AdminUserService;
@@ -84,6 +92,13 @@ public class PermissionServiceTest extends BaseDbUnitTest {
     private DeptService deptService;
     @MockitoBean
     private AdminUserService userService;
+
+    // ZS-PERM-001.B：获批跨组织 visit 上下文下，授权目标须落在批准组织范围内——
+    // 经 OrgDataScopeResolver 只读消费真实 H2 任职/组织 Mapper 解析目标用户的有效任职组织
+    @Resource
+    private MembershipMapper membershipMapper;
+    @Resource
+    private OrganizationMapper organizationMapper;
 
     @AfterEach
     public void tearDownTenantContext() {
@@ -505,6 +520,160 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         List<UserRoleDO> list = userRoleMapper.selectListByUserId(userId);
         assertEquals(1, list.size());
         assertEquals(200L, list.get(0).getRoleId());
+    }
+
+    // ========== ZS-PERM-001.B 获批跨组织 visit 上下文下的授权目标组织范围校验  ==========
+
+    /** 插入启用组织夹具（BaseDbUnitTest 不启用租户插件，tenantId 不参与查询过滤）。 */
+    private void insertVisitOrg(Long orgId, OrganizationTypeEnum type) {
+        organizationMapper.insert(randomPojo(OrganizationDO.class, o -> {
+            o.setId(orgId);
+            o.setType(type.getType());
+            o.setParentId(OrganizationDO.PARENT_ID_ROOT);
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+            o.setRefDeptId(null);
+        }));
+    }
+
+    /** 插入目标用户的有效在职任职（绑定组织，无固定期限）。 */
+    private void insertVisitMembership(Long userId, Long orgId) {
+        membershipMapper.insert(randomPojo(MembershipDO.class, o -> {
+            o.setId(null);
+            o.setUserId(userId);
+            o.setOrganizationId(orgId);
+            o.setStatus(MembershipStatusEnum.ACTIVE.getStatus());
+            o.setValidFrom(null);
+            o.setValidTo(null);
+            o.setIsPrimary(1);
+        }));
+    }
+
+    /** 构造获批 visit 授权范围快照（authorized=true）；targetOrgIds=null 表示 whole-tenant 授权。 */
+    private CrossOrgVisitDecisionDTO visitScope(Long targetTenantId, Set<Long> targetOrgIds) {
+        CrossOrgVisitDecisionDTO scope = new CrossOrgVisitDecisionDTO();
+        scope.setAuthorized(true);
+        scope.setReason("AUTHORIZED");
+        scope.setTargetTenantId(targetTenantId);
+        scope.setTargetOrgIds(targetOrgIds);
+        scope.setAllowedActions(asSet("system:permission:assign-user-role"));
+        return scope;
+    }
+
+    @Test // 获批 visit + 目标用户有效任职落在批准组织内 → 授权成功（批准管理员操作成功）
+    public void testAssignUserRole_visitScope_targetUserInApprovedOrg_success() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            // visit 已切换到目标租户 200；授权范围限定组织 {50}
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L)));
+            Long userId = 2L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(200L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+            // 目标用户在批准组织 50 内有有效任职
+            insertVisitOrg(50L, OrganizationTypeEnum.STORE);
+            insertVisitMembership(userId, 50L);
+
+            permissionService.assignUserRole(userId, asSet(300L));
+
+            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+        }
+    }
+
+    @Test // 获批 visit + 目标用户任职组织不在批准范围 → 越界拒绝（两组织互授/越界被拒）
+    public void testAssignUserRole_visitScope_targetUserOutOfScope_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L)));
+            Long userId = 3L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            // 目标用户任职组织 60，不在批准范围 {50}
+            insertVisitOrg(60L, OrganizationTypeEnum.STORE);
+            insertVisitMembership(userId, 60L);
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE, userId);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 获批 visit whole-tenant 授权（targetOrgIds=null）→ 目标租户内任意用户放行（org 维不收敛）
+    public void testAssignUserRole_visitScope_wholeTenant_success() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, null));
+            Long userId = 4L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(200L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+            // 目标用户无任何任职——whole-tenant 授权下 org 维放行
+
+            permissionService.assignUserRole(userId, asSet(300L));
+
+            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+        }
+    }
+
+    @Test // 获批 visit + org 限定 + 目标用户无有效任职 → fail-closed 拒绝
+    public void testAssignUserRole_visitScope_targetUserNoMembership_rejected() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L)));
+            Long userId = 5L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            // 无任职夹具：无法确认落在批准组织内 → fail-closed
+
+            assertServiceException(() -> permissionService.assignUserRole(userId, asSet(300L)),
+                    PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE, userId);
+            assertTrue(CollUtil.isEmpty(userRoleMapper.selectListByUserId(userId)));
+        }
+    }
+
+    @Test // 两组织互授：批准范围 {50,60}，目标用户任职组织 60 → 落在范围内，成功
+    public void testAssignUserRole_visitScope_twoOrgsMutualGrant_success() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(200L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(visitScope(200L, asSet(50L, 60L)));
+            Long userId = 6L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(200L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(200L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+            insertVisitOrg(50L, OrganizationTypeEnum.BRAND);
+            insertVisitOrg(60L, OrganizationTypeEnum.STORE);
+            insertVisitMembership(userId, 60L);
+
+            permissionService.assignUserRole(userId, asSet(300L));
+
+            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+        }
+    }
+
+    @Test // 非 visit 上下文（无授权范围快照）→ 不施加 org 维收敛，保持 PERM-001.A 同技术租户语义
+    public void testAssignUserRole_noVisitScope_orgGateSkipped() {
+        try (MockedStatic<CrossOrgVisitScopeHolder> visitMock = mockStatic(CrossOrgVisitScopeHolder.class)) {
+            TenantContextHolder.setTenantId(100L);
+            visitMock.when(CrossOrgVisitScopeHolder::getScope).thenReturn(null);
+            Long userId = 7L;
+            when(userService.getUser(eq(userId))).thenReturn(randomPojo(AdminUserDO.class, o -> {
+                o.setId(userId); o.setTenantId(100L);
+            }));
+            when(roleService.getRoleList(any())).thenReturn(toList(
+                    randomPojo(RoleDO.class, o -> { o.setId(300L); o.setTenantId(100L); o.setStatus(CommonStatusEnum.ENABLE.getStatus()); })));
+            // 目标用户无任职——非 visit 上下文不施加 org 收敛，同租户即放行
+
+            permissionService.assignUserRole(userId, asSet(300L));
+
+            assertEquals(1, userRoleMapper.selectListByUserId(userId).size());
+        }
     }
 
     @Test
