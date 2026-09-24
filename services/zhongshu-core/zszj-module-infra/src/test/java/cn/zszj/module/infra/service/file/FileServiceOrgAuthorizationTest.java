@@ -272,6 +272,20 @@ public class FileServiceOrgAuthorizationTest extends BaseDbUnitTest {
         assertNotNull(fileMapper.selectById(outScope.getId()), "整批拒绝后越权文件不得被删除");
     }
 
+    @Test
+    @DisplayName("单文件删除越权组织 → 拒绝（堵住单删端点绕过批量 org 门）")
+    public void deleteFile_singleOutOfOrgScope_denied() throws Exception {
+        FileDO outScope = seedFile(TENANT_HOME, "PRIVATE", ORG_B, 101L); // 同租户、越权组织
+        loginThreadLocal(adminUser(105L, TENANT_HOME, ORG_A));
+        stubOrgVisible(ORG_B, false);
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> fileService.deleteFile(outScope.getId()));
+        assertEquals(FILE_NOT_EXISTS.getCode(), ex.getCode(),
+                "单删端点越权组织文件按 FILE_NOT_EXISTS 拒绝（与 deleteFileList 批量门对齐，不泄露存在性）");
+        assertNotNull(fileMapper.selectById(outScope.getId()), "越权单删不得移除记录");
+    }
+
     // ========== 造数辅助 ==========
 
     private FileDO seedFile(Long tenantId, String scope, Long organizationId, Long ownerUserId) {
