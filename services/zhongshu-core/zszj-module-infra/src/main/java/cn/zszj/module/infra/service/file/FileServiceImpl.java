@@ -304,7 +304,12 @@ public class FileServiceImpl implements FileService {
     public void deleteFile(Long id) throws Exception {
         // 1.1 校验存在
         FileDO file = validateFileExists(id);
-        // 1.2 校验路径合法性，避免误删文件存储器中的其他文件
+        // 1.2 ZS-FILE-001.B：org 轴单文件门——与 deleteFileList 批量门对齐，堵住单删端点绕过口子。
+        //   越权组织文件按 FILE_NOT_EXISTS 拒绝（不泄露存在性，循 tenant/批量混入语义）；visit 上下文由 isFileOrgAllowed 收敛。
+        if (!isFileOrgAllowed(file)) {
+            throw exception(FILE_NOT_EXISTS);
+        }
+        // 1.3 校验路径合法性，避免误删文件存储器中的其他文件
         FilePathUtils.validatePath(file.getPath());
 
         // 2 中间态推进（ZS-FILE-005.A，codex r0 P1：先锁定删除意图——兑换/取流侧据 DELETING 拒绝，
@@ -815,7 +820,10 @@ public class FileServiceImpl implements FileService {
                     .setType(detectedType).setSize((long) content.length)
                     .setFileHash(contentHash)
                     .setOwnerUserId(credential.getOwnerUserId())
-                    .setScope(credential.getScope());
+                    .setScope(credential.getScope())
+                    // ZS-FILE-001.B：凭证直传完成同样落业务组织归属（与 doCreateFile/createFile 一致取当前登录组织上下文，
+                    // 堵住凭证流上传 org=null 架空组织隔离的绕过口子）
+                    .setOrganizationId(currentOrgIdOrNull());
             file.setTenantId(TenantContextHolder.getTenantId());
             fileMapper.insert(file);
 
