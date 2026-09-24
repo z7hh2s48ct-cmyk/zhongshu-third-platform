@@ -75,10 +75,49 @@ public class OrgDataScopeResolver {
             return selfOnly(result);
         }
         // 3. 收集有效任职组织；命中 PLATFORM 类型即显式平台角色
+        EffectiveOrgs effective = collectEffectiveOrgs(userId);
+        // 4. 显式平台角色 → 全部组织（D-09：跨组织只允许显式平台角色）
+        if (effective.platform) {
+            return allOrgs(result);
+        }
+        // 5. 无任何有效任职 → 仅本人兜底
+        if (effective.orgIds.isEmpty()) {
+            return selfOnly(result);
+        }
+        // 6. 本组织子树并集 → ORG_AND_CHILD（两组织合法互授即各自子树并集）
+        Set<Long> scopeOrgIds = new HashSet<>();
+        for (Long orgId : effective.orgIds) {
+            collectSelfAndDescendants(orgId, scopeOrgIds);
+        }
+        result.setSelf(true);
+        result.setOrgIds(scopeOrgIds);
+        result.setScopeType(OrgDataScopeEnum.ORG_AND_CHILD.getScope());
+        return result;
+    }
+
+    /**
+     * 解析账号的【直接】有效任职组织集合（ZS-PERM-001.B 复用）：状态 ACTIVE + valid_from 已到 + valid_to 未过
+     * + 所属组织存在且显式开启，与 {@link #resolve} 及 IAM-002 {@code MembershipContextResolver} <b>同口径</b>。
+     * 不含组织树后代下钻——授权目标归属判定只需目标用户的直接任职组织。
+     *
+     * @param userId 账号编号
+     * @return 直接有效任职的组织编号集合（无有效任职时为空集，fail-closed 由调用方裁决）
+     */
+    public Set<Long> resolveEffectiveOrgIds(Long userId) {
+        return collectEffectiveOrgs(userId).orgIds;
+    }
+
+    /**
+     * 收集账号的有效任职组织（去重保序）+ 是否命中 PLATFORM 类型组织（显式平台角色）。
+     * {@link #resolve}（org 轴数据范围）与 {@link #resolveEffectiveOrgIds}（授权目标归属）共用本收集逻辑，保证同口径。
+     */
+    private EffectiveOrgs collectEffectiveOrgs(Long userId) {
+        EffectiveOrgs result = new EffectiveOrgs();
+        if (userId == null || userId <= 0) {
+            return result;
+        }
         List<MembershipDO> memberships = membershipMapper.selectListByUserId(userId);
         LocalDateTime now = LocalDateTime.now();
-        Set<Long> effectiveOrgIds = new LinkedHashSet<>();
-        boolean platform = false;
         for (MembershipDO membership : memberships) {
             if (!isEffective(membership, now)) {
                 continue;
@@ -89,27 +128,19 @@ public class OrgDataScopeResolver {
                 continue;
             }
             if (OrganizationTypeEnum.PLATFORM.getType().equals(organization.getType())) {
-                platform = true;
+                result.platform = true;
             }
-            effectiveOrgIds.add(organization.getId());
+            result.orgIds.add(organization.getId());
         }
-        // 4. 显式平台角色 → 全部组织（D-09：跨组织只允许显式平台角色）
-        if (platform) {
-            return allOrgs(result);
-        }
-        // 5. 无任何有效任职 → 仅本人兜底
-        if (effectiveOrgIds.isEmpty()) {
-            return selfOnly(result);
-        }
-        // 6. 本组织子树并集 → ORG_AND_CHILD（两组织合法互授即各自子树并集）
-        Set<Long> scopeOrgIds = new HashSet<>();
-        for (Long orgId : effectiveOrgIds) {
-            collectSelfAndDescendants(orgId, scopeOrgIds);
-        }
-        result.setSelf(true);
-        result.setOrgIds(scopeOrgIds);
-        result.setScopeType(OrgDataScopeEnum.ORG_AND_CHILD.getScope());
         return result;
+    }
+
+    /**
+     * 有效任职组织收集结果：直接任职组织集合（去重保序）+ 是否含平台类型组织。
+     */
+    private static class EffectiveOrgs {
+        private final Set<Long> orgIds = new LinkedHashSet<>();
+        private boolean platform = false;
     }
 
     /**

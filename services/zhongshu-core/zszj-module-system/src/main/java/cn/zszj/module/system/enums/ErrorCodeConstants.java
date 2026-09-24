@@ -93,6 +93,7 @@ public interface ErrorCodeConstants {
     ErrorCode PERMISSION_ASSIGN_DEPT_OTHER_TENANT = new ErrorCode(1_002_009_002, "数据权限部门({})不属于当前租户，拒绝分配");
     ErrorCode PERMISSION_GRANT_EXCEED_CEILING = new ErrorCode(1_002_009_003, "超出可授予权限上限，非超级管理员不能授予超级管理员等特权角色");
     ErrorCode PERMISSION_SELF_ELEVATION = new ErrorCode(1_002_009_004, "禁止为当前登录用户自身新增角色，避免自我提权");
+    ErrorCode PERMISSION_ASSIGN_USER_OUT_OF_VISIT_SCOPE = new ErrorCode(1_002_009_005, "被授权用户({})不在获批跨组织访问的组织范围内，拒绝分配");
 
     // ========== 业务审计 1-002-010-000 ==========
     /**
