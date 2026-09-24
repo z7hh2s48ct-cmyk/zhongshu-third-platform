@@ -44,3 +44,4 @@ DELETE FROM inbox_object_watermark;
 DELETE FROM system_organization;
 DELETE FROM system_membership;
 DELETE FROM system_membership_history;
+DELETE FROM system_cross_org_visit_grant;
