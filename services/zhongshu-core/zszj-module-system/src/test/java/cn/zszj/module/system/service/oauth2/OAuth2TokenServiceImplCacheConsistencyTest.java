@@ -1,5 +1,6 @@
 package cn.zszj.module.system.service.oauth2;
 
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.common.exception.ErrorCode;
@@ -10,7 +11,9 @@ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import cn.zszj.module.system.enums.common.SexEnum;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -27,6 +30,7 @@ import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
+import static cn.hutool.core.util.RandomUtil.randomEle;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomLongId;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomPojo;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
@@ -63,6 +67,8 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
     @Resource
     private PlatformTransactionManager transactionManager;
+    @Resource
+    private AdminUserMapper adminUserMapper;
 
     private TransactionTemplate transactionTemplate;
 
@@ -87,6 +93,20 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
         OAuth2ClientDO client = randomPojo(OAuth2ClientDO.class);
         client.setClientId(clientId).setAccessTokenValiditySeconds(1800).setRefreshTokenValiditySeconds(86400);
         when(oauth2ClientService.validOAuthClientFromCache(clientId)).thenReturn(client);
+    }
+
+    /**
+     * ZS-LOGIN-003.B：签发路径纳入共享用户行锁协议后，createAccessToken 会 selectByIdForUpdate 真实账号行
+     * 并重读状态；createAccessToken 相关用例须先为该 ADMIN 账号落一条启用态真实行（租户 1L），
+     * 否则行锁重读得 null → USER_NOT_EXISTS（不影响本类缓存一致性断言的原意）。
+     */
+    private void insertUser(Long userId) {
+        adminUserMapper.insert(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setSex(randomEle(SexEnum.values()).getSex());
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+            o.setTenantId(1L);
+        }));
     }
 
 
@@ -148,6 +168,7 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
+        insertUser(userId);
         AtomicReference<String> tokenRef = new AtomicReference<>();
 
         try {
@@ -178,6 +199,7 @@ public class OAuth2TokenServiceImplCacheConsistencyTest extends BaseDbAndRedisUn
         String clientId = randomString();
         mockClient(clientId);
         Long userId = randomLongId();
+        insertUser(userId);
         AtomicReference<String> tokenRef = new AtomicReference<>();
 
         transactionTemplate.executeWithoutResult(status -> {

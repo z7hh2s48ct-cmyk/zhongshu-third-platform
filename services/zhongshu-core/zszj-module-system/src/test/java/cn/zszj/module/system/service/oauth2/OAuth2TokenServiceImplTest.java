@@ -1,6 +1,7 @@
 package cn.zszj.module.system.service.oauth2;
 
 import cn.hutool.core.date.LocalDateTimeUtil;
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.enums.UserTypeEnum;
 import cn.zszj.framework.common.exception.ErrorCode;
 import cn.zszj.framework.common.pojo.PageResult;
@@ -14,7 +15,9 @@ import cn.zszj.module.system.dal.dataobject.oauth2.OAuth2RefreshTokenDO;
 import cn.zszj.module.system.dal.dataobject.user.AdminUserDO;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import cn.zszj.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
+import cn.zszj.module.system.dal.mysql.user.AdminUserMapper;
 import cn.zszj.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import cn.zszj.module.system.enums.common.SexEnum;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
 import org.assertj.core.util.Lists;
@@ -27,6 +30,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static cn.zszj.framework.common.util.object.ObjectUtils.cloneIgnoreId;
+import static cn.hutool.core.util.RandomUtil.randomEle;
 import static cn.zszj.framework.test.core.util.AssertUtils.assertPojoEquals;
 import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
 import static cn.zszj.framework.test.core.util.RandomUtils.*;
@@ -54,6 +58,9 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
     @Resource
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
 
+    @Resource
+    private AdminUserMapper adminUserMapper;
+
     @MockitoBean
     private OAuth2ClientService oauth2ClientService;
     @MockitoBean
@@ -74,6 +81,14 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
         // mock 数据（用户）
         AdminUserDO user = randomPojo(AdminUserDO.class);
         when(adminUserService.getUser(userId)).thenReturn(user);
+        // ZS-LOGIN-003.B：签发路径纳入共享用户行锁协议后，createAccessToken 会 selectByIdForUpdate 真实账号行
+        // 并重读状态；故须为该 ADMIN 账号落一条启用态真实行（租户与上下文一致），否则行锁重读得 null → USER_NOT_EXISTS。
+        adminUserMapper.insert(randomPojo(AdminUserDO.class, o -> {
+            o.setId(userId);
+            o.setSex(randomEle(SexEnum.values()).getSex());
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+            o.setTenantId(0L);
+        }));
 
         // 调用
         OAuth2AccessTokenDO accessTokenDO = oauth2TokenService.createAccessToken(userId, userType, clientId, scopes);
