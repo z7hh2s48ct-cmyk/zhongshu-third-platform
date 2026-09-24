@@ -120,6 +120,17 @@ public interface RoleService {
     boolean hasAnySuperAdmin(Collection<Long> ids);
 
     /**
+     * 判断角色编号数组中，是否有【租户管理员】（tenant_admin，不区分状态）。
+     *
+     * ZS-PERM-001.B：获批跨组织 visit 上下文的上限映射专用——访客不得把目标租户的
+     * 租户管理员角色授予任何人（禁止跨组织铸造租户级管理员，fail-closed）。
+     *
+     * @param ids 角色编号数组
+     * @return 是否有租户管理员角色
+     */
+    boolean hasAnyTenantAdmin(Collection<Long> ids);
+
+    /**
      * 判断角色编号数组中，是否有【启用状态】的管理员（ZS-PERM-001.A 小卡）。
      *
      * 超管豁免语义专用：禁用角色不产生任何豁免（对齐 {@code hasAnyPermissions} 过滤禁用角色的语义，
