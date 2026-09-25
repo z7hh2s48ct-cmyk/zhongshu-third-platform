@@ -7,6 +7,7 @@ import cn.hutool.core.lang.Assert;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.*;
 import cn.hutool.extra.spring.SpringUtil;
+import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.common.util.collection.CollectionUtils;
 import cn.zszj.framework.common.util.date.DateUtils;
@@ -316,10 +317,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     @Override
     public Task validateTask(Long userId, String taskId) {
         Task task = validateTaskExists(taskId);
-        // 为什么判断 assignee 非空的情况下？
-        // 例如说：在审批人为空时，我们会有“自动审批通过”的策略，此时 userId 为 null，允许通过
-        if (StrUtil.isNotBlank(task.getAssignee())
-                && ObjectUtil.notEqual(userId, NumberUtils.parseLong(task.getAssignee()))) {
+        // 审批人为空时：内部调用（userId 为空，例如“自动审批通过”策略）允许通过；外部调用（userId 非空）不允许操作
+        if (StrUtil.isBlank(task.getAssignee())) {
+            if (userId != null) {
+                throw exception(TASK_OPERATE_FAIL_NO_ASSIGNEE);
+            }
+            return task;
+        }
+        // 审批人非空时：校验当前用户是否为审批人本人
+        if (ObjectUtil.notEqual(userId, NumberUtils.parseLong(task.getAssignee()))) {
             throw exception(TASK_OPERATE_FAIL_ASSIGN_NOT_SELF);
         }
         return task;
@@ -336,12 +342,23 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     @Override
     public Task getTask(String id) {
-        return taskService.createTaskQuery().taskId(id).includeTaskLocalVariables().singleResult();
+        TaskQuery query = taskService.createTaskQuery().taskId(id).includeTaskLocalVariables();
+        // 存在租户上下文时，追加租户条件，避免跨租户查询到他人的任务
+        if (StrUtil.isNotBlank(FlowableUtils.getTenantId())) {
+            query.taskTenantId(FlowableUtils.getTenantId());
+        }
+        return query.singleResult();
     }
 
     @Override
     public HistoricTaskInstance getHistoricTask(String id) {
-        return historyService.createHistoricTaskInstanceQuery().taskId(id).includeTaskLocalVariables().singleResult();
+        HistoricTaskInstanceQuery query = historyService.createHistoricTaskInstanceQuery().taskId(id)
+                .includeTaskLocalVariables();
+        // 存在租户上下文时，追加租户条件，避免跨租户查询到他人的任务
+        if (StrUtil.isNotBlank(FlowableUtils.getTenantId())) {
+            query.taskTenantId(FlowableUtils.getTenantId());
+        }
+        return query.singleResult();
     }
 
     @Override
@@ -444,7 +461,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
             // 2.1 获取子任务们
             Task task = stack.pop();
-            List<Task> childTaskList = getTaskListByParentTaskId(task.getId());
+            List<Task> childTaskList = queryChildTasks(task.getId());
             // 2.2 如果非空，则添加到 stack 进一步递归
             if (CollUtil.isNotEmpty(childTaskList)) {
                 stack.addAll(childTaskList);
@@ -455,11 +472,46 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     }
 
     @Override
-    public List<Task> getTaskListByParentTaskId(String parentTaskId) {
+    public List<Task> getTaskListByParentTaskId(Long userId, String parentTaskId) {
+        List<Task> childTasks = queryChildTasks(parentTaskId);
+        // 对象授权校验，避免通过猜测父任务编号，越权查看其子任务
+        if (userId != null) {
+            Task parentTask = getTask(parentTaskId);
+            boolean participant = isTaskParticipant(userId, parentTask)
+                    || childTasks.stream().anyMatch(childTask -> isTaskParticipant(userId, childTask));
+            if (!participant) {
+                throw exception(TASK_OPERATE_FAIL_NOT_PARTICIPANT);
+            }
+        }
+        return childTasks;
+    }
+
+    /**
+     * 查询指定任务的子任务列表（内部使用，不做对象授权）
+     *
+     * @param parentTaskId 父任务 ID
+     * @return 子任务列表
+     */
+    private List<Task> queryChildTasks(String parentTaskId) {
         String tableName = managementService.getTableName(TaskEntity.class);
         // taskService.createTaskQuery() 没有 parentId 参数，所以写 sql 查询
         String sql = "select ID_,NAME_,OWNER_,ASSIGNEE_ from " + tableName + " where PARENT_TASK_ID_=#{parentTaskId}";
         return taskService.createNativeTaskQuery().sql(sql).parameter("parentTaskId", parentTaskId).list();
+    }
+
+    /**
+     * 判断指定用户是否为任务的参与人（审批人 assignee 或 拥有者 owner）
+     *
+     * @param userId 用户编号
+     * @param task   任务
+     * @return 是否为参与人
+     */
+    private boolean isTaskParticipant(Long userId, TaskInfo task) {
+        if (task == null) {
+            return false;
+        }
+        return ObjectUtil.equal(userId, NumberUtils.parseLong(task.getAssignee()))
+                || ObjectUtil.equal(userId, NumberUtils.parseLong(task.getOwner()));
     }
 
     /**
@@ -750,7 +802,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         updateTaskStatusAndReason(task.getId(), BpmTaskStatusEnum.APPROVING.getStatus(), reqVO.getReason());
 
         // 2. 激活子任务
-        List<Task> childrenTaskList = getTaskListByParentTaskId(task.getId());
+        List<Task> childrenTaskList = queryChildTasks(task.getId());
         for (Task childrenTask : childrenTaskList) {
             taskService.resolveTask(childrenTask.getId());
             // 更新子 task 状态
@@ -1051,6 +1103,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (delegateUser == null) {
             throw exception(TASK_DELEGATE_FAIL_USER_NOT_EXISTS);
         }
+        // 1.3 校验目标用户未被禁用，避免通过停用账号绕过审批
+        if (CommonStatusEnum.isDisable(delegateUser.getStatus())) {
+            throw exception(TASK_DELEGATE_FAIL_USER_DISABLED);
+        }
 
         // 2. 添加委托意见
         AdminUserRespDTO currentUser = adminUserApi.getUser(userId);
@@ -1081,6 +1137,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         AdminUserRespDTO assigneeUser = adminUserApi.getUser(reqVO.getAssigneeUserId());
         if (assigneeUser == null) {
             throw exception(TASK_TRANSFER_FAIL_USER_NOT_EXISTS);
+        }
+        // 1.3 校验目标用户未被禁用，避免通过停用账号绕过审批
+        if (CommonStatusEnum.isDisable(assigneeUser.getStatus())) {
+            throw exception(TASK_TRANSFER_FAIL_USER_DISABLED);
         }
 
         // 2. 添加委托意见
@@ -1144,8 +1204,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         // 1. 获取和校验任务
         TaskEntityImpl taskEntity = validateTaskCanCreateSign(userId, reqVO);
         List<AdminUserRespDTO> userList = adminUserApi.getUserList(reqVO.getUserIds());
-        if (CollUtil.isEmpty(userList)) {
+        // 加签用户必须全部存在（返回数量与请求数量一致），避免部分用户不存在时被静默跳过
+        if (CollUtil.isEmpty(userList) || userList.size() != reqVO.getUserIds().size()) {
             throw exception(TASK_SIGN_CREATE_USER_NOT_EXIST);
+        }
+        // 加签用户不允许被禁用，避免通过停用账号绕过审批
+        if (userList.stream().anyMatch(user -> CommonStatusEnum.isDisable(user.getStatus()))) {
+            throw exception(TASK_SIGN_CREATE_USER_DISABLED);
         }
 
         // 2. 处理当前任务
@@ -1269,6 +1334,12 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             cancelUser = adminUserApi.getUser(NumberUtils.parseLong(task.getOwner()));
         }
         Assert.notNull(cancelUser, "任务中没有所有者和审批人，数据错误");
+
+        // 1.3 对象授权校验，避免通过猜测任务编号越权减签他人的加签任务
+        if (userId != null && !isTaskParticipant(userId, task)
+                && !isTaskParticipant(userId, getTask(task.getParentTaskId()))) {
+            throw exception(TASK_OPERATE_FAIL_NOT_PARTICIPANT);
+        }
 
         // 2.1 获得子任务列表，包括子任务的子任务
         List<Task> childTaskList = getAllChildTaskList(task);

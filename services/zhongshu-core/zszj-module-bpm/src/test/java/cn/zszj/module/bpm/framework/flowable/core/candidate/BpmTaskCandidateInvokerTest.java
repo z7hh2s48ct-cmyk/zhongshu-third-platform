@@ -137,9 +137,12 @@ public class BpmTaskCandidateInvokerTest extends BaseMockitoUnitTest {
             Map<Long, AdminUserRespDTO> userMap = MapUtil.builder(user1.getId(), user1)
                     .put(user2.getId(), user2).build();
             when(adminUserApi.getUserMap(eq(asSet(1L, 2L)))).thenReturn(userMap);
-            // mock 方法（empty）
+            // mock 方法（empty）：兜底策略分配 3L（启用状态）
             when(emptyStrategy.calculateUsersByTask(same(execution), same(param)))
-                    .thenReturn(Sets.newSet(2L));
+                    .thenReturn(Sets.newSet(3L));
+            AdminUserRespDTO user3 = randomPojo(AdminUserRespDTO.class, o -> o.setId(3L)
+                    .setStatus(CommonStatusEnum.ENABLE.getStatus()));
+            when(adminUserApi.getUserMap(eq(asSet(3L)))).thenReturn(MapUtil.builder(user3.getId(), user3).build());
             // mock 移除发起人的用户
             springUtilMockedStatic.when(() -> SpringUtil.getBean(BpmProcessInstanceService.class))
                     .thenReturn(processInstanceService);
@@ -150,7 +153,98 @@ public class BpmTaskCandidateInvokerTest extends BaseMockitoUnitTest {
             // 调用
             Set<Long> results = taskCandidateInvoker.calculateUsersByTask(execution);
             // 断言
-            assertEquals(asSet(2L), results);
+            assertEquals(asSet(3L), results);
+        }
+    }
+
+    /**
+     * 场景：没有计算到候选人，兜底返回的候选人均已禁用，最终为空（不通过停用账号补位）
+     */
+    @Test
+    public void testCalculateUsersByTask_emptyFallback_allDisabledFiltered() {
+        try (MockedStatic<SpringUtil> springUtilMockedStatic = mockStatic(SpringUtil.class)) {
+            // 准备参数
+            String param = "1,2";
+            DelegateExecution execution = mock(DelegateExecution.class);
+            // mock 方法（DelegateExecution）
+            UserTask userTask = mock(UserTask.class);
+            String processInstanceId = randomString();
+            when(execution.getProcessInstanceId()).thenReturn(processInstanceId);
+            when(execution.getCurrentFlowElement()).thenReturn(userTask);
+            when(userTask.getAttributeValue(eq(BpmnModelConstants.NAMESPACE), eq(BpmnModelConstants.USER_TASK_CANDIDATE_STRATEGY)))
+                    .thenReturn(BpmTaskCandidateStrategyEnum.USER.getStrategy().toString());
+            when(userTask.getAttributeValue(eq(BpmnModelConstants.NAMESPACE), eq(BpmnModelConstants.USER_TASK_CANDIDATE_PARAM)))
+                    .thenReturn(param);
+            // mock 方法（adminUserApi）：原始候选人均已禁用
+            AdminUserRespDTO user1 = randomPojo(AdminUserRespDTO.class, o -> o.setId(1L)
+                    .setStatus(CommonStatusEnum.DISABLE.getStatus()));
+            AdminUserRespDTO user2 = randomPojo(AdminUserRespDTO.class, o -> o.setId(2L)
+                    .setStatus(CommonStatusEnum.DISABLE.getStatus()));
+            Map<Long, AdminUserRespDTO> userMap = MapUtil.builder(user1.getId(), user1)
+                    .put(user2.getId(), user2).build();
+            when(adminUserApi.getUserMap(eq(asSet(1L, 2L)))).thenReturn(userMap);
+            // mock 方法（empty）：兜底返回的 2L 依然处于禁用状态
+            when(emptyStrategy.calculateUsersByTask(same(execution), same(param)))
+                    .thenReturn(Sets.newSet(2L));
+            when(adminUserApi.getUserMap(eq(asSet(2L)))).thenReturn(MapUtil.builder(user2.getId(), user2).build());
+            // mock 移除发起人的用户
+            springUtilMockedStatic.when(() -> SpringUtil.getBean(BpmProcessInstanceService.class))
+                    .thenReturn(processInstanceService);
+            ProcessInstance processInstance = mock(ProcessInstance.class);
+            when(processInstanceService.getProcessInstance(eq(processInstanceId))).thenReturn(processInstance);
+            when(processInstance.getStartUserId()).thenReturn("1");
+
+            // 调用
+            Set<Long> results = taskCandidateInvoker.calculateUsersByTask(execution);
+            // 断言：兜底用户为禁用，最终为空
+            assertEquals(Collections.emptySet(), results);
+        }
+    }
+
+    /**
+     * 场景：没有计算到候选人，兜底返回的候选人存在禁用，仅保留启用用户
+     */
+    @Test
+    public void testCalculateUsersByTask_emptyFallback_partialDisabledFiltered() {
+        try (MockedStatic<SpringUtil> springUtilMockedStatic = mockStatic(SpringUtil.class)) {
+            // 准备参数
+            String param = "1,2";
+            DelegateExecution execution = mock(DelegateExecution.class);
+            // mock 方法（DelegateExecution）
+            UserTask userTask = mock(UserTask.class);
+            String processInstanceId = randomString();
+            when(execution.getProcessInstanceId()).thenReturn(processInstanceId);
+            when(execution.getCurrentFlowElement()).thenReturn(userTask);
+            when(userTask.getAttributeValue(eq(BpmnModelConstants.NAMESPACE), eq(BpmnModelConstants.USER_TASK_CANDIDATE_STRATEGY)))
+                    .thenReturn(BpmTaskCandidateStrategyEnum.USER.getStrategy().toString());
+            when(userTask.getAttributeValue(eq(BpmnModelConstants.NAMESPACE), eq(BpmnModelConstants.USER_TASK_CANDIDATE_PARAM)))
+                    .thenReturn(param);
+            // mock 方法（adminUserApi）：原始候选人均已禁用
+            AdminUserRespDTO user1 = randomPojo(AdminUserRespDTO.class, o -> o.setId(1L)
+                    .setStatus(CommonStatusEnum.DISABLE.getStatus()));
+            AdminUserRespDTO user2 = randomPojo(AdminUserRespDTO.class, o -> o.setId(2L)
+                    .setStatus(CommonStatusEnum.DISABLE.getStatus()));
+            Map<Long, AdminUserRespDTO> userMap = MapUtil.builder(user1.getId(), user1)
+                    .put(user2.getId(), user2).build();
+            when(adminUserApi.getUserMap(eq(asSet(1L, 2L)))).thenReturn(userMap);
+            // mock 方法（empty）：兜底返回 2L（禁用）+ 3L（启用）
+            when(emptyStrategy.calculateUsersByTask(same(execution), same(param)))
+                    .thenReturn(Sets.newSet(2L, 3L));
+            AdminUserRespDTO user3 = randomPojo(AdminUserRespDTO.class, o -> o.setId(3L)
+                    .setStatus(CommonStatusEnum.ENABLE.getStatus()));
+            when(adminUserApi.getUserMap(eq(asSet(2L, 3L))))
+                    .thenReturn(MapUtil.builder(user2.getId(), user2).put(user3.getId(), user3).build());
+            // mock 移除发起人的用户
+            springUtilMockedStatic.when(() -> SpringUtil.getBean(BpmProcessInstanceService.class))
+                    .thenReturn(processInstanceService);
+            ProcessInstance processInstance = mock(ProcessInstance.class);
+            when(processInstanceService.getProcessInstance(eq(processInstanceId))).thenReturn(processInstance);
+            when(processInstance.getStartUserId()).thenReturn("1");
+
+            // 调用
+            Set<Long> results = taskCandidateInvoker.calculateUsersByTask(execution);
+            // 断言：仅保留启用的 3L
+            assertEquals(asSet(3L), results);
         }
     }
 
@@ -222,16 +316,61 @@ public class BpmTaskCandidateInvokerTest extends BaseMockitoUnitTest {
             Map<Long, AdminUserRespDTO> userMap = MapUtil.builder(user1.getId(), user1)
                     .put(user2.getId(), user2).build();
             when(adminUserApi.getUserMap(eq(asSet(1L, 2L)))).thenReturn(userMap);
-            // mock 方法（empty）
+            // mock 方法（empty）：兜底策略分配 3L（启用状态）
             when(emptyStrategy.calculateUsersByActivity(same(bpmnModel), eq(activityId),
                             eq(param), same(startUserId), same(processDefinitionId), same(processVariables)))
-                    .thenReturn(Sets.newSet(2L));
+                    .thenReturn(Sets.newSet(3L));
+            AdminUserRespDTO user3 = randomPojo(AdminUserRespDTO.class, o -> o.setId(3L)
+                    .setStatus(CommonStatusEnum.ENABLE.getStatus()));
+            when(adminUserApi.getUserMap(eq(asSet(3L)))).thenReturn(MapUtil.builder(user3.getId(), user3).build());
 
             // 调用
             Set<Long> results = taskCandidateInvoker.calculateUsersByActivity(bpmnModel, activityId,
                     startUserId, processDefinitionId, processVariables);
             // 断言
-            assertEquals(asSet(2L), results);
+            assertEquals(asSet(3L), results);
+        }
+    }
+
+    /**
+     * 场景：没有计算到候选人，兜底返回的候选人均已禁用，最终为空（不通过停用账号补位）
+     */
+    @Test
+    public void testCalculateUsersByActivity_emptyFallback_allDisabledFiltered() {
+        try (MockedStatic<BpmnModelUtils> bpmnModelUtilsMockedStatic = mockStatic(BpmnModelUtils.class)) {
+            // 准备参数
+            String param = "1,2";
+            BpmnModel bpmnModel = mock(BpmnModel.class);
+            String activityId = randomString();
+            Long startUserId = 1L;
+            String processDefinitionId = randomString();
+            Map<String, Object> processVariables = new HashMap<>();
+            // mock 方法（DelegateExecution）
+            UserTask userTask = mock(UserTask.class);
+            bpmnModelUtilsMockedStatic.when(() -> BpmnModelUtils.parseCandidateStrategy(same(userTask)))
+                    .thenReturn(BpmTaskCandidateStrategyEnum.USER.getStrategy());
+            bpmnModelUtilsMockedStatic.when(() -> BpmnModelUtils.parseCandidateParam(same(userTask)))
+                    .thenReturn(param);
+            bpmnModelUtilsMockedStatic.when(() -> BpmnModelUtils.getFlowElementById(same(bpmnModel), eq(activityId))).thenReturn(userTask);
+            // mock 方法（adminUserApi）：原始候选人均已禁用
+            AdminUserRespDTO user1 = randomPojo(AdminUserRespDTO.class, o -> o.setId(1L)
+                    .setStatus(CommonStatusEnum.DISABLE.getStatus()));
+            AdminUserRespDTO user2 = randomPojo(AdminUserRespDTO.class, o -> o.setId(2L)
+                    .setStatus(CommonStatusEnum.DISABLE.getStatus()));
+            Map<Long, AdminUserRespDTO> userMap = MapUtil.builder(user1.getId(), user1)
+                    .put(user2.getId(), user2).build();
+            when(adminUserApi.getUserMap(eq(asSet(1L, 2L)))).thenReturn(userMap);
+            // mock 方法（empty）：兜底返回的 2L 依然处于禁用状态
+            when(emptyStrategy.calculateUsersByActivity(same(bpmnModel), eq(activityId),
+                            eq(param), same(startUserId), same(processDefinitionId), same(processVariables)))
+                    .thenReturn(Sets.newSet(2L));
+            when(adminUserApi.getUserMap(eq(asSet(2L)))).thenReturn(MapUtil.builder(user2.getId(), user2).build());
+
+            // 调用
+            Set<Long> results = taskCandidateInvoker.calculateUsersByActivity(bpmnModel, activityId,
+                    startUserId, processDefinitionId, processVariables);
+            // 断言：兜底用户为禁用，最终为空
+            assertEquals(Collections.emptySet(), results);
         }
     }
 
