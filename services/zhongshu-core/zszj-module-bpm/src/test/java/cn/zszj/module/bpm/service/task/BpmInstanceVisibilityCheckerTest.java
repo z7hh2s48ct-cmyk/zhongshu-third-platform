@@ -2,6 +2,7 @@ package cn.zszj.module.bpm.service.task;
 
 import cn.zszj.framework.test.core.ut.BaseMockitoUnitTest;
 import cn.zszj.module.bpm.dal.mysql.task.BpmProcessInstanceCopyMapper;
+import cn.zszj.module.system.api.permission.PermissionApi;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.task.api.history.HistoricTaskInstanceQuery;
@@ -17,7 +18,7 @@ import static org.mockito.Mockito.*;
 /**
  * {@link BpmInstanceVisibilityChecker} 的单元测试
  *
- * 覆盖：流程发起人、历史任务审批人、历史任务拥有者、流程抄送人、非参与人、内部调用六种场景
+ * 覆盖：流程管理员、流程发起人、历史任务审批人、历史任务拥有者、流程抄送人、非参与人、内部调用七种场景
  *
  * @author zszj
  */
@@ -33,6 +34,8 @@ public class BpmInstanceVisibilityCheckerTest extends BaseMockitoUnitTest {
     private HistoryService historyService;
     @Mock
     private BpmProcessInstanceCopyMapper processInstanceCopyMapper;
+    @Mock
+    private PermissionApi permissionApi;
 
     /**
      * 场景：登录用户是流程发起人，可见
@@ -45,6 +48,21 @@ public class BpmInstanceVisibilityCheckerTest extends BaseMockitoUnitTest {
         // 调用，并断言
         assertTrue(visibilityChecker.isProcessInstanceVisible(LOGIN_USER_ID, processInstance));
         visibilityChecker.checkProcessInstanceVisible(LOGIN_USER_ID, processInstance);
+        verifyNoInteractions(historyService, processInstanceCopyMapper);
+    }
+
+    /**
+     * 场景：登录用户是流程管理员（拥有「管理流程」菜单权限），可见全部流程实例
+     */
+    @Test
+    public void testCheckProcessInstanceVisible_managerPermission_success() {
+        // mock 数据
+        HistoricProcessInstance processInstance = mock(HistoricProcessInstance.class);
+        when(permissionApi.hasAnyPermissions(LOGIN_USER_ID, "bpm:process-instance:manager-query")).thenReturn(true);
+        // 调用，并断言
+        assertTrue(visibilityChecker.isProcessInstanceVisible(LOGIN_USER_ID, processInstance));
+        visibilityChecker.checkProcessInstanceVisible(LOGIN_USER_ID, processInstance);
+        // 管理员豁免：不产生历史任务 / 抄送查询
         verifyNoInteractions(historyService, processInstanceCopyMapper);
     }
 
@@ -147,7 +165,7 @@ public class BpmInstanceVisibilityCheckerTest extends BaseMockitoUnitTest {
         // 调用，并断言
         assertTrue(visibilityChecker.isProcessInstanceVisible(null, processInstance));
         visibilityChecker.checkProcessInstanceVisible(null, processInstance);
-        verifyNoInteractions(historyService, processInstanceCopyMapper);
+        verifyNoInteractions(permissionApi, historyService, processInstanceCopyMapper);
     }
 
 }
