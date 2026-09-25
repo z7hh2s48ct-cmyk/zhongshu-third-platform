@@ -46,6 +46,14 @@ public class FileDO extends TenantBaseDO {
     private String scope;
 
     /**
+     * 业务组织归属（ZS-FILE-001.B）：服务端签发的上传组织（源 {@link cn.zszj.framework.security.core.LoginUser#getOrgId()}），
+     * 匿名/系统/无默认任职为 null——org 轴对象授权的数据载体。非 null 时读取/删除由组织范围独占裁决
+     * （D-09 FND-AUTH-004：本人所有权不凌驾组织排除，转岗/离任不得凭 owner 访问旧组织文件）；
+     * null 历史文件仍由 tenant 轴（ZS-FILE-001.A）治理，org 门不介入。
+     */
+    private Long organizationId;
+
+    /**
      * 编号，数据库自增
      */
     private Long id;

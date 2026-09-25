@@ -38,6 +38,13 @@
             <artifactId>zszj-spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- 数据权限（ZS-FILE-001.B：文件域消费 org 轴对象级入口 OrgDataPermissionChecker，DRY 复用 D-09 谓词；
+             biz-data-permission→{common/security/mybatis} 均不依赖 module-infra，方向 infra→data-permission 无环，循 module-system/bpm 先例） -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-biz-data-permission</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>cn.zszj</groupId>
             <artifactId>zszj-spring-boot-starter-websocket</artifactId>

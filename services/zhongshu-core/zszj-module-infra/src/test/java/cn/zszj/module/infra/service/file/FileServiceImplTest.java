@@ -152,7 +152,7 @@ public class FileServiceImplTest extends BaseDbUnitTest {
     @Test
     public void testDeleteFile_success() throws Exception {
         // mock 数据
-        FileDO dbFile = randomPojo(FileDO.class, o -> o.setConfigId(10L).setPath("tudou.jpg"));
+        FileDO dbFile = randomPojo(FileDO.class, o -> o.setConfigId(10L).setPath("tudou.jpg").setOrganizationId(null)); // ZS-FILE-001.B：tenant 轴历史文件（org=null），聚焦删除力学
         fileMapper.insert(dbFile);// @Sql: 先插入出一条存在的数据
         // mock Master 文件客户端
         FileClient client = mock(FileClient.class);
@@ -180,7 +180,7 @@ public class FileServiceImplTest extends BaseDbUnitTest {
     @Test
     public void testDeleteFile_pathInvalid() {
         // mock 数据
-        FileDO dbFile = randomPojo(FileDO.class, o -> o.setConfigId(10L).setPath("../tudou.jpg"));
+        FileDO dbFile = randomPojo(FileDO.class, o -> o.setConfigId(10L).setPath("../tudou.jpg").setOrganizationId(null)); // ZS-FILE-001.B：tenant 轴历史文件（org=null），聚焦路径校验
         fileMapper.insert(dbFile);
 
         // 调用，并断言异常

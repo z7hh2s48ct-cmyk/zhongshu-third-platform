@@ -154,6 +154,34 @@ public class FileUploadCredentialTest extends BaseDbUnitTest {
         assertNull(objectStore.get(credential.getTempPath()), "临时对象必须清理");
     }
 
+    @Test
+    public void fullFlow_recordsOrganizationIdFromLoginContext() throws Exception {
+        // ZS-FILE-001.B：凭证直传完成须落业务组织归属（堵住凭证流上传 org=null 架空组织隔离的绕过口子）
+        cn.zszj.framework.security.core.LoginUser user = new cn.zszj.framework.security.core.LoginUser();
+        user.setId(101L);
+        user.setUserType(cn.zszj.framework.common.enums.UserTypeEnum.ADMIN.getValue());
+        user.setTenantId(1L);
+        user.setInfo(new java.util.HashMap<>(Map.of(
+                cn.zszj.framework.security.core.LoginUser.INFO_KEY_ORG_ID, "9001")));
+        cn.zszj.framework.security.core.util.SecurityFrameworkUtils.setLoginUser(
+                user, new org.springframework.mock.web.MockHttpServletRequest());
+        try {
+            FileUploadCredentialCreateRespVO credential =
+                    fileService.createUploadCredential(buildCreateReq("report.txt", "text/plain", 16));
+            simulateClientPut(credential.getUploadUrl(),
+                    "0123456789ABCDEF".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            FileUploadCredentialCompleteReqVO completeReq = new FileUploadCredentialCompleteReqVO();
+            completeReq.setCredentialToken(credential.getCredentialToken());
+            Long fileId = fileService.completeUpload(completeReq);
+
+            assertEquals(9001L, fileMapper.selectById(fileId).getOrganizationId(),
+                    "凭证直传完成须记录当前登录组织归属（org 轴数据载体）");
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
     // ========== ② 拒绝路径 ==========
 
     @Test
