@@ -214,10 +214,10 @@ public class TechNeutralContractSampleTest extends BaseDbUnitTest {
         Map<String, Object> denied = queryAudit("ACCESS_DENIED", contractKey);
         assertThat(denied.get("result")).isEqualTo("DENIED");
         assertThat(denied.get("biz_version")).isEqualTo("99");
-        // 无事件预写、待办未推进、无成功审计
+        // 无事件预写、待办未推进、无更新成功审计（唯一 SUCCESS 为 submit 阶段已提交的 OBJECT_CREATED）
         assertThat(rowCount("outbox_event")).isZero();
         assertThat(queryTodo(contractKey).get("status")).isEqualTo("PENDING");
-        assertThat(rowCountWhere("audit_event", "result = 'SUCCESS'")).isZero();
+        assertThat(rowCountWhere("audit_event", "event_type = 'OBJECT_UPDATED'")).isZero();
     }
 
     // ========= 验收② 乱序旧版本事件：水位拒绝不复活 =========

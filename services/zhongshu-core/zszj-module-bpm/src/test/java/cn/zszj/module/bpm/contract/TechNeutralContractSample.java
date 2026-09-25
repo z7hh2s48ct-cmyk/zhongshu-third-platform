@@ -1,20 +1,36 @@
 package cn.zszj.module.bpm.contract;
 
+import cn.zszj.framework.common.biz.system.audit.AuditEventMessage;
+import cn.zszj.framework.common.biz.system.audit.AuditEventMessage.ActorType;
+import cn.zszj.framework.common.biz.system.audit.AuditEventMessage.AuditResult;
+import cn.zszj.framework.common.biz.system.audit.AuditEventTypes;
 import cn.zszj.framework.common.biz.system.audit.AuditPort;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
+import cn.zszj.framework.tenant.core.util.TenantUtils;
+import cn.zszj.module.infra.framework.outbox.OutboxEventMessage;
+import cn.zszj.module.infra.framework.outbox.OutboxEventMessage.OutboxActorType;
+import cn.zszj.module.infra.framework.outbox.OutboxEventRecord;
 import cn.zszj.module.infra.framework.outbox.OutboxEventSink;
 import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
 import cn.zszj.module.system.service.notify.dispatch.NotifyRecipient;
+import cn.zszj.module.system.service.notify.todo.NotifyTodoEventSink;
+import cn.zszj.module.system.service.notify.todo.NotifyTodoRegisterCmd;
 import cn.zszj.module.system.service.notify.todo.NotifyTodoService;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 
 import javax.sql.DataSource;
+import java.sql.PreparedStatement;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 中性合同样例（ZS-BPM-004）——「新业务模块接入合同」的可执行参照实现，<b>非业务代码</b>。
@@ -91,7 +107,50 @@ public class TechNeutralContractSample {
      * @return 对象行 ID
      */
     public Long submit(String contractKey, String title, NotifyRecipient recipient) {
-        throw new UnsupportedOperationException("ZS-BPM-004 RED：待实现（GREEN 补全）");
+        Long tenantId = requireTenantId();
+        return transactionTemplate.execute(status -> {
+            // 1) 对象：归属挂租户（不默认 0、不伪造归属）+ version=0 起步
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(
+                        "INSERT INTO tech_neutral_contract_record "
+                                + "(contract_key, status, version, tenant_id, creator, updater) VALUES (?, ?, ?, ?, ?, ?)",
+                        new String[]{"id"});
+                ps.setString(1, contractKey);
+                ps.setString(2, STATUS_PENDING);
+                ps.setLong(3, 0L);
+                ps.setLong(4, tenantId);
+                ps.setString(5, SAMPLE_ACTOR_ID);
+                ps.setString(6, SAMPLE_ACTOR_ID);
+                return ps;
+            }, keyHolder);
+            Long recordId = keyHolder.getKey() != null ? keyHolder.getKey().longValue() : null;
+            // 2) 审计：SUCCESS 随本事务（业务回滚则审计不留）；携对象版本基线
+            auditPort.record(AuditEventMessage.builder()
+                    .eventType(AuditEventTypes.OBJECT_CREATED)
+                    .actorType(ActorType.ADMIN)
+                    .actorId(SAMPLE_ACTOR_ID)
+                    .action("CREATE")
+                    .bizType(OBJECT_TYPE)
+                    .bizId(contractKey)
+                    .bizVersion("0")
+                    .result(AuditResult.SUCCESS)
+                    .tenantId(tenantId)
+                    .build());
+            // 3) 待办：幂等注册（(租户, sourceType, todoKey) 幂等键），来源标识与业务归属齐备
+            notifyTodoService.registerTodo(NotifyTodoRegisterCmd.builder()
+                    .todoKey(contractKey)
+                    .sourceType(TODO_SOURCE_TYPE)
+                    .bizType(OBJECT_TYPE)
+                    .bizId(contractKey)
+                    .bizVersion("0")
+                    .title(title)
+                    .recipient(recipient)
+                    .build());
+            // 4) 同事务内部事件：进程内同步分发（监听发生在发布方事务内；跨进程通知一律走 Outbox）
+            eventPublisher.publishEvent(new TechNeutralContractCreatedEvent(contractKey, 0L));
+            return recordId;
+        });
     }
 
     /**
@@ -106,7 +165,61 @@ public class TechNeutralContractSample {
      * @param reason          流转原因（脱敏文本，可空）
      */
     public void complete(String contractKey, long expectedVersion, String reason) {
-        throw new UnsupportedOperationException("ZS-BPM-004 RED：待实现（GREEN 补全）");
+        Long tenantId = requireTenantId();
+        transactionTemplate.executeWithoutResult(status -> {
+            // 版本乐观锁推进：必须携带期望版本，0 行即拒（版本不符 / 跨租户不可见 / 不存在），不静默覆盖
+            int updated = jdbcTemplate.update(
+                    "UPDATE tech_neutral_contract_record SET status = ?, version = version + 1, updater = ?, "
+                            + "update_time = CURRENT_TIMESTAMP WHERE tenant_id = ? AND contract_key = ? AND version = ? "
+                            + "AND deleted = FALSE",
+                    STATUS_DONE, SAMPLE_ACTOR_ID, tenantId, contractKey, expectedVersion);
+            if (updated != 1) {
+                // 拒绝留痕：DENIED 走独立事务（业务回滚不丢失），记录被拒的期望版本
+                auditPort.record(AuditEventMessage.builder()
+                        .eventType(AuditEventTypes.ACCESS_DENIED)
+                        .actorType(ActorType.ADMIN)
+                        .actorId(SAMPLE_ACTOR_ID)
+                        .action("COMPLETE")
+                        .bizType(OBJECT_TYPE)
+                        .bizId(contractKey)
+                        .bizVersion(String.valueOf(expectedVersion))
+                        .reason(reason)
+                        .result(AuditResult.DENIED)
+                        .tenantId(tenantId)
+                        .build());
+                throw new IllegalStateException("契约对象版本不匹配或不可见，拒绝完成：contractKey=" + contractKey
+                        + ", expectedVersion=" + expectedVersion);
+            }
+            // 审计：更新成功携新版本（随本事务）
+            auditPort.record(AuditEventMessage.builder()
+                    .eventType(AuditEventTypes.OBJECT_UPDATED)
+                    .actorType(ActorType.ADMIN)
+                    .actorId(SAMPLE_ACTOR_ID)
+                    .action("COMPLETE")
+                    .bizType(OBJECT_TYPE)
+                    .bizId(contractKey)
+                    .bizVersion(String.valueOf(expectedVersion + 1))
+                    .result(AuditResult.SUCCESS)
+                    .tenantId(tenantId)
+                    .build());
+            // 待办流转事件预写：Outbox 同事务追加（MANDATORY——无真实事务即拒），业务回滚则事件一并回滚
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("transitionType", "COMPLETE");
+            payload.put("todoKey", contractKey);
+            payload.put("sourceType", TODO_SOURCE_TYPE);
+            if (StringUtils.hasText(reason)) {
+                payload.put("reason", reason);
+            }
+            reliableEventPort.append(OutboxEventMessage.builder()
+                    .eventType(NotifyTodoEventSink.EVENT_TYPE)
+                    .bizType(OBJECT_TYPE)
+                    .bizId(contractKey)
+                    .bizVersion(String.valueOf(expectedVersion + 1))
+                    .payload(payload)
+                    .actorType(OutboxActorType.SYSTEM)
+                    .actorId(SAMPLE_ACTOR_ID)
+                    .build());
+        });
     }
 
     /**
@@ -127,7 +240,68 @@ public class TechNeutralContractSample {
      * @return 实际确认的事件数
      */
     public int deliverPendingTodoEvents(int maxEvents) {
-        throw new UnsupportedOperationException("ZS-BPM-004 RED：待实现（GREEN 补全）");
+        Long tenantId = requireTenantId();
+        // 领取范围按当前租户限定，不跨租户扫描；生产由 dispatcher 以租约 + claim_token 完成领取
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT * FROM outbox_event WHERE tenant_id = ? AND event_type = ? AND status = 'PENDING' ORDER BY id",
+                tenantId, NotifyTodoEventSink.EVENT_TYPE);
+        int delivered = 0;
+        for (Map<String, Object> row : rows) {
+            if (delivered >= maxEvents) {
+                break;
+            }
+            deliverOne(row);
+            delivered++;
+        }
+        return delivered;
+    }
+
+    /** 投递单条事件：事件自身租户上下文 + 编程式事务包裹（Inbox MANDATORY 要求），投递与确认同事务原子。 */
+    private void deliverOne(Map<String, Object> row) {
+        OutboxEventRecord event = toRecord(row);
+        OutboxEventSink sink = outboxEventSinks.stream()
+                .filter(candidate -> candidate.supports(event.getEventType()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("无 Sink 声明消费事件类型：" + event.getEventType()));
+        TenantUtils.execute(event.getTenantId(), () -> transactionTemplate.executeWithoutResult(status -> {
+            try {
+                sink.deliver(event);
+            } catch (Exception e) {
+                // 投递失败不静默确认：本事务回滚，事件保持 PENDING 可重试（生产由 dispatcher 退避 / DEAD 接管）
+                throw new IllegalStateException("投递失败，事件保持 PENDING 待重试：eventId=" + event.getEventId(), e);
+            }
+            jdbcTemplate.update(
+                    "UPDATE outbox_event SET status = 'DISPATCHED', dispatched_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    event.getEventId());
+        }));
+    }
+
+    /** 写侧入口租户强制：归属合同第一道防线（缺失即拒——不默认 0、不伪造归属）。 */
+    private static Long requireTenantId() {
+        Long tenantId = TenantContextHolder.getTenantId();
+        if (tenantId == null) {
+            throw new IllegalStateException("无租户上下文：写侧入口拒绝（归属合同要求显式租户，不默认 0）");
+        }
+        return tenantId;
+    }
+
+    /** Outbox 行 → Sink 投递记录（与 dispatcher 领取转换同构；样例以直读 PENDING 演示等价时序）。 */
+    private static OutboxEventRecord toRecord(Map<String, Object> row) {
+        return new OutboxEventRecord(
+                ((Number) row.get("id")).longValue(),
+                (String) row.get("event_type"),
+                (String) row.get("biz_type"),
+                (String) row.get("biz_id"),
+                (String) row.get("biz_version"),
+                (String) row.get("payload"),
+                (String) row.get("headers"),
+                row.get("tenant_id") == null ? null : ((Number) row.get("tenant_id")).longValue(),
+                row.get("retry_count") == null ? 0 : ((Number) row.get("retry_count")).intValue(),
+                (String) row.get("actor_type"),
+                (String) row.get("actor_id"),
+                (String) row.get("trace_id"),
+                (String) row.get("claimed_by"),
+                (String) row.get("claim_token"));
     }
 
     /**
