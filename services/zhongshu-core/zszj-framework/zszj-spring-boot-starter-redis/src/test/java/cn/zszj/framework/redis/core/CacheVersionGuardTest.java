@@ -3,6 +3,7 @@ package cn.zszj.framework.redis.core;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
+import org.mockito.InOrder;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -10,7 +11,9 @@ import org.springframework.data.redis.core.RedisTemplate;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -92,6 +95,42 @@ public class CacheVersionGuardTest {
         new CacheVersionGuard(redisTemplate, "zszj:").bumpVersion("role");
 
         verify(connection, times(2)).incr("zszj:__cachever__:role".getBytes(StandardCharsets.UTF_8));
+    }
+
+    // ========== 用例 4：版本值损坏 → DEL 后重试 INCR（一次性自愈） ==========
+
+    /**
+     * CodeReview R1 P3-2：键存在但值非数值（人工误写）→ INCR 报错必须 DEL 损坏键后重试一次 INCR
+     * （不自愈则 bump 在 delegate.evict 之前抛错，受管缓存驱逐永久失效）。
+     */
+    @Test
+    public void bumpVersion_corruptedValue_deletesAndReincs() {
+        when(connection.incr(any(byte[].class)))
+                .thenThrow(new RuntimeException("ERR value is not an integer or out of range"))
+                .thenReturn(1L);
+        when(connection.del(any(byte[].class))).thenReturn(1L);
+
+        new CacheVersionGuard(redisTemplate, "").bumpVersion("role");
+
+        InOrder inOrder = inOrder(connection);
+        inOrder.verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        inOrder.verify(connection).del("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        inOrder.verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+    }
+
+    // ========== 用例 5：自愈重试仍失败 → 原样上抛（由调用方有界重试兜底） ==========
+
+    /**
+     * 保护边界：DEL 后 INCR 仍失败（如连接故障）→ 必须上抛（不得静默吞），
+     * 由 {@code RetryEvictCache} 有界重试与失败键清单补偿兜底。
+     */
+    @Test
+    public void bumpVersion_secondIncrFails_propagates() {
+        when(connection.incr(any(byte[].class))).thenThrow(new RuntimeException("redis down"));
+        when(connection.del(any(byte[].class))).thenReturn(1L);
+
+        assertThrows(RuntimeException.class,
+                () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
     }
 
 }

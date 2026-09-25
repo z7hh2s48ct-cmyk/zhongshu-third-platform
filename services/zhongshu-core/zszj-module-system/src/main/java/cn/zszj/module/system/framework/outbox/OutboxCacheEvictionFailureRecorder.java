@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
@@ -22,7 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>为什么需要：驱逐失败发生在事务提交后的 afterCommit 路径（无事务上下文），
  * {@code ReliableEventPort.append} 的 MANDATORY 传播与租户强制无法直接满足——
- * 本实现自开短事务（REQUIRED）+ port 懒解析（{@code ObjectProvider}，infra 缺位时降级为仅日志）。
+ * 本实现自开独立短事务（<b>REQUIRES_NEW</b>：afterCommit 窗口下 ConnectionHolder 仍绑定且
+ * {@code isTransactionActive()==true}，REQUIRED 会静默并入已提交事务导致写入随连接归还丢失，
+ * CodeReview R1 P1）+ port 懒解析（{@code ObjectProvider}，infra 缺位时降级为仅日志）。
  *
  * <p>链路：重试耗尽 → record → 进程内去重（防双层重试重复记录）→ outbox 事件预写（PENDING）→
  * dispatcher 重放 → {@link CacheEvictionCompensationSink} 完成最终驱逐；超限转 DEAD 人工台账。
@@ -48,7 +51,11 @@ public class OutboxCacheEvictionFailureRecorder implements CacheEvictionFailureR
     /** CLEAR 操作 biz_id 的键占位（无具体键）。 */
     private static final String CLEAR_KEY_PLACEHOLDER = "__clear__";
 
-    /** 进程内去重台账：dedupKey（cacheName:key:operation）→ 最近一次记录时刻（epochMillis）。 */
+    /**
+     * 进程内去重台账：dedupKey（cacheName:key:operation）→ 最近一次记录时刻（epochMillis）。
+     * 每次 {@link #record} 入口惰性清扫超窗条目（CodeReview R1 P2：防台账随时间无界增长；
+     * record 为低频故障路径，O(n) 清扫可接受；上界 = 窗口内不同失败键数）。
+     */
     private final ConcurrentHashMap<String, Long> recentFailures = new ConcurrentHashMap<>();
 
     private final ObjectProvider<ReliableEventPort> reliableEventPortProvider;
@@ -58,12 +65,17 @@ public class OutboxCacheEvictionFailureRecorder implements CacheEvictionFailureR
                                               PlatformTransactionManager transactionManager) {
         this.reliableEventPortProvider = reliableEventPortProvider;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        // CodeReview R1 P1：afterCommit 主路径下 ConnectionHolder 仍绑定且 isTransactionActive()==true——
+        // REQUIRED 会静默并入已提交事务（参与者无显式 commit，落库只剩连接归还副作用兜底）；
+        // REQUIRES_NEW 挂起现有资源、开独立短事务显式提交，确保补偿事件确定性落库
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Override
     public void record(String cacheName, String key, CacheEvictionOperation operation, RuntimeException cause) {
         String dedupKey = cacheName + ":" + key + ":" + operation.name();
         long now = System.currentTimeMillis();
+        sweepExpired(now);
         try {
             // 步 1：进程内去重——窗口内同键同操作仅记首条（事件清单去重，非业务幂等）
             Long last = recentFailures.get(dedupKey);
@@ -107,7 +119,8 @@ public class OutboxCacheEvictionFailureRecorder implements CacheEvictionFailureR
                     .traceId(TracerUtils.getTraceId())
                     .build();
 
-            // 步 5：自开短事务（驱逐失败点无事务上下文；port 合同 PROPAGATION_MANDATORY 要求事务内调用）
+            // 步 5：自开独立短事务（驱逐失败点无事务上下文；port 合同 PROPAGATION_MANDATORY 要求事务内调用；
+            // REQUIRES_NEW 见构造——afterCommit 窗口并入已有事务会丢失落库）
             transactionTemplate.execute(status -> port.append(message));
 
             log.info("[record][cache({}) key({}) op({}) 驱逐失败补偿事件已持久化（tenantId={}）]",
@@ -119,6 +132,11 @@ public class OutboxCacheEvictionFailureRecorder implements CacheEvictionFailureR
             log.error("[record][cache({}) key({}) op({}) 补偿事件写入失败（降级：仅日志）]",
                     cacheName, key, operation, ex);
         }
+    }
+
+    /** 惰性清扫：移除超出去重窗口的过期条目（防台账无界增长；record 为低频故障路径，全扫可接受）。 */
+    private void sweepExpired(long now) {
+        recentFailures.entrySet().removeIf(entry -> now - entry.getValue() >= DEDUP_WINDOW_MILLIS);
     }
 
 }

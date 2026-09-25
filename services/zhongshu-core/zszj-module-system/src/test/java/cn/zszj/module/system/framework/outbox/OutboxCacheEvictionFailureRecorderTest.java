@@ -14,14 +14,20 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -167,6 +173,51 @@ public class OutboxCacheEvictionFailureRecorderTest extends BaseDbAndRedisUnitTe
                 new RuntimeException("redis down")));
 
         assertEquals(0L, countEvents(), "port 缺失时记录必须降级（不写行、不抛）");
+    }
+
+    // ========== 用例 6：record 自开事务必须 REQUIRES_NEW（afterCommit 主路径落库保障） ==========
+
+    /**
+     * CodeReview R1 P1 锁定：afterCommit 窗口下 ConnectionHolder 仍绑定且 isTransactionActive()==true，
+     * REQUIRED 会静默并入已提交事务（无显式 commit，落库只剩连接归还副作用兜底）；
+     * 本断言锁死修正不回退（端到端行为另见 PermissionCacheEvictionConsistencyIntegrationTest 用例 30）。
+     */
+    @Test
+    public void transactionTemplate_usesRequiresNew() throws Exception {
+        Field field = OutboxCacheEvictionFailureRecorder.class.getDeclaredField("transactionTemplate");
+        field.setAccessible(true);
+        TransactionTemplate template = (TransactionTemplate) field.get(recorder);
+
+        assertEquals(TransactionDefinition.PROPAGATION_REQUIRES_NEW, template.getPropagationBehavior(),
+                "补偿事件记录必须自开 REQUIRES_NEW 独立事务（防 afterCommit 下并入已提交事务丢失落库）");
+    }
+
+    // ========== 用例 7：去重台账惰性清扫（防无界增长，CodeReview R1 P2） ==========
+
+    /**
+     * CodeReview R1 P2：record 入口必须清扫超窗条目——过期条目保留会让台账随失败键数无界增长；
+     * 未过期条目不得被误清（去重窗口语义不变）。
+     */
+    @Test
+    public void record_lazilySweepsExpiredEntries() throws Exception {
+        ConcurrentHashMap<String, Long> ledger = dedupLedger();
+        recorder.record("role", "sweep-stale", CacheEvictionOperation.EVICT, new RuntimeException("redis down"));
+        String staleKey = "role:sweep-stale:EVICT";
+        assertTrue(ledger.containsKey(staleKey), "前置：去重台账已记录该键");
+        ledger.put(staleKey, System.currentTimeMillis() - 10_000L); // 模拟已超出去重窗口
+
+        recorder.record("role", "sweep-fresh", CacheEvictionOperation.EVICT, new RuntimeException("redis down"));
+
+        assertFalse(ledger.containsKey(staleKey), "超窗条目必须被惰性清扫（防台账无界增长）");
+        assertTrue(ledger.containsKey("role:sweep-fresh:EVICT"), "未过期条目必须保留（清扫不误伤）");
+    }
+
+    /** 反射读取进程内去重台账（仅测试观测用，不引入生产测试接口）。 */
+    @SuppressWarnings("unchecked")
+    private ConcurrentHashMap<String, Long> dedupLedger() throws Exception {
+        Field field = OutboxCacheEvictionFailureRecorder.class.getDeclaredField("recentFailures");
+        field.setAccessible(true);
+        return (ConcurrentHashMap<String, Long>) field.get(recorder);
     }
 
 }

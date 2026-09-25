@@ -3,6 +3,7 @@ package cn.zszj.module.system.framework.outbox;
 import cn.zszj.framework.common.util.date.DateUtils;
 import cn.zszj.framework.common.util.json.JsonUtils;
 import cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration;
+import cn.zszj.framework.redis.core.RetryEvictCache;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
 import cn.zszj.module.infra.framework.outbox.OutboxEventRecord;
 import jakarta.annotation.Resource;
@@ -10,13 +11,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
 import org.springframework.context.annotation.Import;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -135,15 +136,18 @@ public class CacheEvictionCompensationSinkTest extends BaseDbAndRedisUnitTest {
     // ========== 用例 22：重放再次失败必须抛出（触发 dispatcher 退避/DEAD） ==========
 
     /**
-     * RED：Redis 再次失败时 Sink 必须抛出（不吞异常）——静默吞会让 dispatcher 误判投递成功、
-     * 事件被 complete，补偿链路断裂；骨架空实现 → 不抛 → 失败。
+     * 契约（CodeReview R1 P0 修正）：重放失败必须穿过<b>真实装饰链</b>上抛——
+     * Sink → TransactionAwareCacheDecorator → RetryEvictCache → 恒失败底层；此前 mock 直抛
+     * 绕过 RetryEvictCache 的吞异常路径，掩盖了「dispatcher 误标 DISPATCHED、补偿静默丢失」的缺口。
      */
     @Test
     public void deliver_evictFailsAgain_throwsForDispatcherRetry() {
+        Cache failingRedis = mock(Cache.class);
+        when(failingRedis.getName()).thenReturn("role");
+        doThrow(new RuntimeException("redis down")).when(failingRedis).evict("1");
+        Cache chained = new TransactionAwareCacheDecorator(new RetryEvictCache(failingRedis));
         CacheManager failingManager = mock(CacheManager.class);
-        Cache failingCache = mock(Cache.class);
-        when(failingManager.getCache("role")).thenReturn(failingCache);
-        doThrow(new RuntimeException("redis down")).when(failingCache).evict(any());
+        when(failingManager.getCache("role")).thenReturn(chained);
         CacheEvictionCompensationSink failingSink = new CacheEvictionCompensationSink(failingManager);
 
         assertThrows(RuntimeException.class,

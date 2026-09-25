@@ -54,6 +54,11 @@ public class RetryEvictCache implements Cache {
     /**
      * ZS-PERM-004.C：本线程 get miss 时的版本快照（per-instance ThreadLocal，防跨线程串扰）。
      * 生命周期：get miss → 写入；get 命中 → 清除；put → 一次性消费（无论放行与否均移除）。
+     *
+     * <p>边界登记（CodeReview R1 P3-1）：加载中止（loader 异常/未走到 put）时快照残留，刻意不做
+     * evict/clear 清理——①残留仅在过度保守方向生效（后续该键 put 若版本已推进则丢弃、未推进则放行，
+     * 无漏放行）；②清理反而会破坏「驱逐后晚到写回拦截」（get miss → evict → put 序列将被放行，
+     * 恰为本机制要拦的场景）。残留上界 = 本线程曾 miss 且未回填的不同键数，随键空间收敛。
      */
     private final ThreadLocal<Map<Object, Object>> versionSnapshots = ThreadLocal.withInitial(HashMap::new);
 
@@ -189,6 +194,10 @@ public class RetryEvictCache implements Cache {
      *
      * <p>ZS-PERM-004.C：重试耗尽分支新增 {@link #recordFailure}（失败键清单持久化）；
      * {@code operation == null}（evictIfPresent）或重放上下文内不记录。
+     *
+     * <p>重放上下文内重试耗尽后异常<b>原样上抛</b>（CodeReview R1 P0）——Sink 经本装饰链重放失败
+     * 必须让 dispatcher 感知（退避重试 / 超限 DEAD），否则事件被误标 DISPATCHED、补偿静默丢失；
+     * 业务路径（afterCommit 驱逐等）维持「吞异常 + 证据化」契约不变。
      */
     private void boundedRetry(String desc, @Nullable CacheEvictionOperation operation, @Nullable Object key,
                               Runnable action) {
@@ -202,10 +211,15 @@ public class RetryEvictCache implements Cache {
             } catch (RuntimeException ex) {
                 if (attempt >= MAX_RETRIES) {
                     log.error("[boundedRetry][{} 重试 {} 次仍失败——旧授权条目可能残留，鉴权可能继续放行！"
-                                    + "修复动作：人工 DEL 该键/清空该 cache 或等待 TTL；可靠重放补偿已由 ZS-PERM-004.C 交付"
-                                    + "（失败键清单持久化 + dispatcher 重放；DEAD 兜底见 JOB-004 人工台账）]",
+                                    + "修复动作：人工 DEL 该键/清空该 cache 或等待 TTL；失败键清单已持久化"
+                                    + "（ZS-PERM-004.C），自动重放依赖调度接线（D-07）；DEAD 兜底见 JOB-004 人工台账]",
                             desc, MAX_RETRIES, ex);
                     recordFailure(operation, key, ex);
+                    if (CacheEvictionReplayContext.isInReplay()) {
+                        // CodeReview R1 P0：重放路径必须上抛（dispatcher 退避/DEAD 兜底），不得静默吞——
+                        // 业务路径继续吞异常（仅证据化），重放路径让 dispatcher 感知真实失败
+                        throw ex;
+                    }
                 } else {
                     try {
                         Thread.sleep(RETRY_INTERVAL_MS);

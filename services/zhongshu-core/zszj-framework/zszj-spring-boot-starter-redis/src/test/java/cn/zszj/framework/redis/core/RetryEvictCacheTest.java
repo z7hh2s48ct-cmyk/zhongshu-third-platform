@@ -7,6 +7,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.support.SimpleValueWrapper;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -120,17 +121,19 @@ public class RetryEvictCacheTest {
         verify(recorder, times(1)).record(anyString(), any(), any(), any());
     }
 
-    // ========== 用例 5：replay scope 内 → 不再记录（防自我循环） ==========
+    // ========== 用例 5：replay scope 内 → 耗尽必须上抛且不再记录（防自我循环 + 补偿不静默丢失） ==========
 
     /**
-     * RED/GREEN 契约：replay scope 内驱逐仍执行有界重试，但恒失败不再产生新事件——
-     * 交由 dispatcher 退避重试 / 超限 DEAD（JOB-004 人工台账），闭环「记录→重放→再记录」。
+     * 契约（CodeReview R1 P0 修正）：replay scope 内驱逐仍执行有界重试，重试耗尽必须<b>原样上抛</b>——
+     * 异常须到达 dispatcher（退避重试 / 超限 DEAD 台账），否则 dispatcher 误判投递成功、补偿静默丢失；
+     * 同时不产生新事件（防「记录→重放→再记录」自我循环）。业务路径（非 replay）维持吞异常契约（用例 4 锁定）。
      */
     @Test
-    public void inReplayScope_exhaustedRetries_noRecord() {
+    public void inReplayScope_exhaustedRetries_rethrowsWithoutRecord() {
         doThrow(new RuntimeException("redis down")).when(delegate).evict(1L);
 
-        CacheEvictionReplayContext.runInReplayScope(() -> cache.evict(1L));
+        assertThrows(RuntimeException.class,
+                () -> CacheEvictionReplayContext.runInReplayScope(() -> cache.evict(1L)));
 
         verify(delegate, times(3)).evict(1L);
         verifyNoInteractions(recorder);

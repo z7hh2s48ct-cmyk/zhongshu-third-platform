@@ -1,6 +1,7 @@
 package cn.zszj.module.system.service.permission;
 
 import cn.zszj.framework.redis.config.ZszjCacheAutoConfiguration;
+import cn.zszj.framework.redis.core.CacheEvictionOperation;
 import cn.zszj.framework.redis.core.RetryEvictCache;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
@@ -15,10 +16,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.util.List;
@@ -67,6 +71,8 @@ public class PermissionCacheEvictionConsistencyIntegrationTest extends BaseDbAnd
     private OutboxDispatcherService outboxDispatcherService;
     @Resource
     private DataSource dataSource;
+    @Resource
+    private PlatformTransactionManager transactionManager;
 
     private JdbcTemplate jdbcTemplate;
 
@@ -201,6 +207,65 @@ public class PermissionCacheEvictionConsistencyIntegrationTest extends BaseDbAnd
                 "clear 的 SCAN 模式（role:*）不得误删独立前缀的版本键（__cachever__:role）");
         assertFalse(stringRedisTemplate.hasKey("role:1"), "清空后业务键 role:1 必须被清除");
         assertFalse(stringRedisTemplate.hasKey("role:2"), "清空后业务键 role:2 必须被清除");
+    }
+
+    // ========== 用例 30：afterCommit 驱逐失败 → 补偿事件独立事务落库（CodeReview R1 P1） ==========
+
+    /**
+     * CodeReview R1 P1：生产主路径 = 事务内驱逐被 TransactionAwareCacheDecorator 延迟到 afterCommit，
+     * 此时 ConnectionHolder 仍绑定且 isTransactionActive()==true——record 若走 REQUIRED 会静默并入
+     * 已提交事务（无显式 commit，落库只剩连接归还副作用兜底）；改为 REQUIRES_NEW 后必须恰 1 条落库。
+     */
+    @Test
+    public void afterCommitEvictionFailure_recordsExactlyOnePENDING() {
+        Cache failingRedis = mock(Cache.class);
+        when(failingRedis.getName()).thenReturn("role");
+        doThrow(new RuntimeException("redis down")).when(failingRedis).evict("tx-1");
+        // 合成真实装饰链：事务感知（延迟到 afterCommit）→ RetryEvictCache（有界重试 + 记录点）→ 恒失败底层
+        Cache txAwareGuarded = new TransactionAwareCacheDecorator(new RetryEvictCache(failingRedis, recorder, null));
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> txAwareGuarded.evict("tx-1"));
+
+        assertEquals(1L, countEvents("PENDING"),
+                "afterCommit 驱逐失败必须经 REQUIRES_NEW 独立事务恰落库 1 条补偿事件");
+    }
+
+    // ========== 用例 31：真实链重放失败 → retry_count+1 → 5 次进 DEAD（CodeReview R1 P0） ==========
+
+    /**
+     * CodeReview R1 P0：重放经真实装饰链（TransactionAware → RetryEvictCache → 恒失败底层）失败必须
+     * 上抛给 dispatcher——每次投递失败 retry_count+1，连续 5 次转 DEAD 人工台账；此前 RetryEvictCache
+     * 耗尽后吞异常会让事件被误标 DISPATCHED、补偿静默丢失（本用例锁定不静默）。
+     */
+    @Test
+    public void replayFailure_propagatesToDispatcher_retriesThenDead() {
+        // 前置：经真实 recorder 持久化 1 条 PENDING 补偿事件
+        recorder.record("role", "dead-1", CacheEvictionOperation.EVICT, new RuntimeException("redis down"));
+        assertEquals(1L, countEvents("PENDING"), "前置：1 条 PENDING 补偿事件");
+
+        // 合成真实装饰链：Sink → TransactionAware → RetryEvictCache(恒失败) → 恒失败底层
+        Cache failingRedis = mock(Cache.class);
+        when(failingRedis.getName()).thenReturn("role");
+        doThrow(new RuntimeException("redis down")).when(failingRedis).evict("dead-1");
+        Cache chained = new TransactionAwareCacheDecorator(new RetryEvictCache(failingRedis));
+        CacheManager failingManager = mock(CacheManager.class);
+        when(failingManager.getCache("role")).thenReturn(chained);
+        CacheEvictionCompensationSink failingSink = new CacheEvictionCompensationSink(failingManager);
+
+        // 手工装配 dispatcher（真实领取/失败 SQL + 失败链 Sink；退避 0 秒立即可重领）
+        OutboxDispatcherService failingDispatcher =
+                new OutboxDispatcherService(dataSource, transactionManager, List.of(failingSink));
+
+        for (int i = 1; i <= 5; i++) {
+            assertEquals(1, failingDispatcher.dispatchOnce("ut-failing", "ut-instance", 60L, 10, 0L),
+                    "第 " + i + " 轮必须领取到事件（失败退避 0 秒立即可重领）");
+        }
+
+        assertEquals(0L, countEvents("PENDING"), "连续失败后不得残留 PENDING");
+        assertEquals(1L, countEvents("DEAD"), "重放持续失败必须转 DEAD 人工台账（补偿不静默丢失）");
+        Integer retryCount = jdbcTemplate.queryForObject(
+                "SELECT retry_count FROM outbox_event WHERE event_type = ?", Integer.class, EVENT_TYPE);
+        assertEquals(5, retryCount, "5 次失败后 retry_count 必须为 5");
     }
 
 }

@@ -13,7 +13,9 @@ import java.nio.charset.StandardCharsets;
  * get miss 时快照版本 → 驱逐先 bump 版本 → put 写回前对比版本：不一致即丢弃（晚到旧值）。
  *
  * <p>命令走原始字节 {@code INCR} / {@code GET}（不经 value 反序列化，规避 JSON 编码歧义）；
- * 键不存在视为 0；版本值损坏（人工误写等）同样视为 0——bump 的 INCR 会以数值语义覆盖纠偏。
+ * 键不存在视为 0。版本值损坏（人工误写等）：读取侧视为 0；bump 侧遇 INCR 报错先 DEL 损坏键、
+ * 再重试一次 INCR（一次性自愈，CodeReview R1 P3-2——若不自愈，bump 在 delegate.evict 之前抛错
+ * 将使受管缓存驱逐永久失效）。
  *
  * @author ZS-PERM-004.C
  */
@@ -58,10 +60,21 @@ public class CacheVersionGuard {
      * 推进缓存版本（迁移代际——在途旧值写回即刻失效）。
      *
      * <p>raw INCR——键不存在时由 Redis 原子创建为 1；重复 bump 幂等无害（版本只增不减）。
+     *
+     * <p>版本值损坏（非数值 → Redis INCR 报错）时 DEL 损坏键后重试一次 INCR（一次性自愈，
+     * CodeReview R1 P3-2）；重试仍失败（如连接故障）原样上抛，由调用方 {@code RetryEvictCache}
+     * 有界重试兜底。
      */
     public void bumpVersion(String cacheName) {
-        redisTemplate.execute((RedisCallback<Long>) connection ->
-                connection.incr(versionKey(cacheName).getBytes(StandardCharsets.UTF_8)));
+        byte[] key = versionKey(cacheName).getBytes(StandardCharsets.UTF_8);
+        try {
+            redisTemplate.execute((RedisCallback<Long>) connection -> connection.incr(key));
+        } catch (RuntimeException ex) {
+            redisTemplate.execute((RedisCallback<Long>) connection -> {
+                connection.del(key);
+                return connection.incr(key);
+            });
+        }
     }
 
     /** 版本键构造：{@code [prefix:]__cachever__:{cacheName}}。 */
