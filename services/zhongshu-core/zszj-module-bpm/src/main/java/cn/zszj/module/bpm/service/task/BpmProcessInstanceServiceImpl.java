@@ -124,6 +124,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
     @Resource
     private BpmProcessIdRedisDAO processIdRedisDAO;
 
+    @Resource
+    private BpmInstanceVisibilityChecker instanceVisibilityChecker;
+
     // ========== Query 查询相关方法 ==========
 
     @Override
@@ -179,6 +182,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             if (historicProcessInstance == null) {
                 throw exception(ErrorCodeConstants.PROCESS_INSTANCE_NOT_EXISTS);
             }
+            // BPM-002：对象授权校验，避免通过猜测流程实例编号越权查看他人流程的审批详情
+            instanceVisibilityChecker.checkProcessInstanceVisible(loginUserId, historicProcessInstance);
             startUserId = Long.valueOf(historicProcessInstance.getStartUserId());
             processInstanceStatus = FlowableUtils.getProcessInstanceStatus(historicProcessInstance);
             // 合并 DB 和前端传递的流量变量，以前端的为主

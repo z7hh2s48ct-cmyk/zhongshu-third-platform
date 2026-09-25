@@ -176,10 +176,11 @@ public interface BpmTaskService {
     /**
      * 获取指定任务的子任务列表
      *
+     * @param userId       当前登录用户编号（用于对象授权校验，为空时跳过该校验）
      * @param parentTaskId 父任务ID
      * @return 子任务列表
      */
-    List<Task> getTaskListByParentTaskId(String parentTaskId);
+    List<Task> getTaskListByParentTaskId(Long userId, String parentTaskId);
 
     /**
      * 获得指定流程实例的活动实例列表

@@ -240,7 +240,7 @@ public class BpmTaskController {
     @Parameter(name = "parentTaskId", description = "父级任务编号", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:task:query')")
     public CommonResult<List<BpmTaskRespVO>> getTaskListByParentTaskId(@RequestParam("parentTaskId") String parentTaskId) {
-        List<Task> taskList = taskService.getTaskListByParentTaskId(parentTaskId);
+        List<Task> taskList = taskService.getTaskListByParentTaskId(getLoginUserId(), parentTaskId);
         if (CollUtil.isEmpty(taskList)) {
             return success(Collections.emptyList());
         }

@@ -44,6 +44,7 @@ public interface ErrorCodeConstants {
     ErrorCode PROCESS_INSTANCE_HTTP_CALL_ERROR = new ErrorCode(1_009_004_006, "流程 Http 请求调用失败");
     ErrorCode PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_NOT_CONFIG = new ErrorCode(1_009_004_007, "下一个任务({})的审批人未配置");
     ErrorCode PROCESS_INSTANCE_CANCEL_CHILD_FAIL_NOT_ALLOW = new ErrorCode(1_009_004_008, "子流程取消失败，子流程不允许取消");
+    ErrorCode PROCESS_INSTANCE_QUERY_FAIL_NOT_VISIBLE = new ErrorCode(1_009_004_009, "查询失败，原因：你不是该流程的参与人");
 
     // ========== 流程任务 1-009-005-000 ==========
     ErrorCode TASK_OPERATE_FAIL_ASSIGN_NOT_SELF = new ErrorCode(1_009_005_001, "操作失败，原因：该任务的审批人不是你");
@@ -65,6 +66,11 @@ public interface ErrorCodeConstants {
     ErrorCode TASK_WITHDRAW_FAIL_TASK_NOT_EXISTS = new ErrorCode(1_009_005_018, "撤回失败，未查询到用户已办任务！");
     ErrorCode TASK_WITHDRAW_FAIL_NOT_ALLOW = new ErrorCode(1_009_005_019, "撤回失败，此流程不允许撤回操作！");
     ErrorCode TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW = new ErrorCode(1_009_005_020, "撤回失败，下一节点不满足撤回条件！");
+    ErrorCode TASK_OPERATE_FAIL_NO_ASSIGNEE = new ErrorCode(1_009_005_021, "操作失败，原因：该任务没有审批人，不允许操作");
+    ErrorCode TASK_OPERATE_FAIL_NOT_PARTICIPANT = new ErrorCode(1_009_005_022, "操作失败，原因：你不是该任务的参与人");
+    ErrorCode TASK_DELEGATE_FAIL_USER_DISABLED = new ErrorCode(1_009_005_023, "任务委派失败，被委派人已被禁用");
+    ErrorCode TASK_TRANSFER_FAIL_USER_DISABLED = new ErrorCode(1_009_005_024, "任务转办失败，转办人已被禁用");
+    ErrorCode TASK_SIGN_CREATE_USER_DISABLED = new ErrorCode(1_009_005_025, "任务加签：选择的用户已被禁用");
 
     // ========== 动态表单模块 1-009-010-000 ==========
     ErrorCode FORM_NOT_EXISTS = new ErrorCode(1_009_010_000, "动态表单不存在");

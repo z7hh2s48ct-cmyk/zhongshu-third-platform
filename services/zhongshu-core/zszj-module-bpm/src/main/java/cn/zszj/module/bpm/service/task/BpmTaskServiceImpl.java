@@ -444,7 +444,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
             // 2.1 获取子任务们
             Task task = stack.pop();
-            List<Task> childTaskList = getTaskListByParentTaskId(task.getId());
+            List<Task> childTaskList = queryChildTasks(task.getId());
             // 2.2 如果非空，则添加到 stack 进一步递归
             if (CollUtil.isNotEmpty(childTaskList)) {
                 stack.addAll(childTaskList);
@@ -455,7 +455,18 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     }
 
     @Override
-    public List<Task> getTaskListByParentTaskId(String parentTaskId) {
+    public List<Task> getTaskListByParentTaskId(Long userId, String parentTaskId) {
+        // TODO BPM-002（RED）：对象授权校验暂未启用
+        return queryChildTasks(parentTaskId);
+    }
+
+    /**
+     * 查询指定任务的子任务列表（内部使用，不做对象授权）
+     *
+     * @param parentTaskId 父任务 ID
+     * @return 子任务列表
+     */
+    private List<Task> queryChildTasks(String parentTaskId) {
         String tableName = managementService.getTableName(TaskEntity.class);
         // taskService.createTaskQuery() 没有 parentId 参数，所以写 sql 查询
         String sql = "select ID_,NAME_,OWNER_,ASSIGNEE_ from " + tableName + " where PARENT_TASK_ID_=#{parentTaskId}";
@@ -750,7 +761,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         updateTaskStatusAndReason(task.getId(), BpmTaskStatusEnum.APPROVING.getStatus(), reqVO.getReason());
 
         // 2. 激活子任务
-        List<Task> childrenTaskList = getTaskListByParentTaskId(task.getId());
+        List<Task> childrenTaskList = queryChildTasks(task.getId());
         for (Task childrenTask : childrenTaskList) {
             taskService.resolveTask(childrenTask.getId());
             // 更新子 task 状态
