@@ -46,6 +46,14 @@ public class NotifyMessageDO extends BaseDO {
      * 枚举 {@link UserTypeEnum}
      */
     private Integer userType;
+    /**
+     * 业务组织归属编号（ZS-MSG-003.C）
+     *
+     * <p>派发时刻收件人的服务端组织上下文（默认任职组织，ZS-IAM-002）；NULL = 无默认任职 / 任职失效 /
+     * MEMBER 收件人（会员命名空间不参与任职解析）/ 系统上下文（历史存量）。org 轴可见范围按本列裁决：
+     * 非空由组织范围独占，为空由本人兜底放行（超管/平台任职等全部组织授权亦可见）。
+     */
+    private Long organizationId;
 
     // ========= 模板相关字段 =========
 
