@@ -1,7 +1,10 @@
 package cn.zszj.framework.redis.config;
 
 import cn.hutool.core.util.StrUtil;
+import cn.zszj.framework.redis.core.CacheEvictionFailureRecorder;
+import cn.zszj.framework.redis.core.CacheVersionGuard;
 import cn.zszj.framework.redis.core.TimeoutRedisCacheManager;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.cache.CacheProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -19,6 +22,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Objects;
 
 import static cn.zszj.framework.redis.config.ZszjRedisAutoConfiguration.buildRedisSerializer;
@@ -80,13 +84,23 @@ public class ZszjCacheAutoConfiguration implements CachingConfigurer {
     @Bean
     public RedisCacheManager redisCacheManager(RedisTemplate<String, Object> redisTemplate,
                                                RedisCacheConfiguration redisCacheConfiguration,
-                                               ZszjCacheProperties zszjCacheProperties) {
+                                               ZszjCacheProperties zszjCacheProperties,
+                                               CacheProperties cacheProperties,
+                                               ObjectProvider<CacheEvictionFailureRecorder> cacheEvictionFailureRecorderProvider) {
         // 创建 RedisCacheWriter 对象
         RedisConnectionFactory connectionFactory = Objects.requireNonNull(redisTemplate.getConnectionFactory());
         RedisCacheWriter cacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(connectionFactory,
                 BatchStrategies.scan(zszjCacheProperties.getRedisScanBatchSize()));
+        // ZS-PERM-004.C：白名单非空才启用「驱逐失败补偿记录 + 版本校验」；默认空 = 与现状完全一致（零回归面）
+        List<String> consistencyGuardedCacheNames = zszjCacheProperties.getConsistencyGuardedCacheNames();
+        boolean consistencyGuarded = consistencyGuardedCacheNames != null && !consistencyGuardedCacheNames.isEmpty();
+        CacheEvictionFailureRecorder evictionFailureRecorder = consistencyGuarded
+                ? cacheEvictionFailureRecorderProvider.getIfAvailable() : null;
+        CacheVersionGuard cacheVersionGuard = consistencyGuarded
+                ? new CacheVersionGuard(redisTemplate, cacheProperties.getRedis().getKeyPrefix()) : null;
         // 创建 TimeoutRedisCacheManager 对象
-        TimeoutRedisCacheManager cacheManager = new TimeoutRedisCacheManager(cacheWriter, redisCacheConfiguration);
+        TimeoutRedisCacheManager cacheManager = new TimeoutRedisCacheManager(cacheWriter, redisCacheConfiguration,
+                evictionFailureRecorder, cacheVersionGuard, consistencyGuardedCacheNames);
         // 开启事务感知：@Transactional 方法内的 @CacheEvict / @CachePut 自动延迟到 afterCommit，
         //             避免事务未提交就清缓存被并发读穿写脏值；无事务时立即生效，行为不变
         cacheManager.setTransactionAware(true);

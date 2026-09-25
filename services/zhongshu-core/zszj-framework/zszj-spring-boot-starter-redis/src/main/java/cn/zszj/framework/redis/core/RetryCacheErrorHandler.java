@@ -11,8 +11,9 @@ import org.springframework.lang.Nullable;
  *
  * <p>背景：撤权/停用依赖「事务提交后驱逐缓存」；驱逐瞬时失败（Redis 抖动）会让旧授权条目残留。
  * 本处理器对 evict/clear 失败<b>同步重试 2 次</b>（覆盖瞬时抖动，权限链路宁可多等也不留旧授权）；
- * 仍失败则 ERROR 结构化日志显式登记【缓存名 + 键 + 风险 + 修复动作】——这是可重放修复证据，
- * 彻底的可靠补偿（失败键清单持久化 + 定时重放）归 ZS-LOGIN-005.B（B05 JOB-002）。
+ * 仍失败则 ERROR 结构化日志显式登记【缓存名 + 键 + 风险 + 修复动作】；
+ * 彻底的可靠补偿（失败键清单持久化 + dispatcher 重放）已由 ZS-PERM-004.C 交付
+ * （受管缓存经装饰链 {@link RetryEvictCache} 接入 outbox；DEAD 兜底见 ZS-JOB-004 人工台账）。
  *
  * <p>读/写失败不重试：get 异常等价未命中（回源 DB）、put 异常同理，均无安全风险。
  *
@@ -63,7 +64,8 @@ public class RetryCacheErrorHandler implements org.springframework.cache.interce
                 return;
             }
             log.error("[retryEvict][cache({}) key({}) 驱逐重试 {} 次仍失败——旧授权条目残留，鉴权可能继续放行！"
-                    + "修复动作：人工 DEL 该键或等待 TTL 过期；可靠重放补偿归 ZS-LOGIN-005.B]", cache.getName(), key, attempt, ex);
+                    + "修复动作：人工 DEL 该键或等待 TTL 过期；可靠重放补偿已由 ZS-PERM-004.C 交付"
+                    + "（失败键清单持久化 + dispatcher 重放；DEAD 兜底见 JOB-004 人工台账）]", cache.getName(), key, attempt, ex);
         }
     }
 
@@ -78,7 +80,8 @@ public class RetryCacheErrorHandler implements org.springframework.cache.interce
                 return;
             }
             log.error("[retryClear][cache({}) 清空重试 {} 次仍失败——陈旧授权条目残留！"
-                    + "修复动作：人工清空该 cache 前缀键或等待 TTL；可靠重放补偿归 ZS-LOGIN-005.B]", cache.getName(), attempt, ex);
+                    + "修复动作：人工清空该 cache 前缀键或等待 TTL；可靠重放补偿已由 ZS-PERM-004.C 交付"
+                    + "（失败键清单持久化 + dispatcher 重放；DEAD 兜底见 JOB-004 人工台账）]", cache.getName(), attempt, ex);
         }
     }
 

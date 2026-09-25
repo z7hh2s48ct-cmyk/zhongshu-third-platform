@@ -1,0 +1,180 @@
+package cn.zszj.framework.redis.core;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.InOrder;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.RedisTemplate;
+
+import java.nio.charset.StandardCharsets;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * ZS-PERM-004.C：{@link CacheVersionGuard} 版本键合同单测（mock RedisTemplate，不依赖真实 Redis）。
+ *
+ * <p><b>RED 依据</b>：骨架阶段 {@code currentVersion} 恒返回 0、{@code bumpVersion} 空实现——
+ * 用例 2（INCR 命令与键格式）与用例 3（前缀归一化键格式）失败；GREEN 落地 raw INCR/GET 后转绿。
+ *
+ * <p><b>契约</b>（开发计划 §2 D4）：
+ * <ul>
+ *   <li>版本存独立前缀键 {@code [prefix:]__cachever__:{cacheName}}——不放在 {@code {cacheName}:} 前缀下，
+ *       RedisCache.clear() 的 SCAN 模式（{@code {cacheName}:*}）不得误删版本键；</li>
+ *   <li>命令走原始字节 {@code INCR} / {@code GET}（不经 value 反序列化，规避 JSON 歧义）；GET null → 0；</li>
+ *   <li>keyPrefix 归一化规则与 {@code redisCacheConfiguration.computePrefixWith} 一致（无冒号则补冒号）。</li>
+ * </ul>
+ *
+ * @author ZS-PERM-004.C
+ */
+public class CacheVersionGuardTest {
+
+    private RedisTemplate<String, Object> redisTemplate;
+    private RedisConnection connection;
+
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    public void setUp() {
+        redisTemplate = mock(RedisTemplate.class);
+        connection = mock(RedisConnection.class);
+        // execute(RedisCallback) 桥接：直接以 mock 连接执行回调，验证 raw 命令语义
+        when(redisTemplate.execute(ArgumentMatchers.<RedisCallback<Object>>any())).thenAnswer(invocation -> {
+            RedisCallback<?> callback = invocation.getArgument(0);
+            return callback.doInRedis(connection);
+        });
+    }
+
+    // ========== 用例 1：GET null 视为 0 ==========
+
+    /**
+     * RED：键不存在（GET 返回 null）→ 版本 0；非 null（"3"）→ 解析为 3。
+     */
+    @Test
+    public void currentVersion_nullMeansZero() {
+        when(connection.get(any(byte[].class))).thenReturn(null, "3".getBytes(StandardCharsets.UTF_8));
+
+        CacheVersionGuard guard = new CacheVersionGuard(redisTemplate, "");
+
+        assertEquals(0L, guard.currentVersion("role"), "键不存在时版本必须视为 0");
+        assertEquals(3L, guard.currentVersion("role"), "已有版本必须按 UTF-8 数字解析");
+    }
+
+    // ========== 用例 2：bump 走 raw INCR 且键带独立前缀 ==========
+
+    /**
+     * RED：bumpVersion 必须对 {@code __cachever__:role} 执行 raw INCR；骨架空实现 → 0 次调用 → 失败。
+     */
+    @Test
+    public void bumpVersion_incrWithIsolatedPrefixKey() {
+        when(connection.incr(any(byte[].class))).thenReturn(1L);
+
+        new CacheVersionGuard(redisTemplate, "").bumpVersion("role");
+
+        verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+    }
+
+    // ========== 用例 3：keyPrefix 归一化（与 computePrefixWith 同规则） ==========
+
+    /**
+     * RED：前缀无冒号（"zszj"）→ 归一化为 "zszj:"；已带冒号（"zszj:"）→ 原样——
+     * 归一化规则与 {@code redisCacheConfiguration.computePrefixWith} 一致。
+     */
+    @Test
+    public void versionKeyFormat_appliesNormalizedKeyPrefix() {
+        when(connection.incr(any(byte[].class))).thenReturn(1L);
+
+        new CacheVersionGuard(redisTemplate, "zszj").bumpVersion("role");
+        new CacheVersionGuard(redisTemplate, "zszj:").bumpVersion("role");
+
+        verify(connection, times(2)).incr("zszj:__cachever__:role".getBytes(StandardCharsets.UTF_8));
+    }
+
+    // ========== 用例 4：版本值损坏 → DEL 后重试 INCR（一次性自愈） ==========
+
+    /**
+     * CodeReview R1 P3-2：键存在但值非数值（人工误写）→ INCR 报错，探测确认损坏后必须 DEL 损坏键
+     * 再重试一次 INCR（不自愈则 bump 在 delegate.evict 之前抛错，受管缓存驱逐永久失效）；
+     * CodeReview R2 F2：探测（GET）命中损坏值才允许 DEL——命令序 incr → get → del → incr。
+     */
+    @Test
+    public void bumpVersion_corruptedValue_deletesAndReincs() {
+        when(connection.incr(any(byte[].class)))
+                .thenThrow(new RuntimeException("ERR value is not an integer or out of range"))
+                .thenReturn(1L);
+        when(connection.get(any(byte[].class))).thenReturn("corrupted".getBytes(StandardCharsets.UTF_8));
+        when(connection.del(any(byte[].class))).thenReturn(1L);
+
+        new CacheVersionGuard(redisTemplate, "").bumpVersion("role");
+
+        InOrder inOrder = inOrder(connection);
+        inOrder.verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        inOrder.verify(connection).get("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        inOrder.verify(connection).del("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        inOrder.verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+    }
+
+    // ========== 用例 5：自愈重试仍失败 → 原样上抛（由调用方有界重试兜底） ==========
+
+    /**
+     * 保护边界：探测确认损坏后 DEL 再 INCR 仍失败（如连接故障）→ 必须上抛（不得静默吞），
+     * 由 {@code RetryEvictCache} 有界重试与失败键清单补偿兜底。
+     */
+    @Test
+    public void bumpVersion_secondIncrFails_propagates() {
+        when(connection.incr(any(byte[].class))).thenThrow(new RuntimeException("redis down"));
+        when(connection.get(any(byte[].class))).thenReturn("corrupted".getBytes(StandardCharsets.UTF_8));
+        when(connection.del(any(byte[].class))).thenReturn(1L);
+
+        assertThrows(RuntimeException.class,
+                () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
+    }
+
+    // ========== 用例 6：瞬时故障（值正常）→ 原样上抛且不得 DEL（CodeReview R2 F2） ==========
+
+    /**
+     * CodeReview R2 F2：INCR 因超时/连接类故障失败而键值正常（"5"）——探测不可判定为损坏，
+     * 必须原样上抛且不得 DEL（否则重置正常版本计数、破坏「版本只增不减」单调性）。
+     */
+    @Test
+    public void bumpVersion_transientFailure_noDelete_propagates() {
+        when(connection.incr(any(byte[].class))).thenThrow(new RuntimeException("redis timeout"));
+        when(connection.get(any(byte[].class))).thenReturn("5".getBytes(StandardCharsets.UTF_8));
+
+        assertThrows(RuntimeException.class,
+                () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
+
+        verify(connection, times(1)).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        verify(connection, never()).del(any(byte[].class));
+    }
+
+    // ========== 用例 7：探测自身失败 → 不可判定 → 原样上抛不 DEL（CodeReview R2 F2） ==========
+
+    /**
+     * CodeReview R2 F2：探测（GET）也失败时按「不可判定损坏」处理——上抛原始 INCR 异常、
+     * 不得 DEL（宁过度保守不误删正常键）。
+     */
+    @Test
+    public void bumpVersion_probeFails_treatedAsUndecidable() {
+        RuntimeException incrFailure = new RuntimeException("incr timeout");
+        when(connection.incr(any(byte[].class))).thenThrow(incrFailure);
+        when(connection.get(any(byte[].class))).thenThrow(new RuntimeException("get timeout"));
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
+
+        assertSame(incrFailure, thrown, "不可判定时必须原样上抛原始 INCR 异常（不 DEL、不重试）");
+        verify(connection, times(1)).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        verify(connection, never()).del(any(byte[].class));
+    }
+
+}

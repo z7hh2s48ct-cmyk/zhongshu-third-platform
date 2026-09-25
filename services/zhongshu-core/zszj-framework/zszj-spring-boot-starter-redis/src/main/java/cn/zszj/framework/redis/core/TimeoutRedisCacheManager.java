@@ -2,6 +2,7 @@ package cn.zszj.framework.redis.core;
 
 import cn.hutool.core.util.NumberUtil;
 import cn.hutool.core.util.StrUtil;
+import org.springframework.cache.Cache;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.cache.RedisCache;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
@@ -9,6 +10,10 @@ import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.cache.RedisCacheWriter;
 
 import java.time.Duration;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * 支持自定义过期时间的 {@link RedisCacheManager} 实现类
@@ -22,8 +27,38 @@ public class TimeoutRedisCacheManager extends RedisCacheManager {
 
     private static final String SPLIT = "#";
 
+    /**
+     * ZS-PERM-004.C：驱逐失败记录点（null = 未装配/白名单空，非受管路径零变化）。
+     */
+    private final CacheEvictionFailureRecorder evictionFailureRecorder;
+
+    /**
+     * ZS-PERM-004.C：版本护栏（null = 未装配/白名单空，非受管路径零变化）。
+     */
+    private final CacheVersionGuard cacheVersionGuard;
+
+    /**
+     * ZS-PERM-004.C：一致性受管缓存白名单——命中者装配「补偿记录 + 版本护栏」，
+     * 未命中者与现状行为完全一致。
+     */
+    private final Set<String> consistencyGuardedCacheNames;
+
     public TimeoutRedisCacheManager(RedisCacheWriter cacheWriter, RedisCacheConfiguration defaultCacheConfiguration) {
+        this(cacheWriter, defaultCacheConfiguration, null, null, Collections.emptySet());
+    }
+
+    /**
+     * ZS-PERM-004.C：带补偿/版本护栏的构造（{@code ZszjCacheAutoConfiguration} 装配入口）。
+     */
+    public TimeoutRedisCacheManager(RedisCacheWriter cacheWriter, RedisCacheConfiguration defaultCacheConfiguration,
+                                    CacheEvictionFailureRecorder evictionFailureRecorder,
+                                    CacheVersionGuard cacheVersionGuard,
+                                    Collection<String> consistencyGuardedCacheNames) {
         super(cacheWriter, defaultCacheConfiguration);
+        this.evictionFailureRecorder = evictionFailureRecorder;
+        this.cacheVersionGuard = cacheVersionGuard;
+        this.consistencyGuardedCacheNames = consistencyGuardedCacheNames == null
+                ? Collections.emptySet() : new HashSet<>(consistencyGuardedCacheNames);
     }
 
     @Override
@@ -90,9 +125,15 @@ public class TimeoutRedisCacheManager extends RedisCacheManager {
      * 最终链为 TransactionAwareCacheDecorator → RetryEvictCache → RedisCache，
      * 事务内 evict/clear 延迟到 afterCommit 后仍落在 RetryEvictCache 上，重试与证据由此生效。
      * （codex r2 修正：此前包装在 getCache 外侧，afterCommit 直接调底层 RedisCache 绕过重试。）
+     *
+     * <p>ZS-PERM-004.C：{@code cache.getName()} 此时已是剥离 {@code #ttl} 后的实际缓存名——
+     * 命中白名单的缓存装配「补偿记录 + 版本护栏」，未命中者传 null/null（非受管=现状链行为）。
      */
     @Override
-    protected org.springframework.cache.Cache decorateCache(org.springframework.cache.Cache cache) {
+    protected Cache decorateCache(Cache cache) {
+        if (consistencyGuardedCacheNames.contains(cache.getName())) {
+            return super.decorateCache(new RetryEvictCache(cache, evictionFailureRecorder, cacheVersionGuard));
+        }
         return super.decorateCache(new RetryEvictCache(cache));
     }
 }
