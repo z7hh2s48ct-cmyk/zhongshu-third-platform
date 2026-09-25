@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：350
+# 端点总数：351
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -133,6 +133,7 @@ GET|/admin-api/system/area/tree|ADMIN|AUTHENTICATED|-|system|AreaController
 GET|/admin-api/system/audit-event/page|ADMIN|PERMISSION|system:audit:query|system|AuditEventController
 GET|/admin-api/system/auth/get-permission-info|ADMIN|AUTHENTICATED|-|system|AuthController
 GET|/admin-api/system/auth/social-auth-redirect|ADMIN|ANONYMOUS|-|system|AuthController
+GET|/admin-api/system/cross-org-visit/my-targets|ADMIN|AUTHENTICATED|-|system|CrossOrgVisitController
 GET|/admin-api/system/dept/get|ADMIN|PERMISSION|system:dept:query|system|DeptController
 GET|/admin-api/system/dept/list-all-simple|ADMIN|AUTHENTICATED|-|system|DeptController
 GET|/admin-api/system/dept/list|ADMIN|PERMISSION|system:dept:query|system|DeptController
