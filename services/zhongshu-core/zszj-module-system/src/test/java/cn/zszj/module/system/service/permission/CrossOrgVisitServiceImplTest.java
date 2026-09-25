@@ -8,6 +8,7 @@ import cn.zszj.framework.common.biz.system.permission.dto.CrossOrgVisitDecisionD
 import cn.zszj.framework.common.biz.system.permission.dto.OrgDataPermissionRespDTO;
 import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
+import cn.zszj.module.system.controller.admin.permission.vo.crossorgvisit.CrossOrgVisitMyTargetsRespVO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
 import cn.zszj.module.system.dal.dataobject.permission.CrossOrgVisitGrantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
@@ -33,6 +34,7 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.CROSS_ORG_VISIT_VAL
 import static cn.zszj.module.system.enums.ErrorCodeConstants.CROSS_ORG_VISIT_VISITOR_NOT_PLATFORM;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
@@ -59,6 +61,7 @@ public class CrossOrgVisitServiceImplTest extends BaseDbUnitTest {
     private static final Long VISITOR_USER_ID = 104L;
     private static final Long HOME_TENANT_ID = 1L;
     private static final Long TARGET_TENANT_ID = 2L;
+    private static final Long TARGET_TENANT_ID_2 = 3L;
     private static final Long ORG_A = 9001L;
     private static final Long ORG_B = 9002L;
     private static final String ACTION_QUERY = "system:user:query";
@@ -399,6 +402,133 @@ public class CrossOrgVisitServiceImplTest extends BaseDbUnitTest {
         assertTrue(msg.getDetail().containsKey("requestedFields"));
     }
 
+    // ========== 我的授权目标列表（ZS-CLIENT-002.B：获批业务组织导航的数据源） ==========
+
+    @Test
+    public void testListMyAuthorizedTargets_notPlatformReturnsEmpty() {
+        // 非显式平台角色（D-09 资格门）：不返回任何可切换目标；登录租户信息仍回传
+        givenPlatformRole(false);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+        insertGrant(g -> g.allowedActions(List.of(ACTION_QUERY)));
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertNotNull(resp);
+        assertEquals(HOME_TENANT_ID, resp.getLoginTenantId());
+        assertEquals("总部租户", resp.getLoginTenantName());
+        assertNotNull(resp.getTargets());
+        assertTrue(resp.getTargets().isEmpty());
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_returnsActiveTargets() {
+        LocalDateTime validTo = LocalDateTime.now().plusDays(2);
+        insertGrant(g -> g.targetOrgIds(List.of(ORG_A)).allowedActions(List.of(ACTION_QUERY)).validTo(validTo));
+        givenPlatformRole(true);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+        givenTenant(TARGET_TENANT_ID, "目标租户", CommonStatusEnum.ENABLE);
+        givenOrg(ORG_A, CommonStatusEnum.ENABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertEquals(1, resp.getTargets().size());
+        CrossOrgVisitMyTargetsRespVO.TargetVO target = resp.getTargets().get(0);
+        assertEquals(TARGET_TENANT_ID, target.getTenantId());
+        assertEquals("目标租户", target.getTenantName());
+        assertEquals(List.of(ORG_A), target.getTargetOrgIds());
+        assertNotNull(target.getValidTo());
+        assertTrue(target.getValidTo().isAfter(LocalDateTime.now()));
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_skipsRevokedAndExpired() {
+        // 目标2 最新记录已撤销；目标3 已过期 —— 均不得出现（与 authorizeVisit 拒绝维度对齐）
+        insertGrant(g -> g.status(CrossOrgVisitStatusEnum.REVOKED.getStatus()).allowedActions(List.of(ACTION_QUERY)));
+        insertGrant(g -> g.targetTenantId(TARGET_TENANT_ID_2)
+                .validTo(LocalDateTime.now().minusDays(1)).allowedActions(List.of(ACTION_QUERY)));
+        givenPlatformRole(true);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertTrue(resp.getTargets().isEmpty());
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_skipsDisabledOrMissingTenant() {
+        // 目标2 租户停用；目标3 租户不存在 —— 均不得出现
+        insertGrant(g -> g.allowedActions(List.of(ACTION_QUERY)));
+        insertGrant(g -> g.targetTenantId(TARGET_TENANT_ID_2).allowedActions(List.of(ACTION_QUERY)));
+        givenPlatformRole(true);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+        givenTenant(TARGET_TENANT_ID, "停用租户", CommonStatusEnum.DISABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertTrue(resp.getTargets().isEmpty());
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_dropsTargetWithInvalidOrg() {
+        // 授权组织已停用：整个目标剔除（不得降级为 whole-tenant 全组织放行）
+        insertGrant(g -> g.targetOrgIds(List.of(ORG_A)).allowedActions(List.of(ACTION_QUERY)));
+        givenPlatformRole(true);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+        givenTenant(TARGET_TENANT_ID, "目标租户", CommonStatusEnum.ENABLE);
+        givenOrg(ORG_A, CommonStatusEnum.DISABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertTrue(resp.getTargets().isEmpty());
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_takesLatestPerTarget() {
+        // 同一目标只认最新记录：最新撤销 → 不回退更早的有效记录
+        insertGrant(g -> g.allowedActions(List.of(ACTION_QUERY)));
+        insertGrant(g -> g.status(CrossOrgVisitStatusEnum.REVOKED.getStatus()).allowedActions(List.of(ACTION_QUERY)));
+        givenPlatformRole(true);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+        assertTrue(resp.getTargets().isEmpty());
+
+        // 再发一条新的有效记录 → 目标恢复
+        insertGrant(g -> g.allowedActions(List.of(ACTION_QUERY)));
+        givenTenant(TARGET_TENANT_ID, "目标租户", CommonStatusEnum.ENABLE);
+        resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+        assertEquals(1, resp.getTargets().size());
+        assertEquals(TARGET_TENANT_ID, resp.getTargets().get(0).getTenantId());
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_excludesLoginTenant() {
+        // 防御：目标 == 登录租户的记录不作为跨组织目标（与 authorizeVisit INVALID_REQUEST 对齐）
+        insertGrant(g -> g.targetTenantId(HOME_TENANT_ID).allowedActions(List.of(ACTION_QUERY)));
+        givenPlatformRole(true);
+        givenTenant(HOME_TENANT_ID, "总部租户", CommonStatusEnum.ENABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertTrue(resp.getTargets().isEmpty());
+    }
+
+    @Test
+    public void testListMyAuthorizedTargets_missingLoginTenantTolerated() {
+        // 登录租户记录缺失（容错）：名称可空，不影响授权目标列表
+        insertGrant(g -> g.allowedActions(List.of(ACTION_QUERY)));
+        givenPlatformRole(true);
+        when(tenantService.getTenant(HOME_TENANT_ID)).thenReturn(null);
+        givenTenant(TARGET_TENANT_ID, "目标租户", CommonStatusEnum.ENABLE);
+
+        CrossOrgVisitMyTargetsRespVO resp = crossOrgVisitService.listMyAuthorizedTargets(VISITOR_USER_ID, HOME_TENANT_ID);
+
+        assertEquals(HOME_TENANT_ID, resp.getLoginTenantId());
+        assertNull(resp.getLoginTenantName());
+        assertEquals(1, resp.getTargets().size());
+        assertEquals(TARGET_TENANT_ID, resp.getTargets().get(0).getTenantId());
+    }
+
     // ========== 辅助 ==========
 
     private void assertVisitAudit(String eventType, AuditEventMessage.AuditResult result) {
@@ -449,6 +579,14 @@ public class CrossOrgVisitServiceImplTest extends BaseDbUnitTest {
         tenant.setId(TARGET_TENANT_ID);
         tenant.setStatus(status.getStatus());
         when(tenantService.getTenant(TARGET_TENANT_ID)).thenReturn(tenant);
+    }
+
+    private void givenTenant(Long tenantId, String name, CommonStatusEnum status) {
+        TenantDO tenant = new TenantDO();
+        tenant.setId(tenantId);
+        tenant.setName(name);
+        tenant.setStatus(status.getStatus());
+        when(tenantService.getTenant(tenantId)).thenReturn(tenant);
     }
 
     private void givenOrg(Long orgId, CommonStatusEnum status) {
