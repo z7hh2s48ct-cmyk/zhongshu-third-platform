@@ -110,10 +110,10 @@ public class PermissionCacheConsistencyTest extends BaseDbAndRedisUnitTest {
      * 契约验证（codex r0 P2 改良）：本用例实证本仓库当前装配下（cache advisor 在 tx advisor 外层）
      * 驱逐发生在提交后——「已驱逐、未提交」窗口不存在，他连接回填的旧值在提交后被驱逐清除。
      *
-     * <p><b>已知残余窗口（登记延后）</b>：若他连接在「DB 读完成、缓存写入」间被屏障暂停，且写事务提交
-     * 并完成驱逐后该读线程才把旧值写回缓存——晚到旧值一次驱逐无法清除。彻底闭环需「权限版本校验 /
-     * 防旧值写回」机制，与驱逐失败的可靠补偿（RetryCacheErrorHandler 的 ERROR 证据消费）一并归
-     * ZS-LOGIN-005.B（B05）或独立小卡处置。
+     * <p><b>已知残余窗口（已由 ZS-PERM-004.C 版本校验闭环）</b>：若他连接在「DB 读完成、缓存写入」间
+     * 被屏障暂停，且写事务提交并完成驱逐后该读线程才把旧值写回缓存——命中白名单的受管缓存由
+     * 「evict bump 版本 + put 对比丢弃」拦截晚到旧值；驱逐失败的可靠补偿经 outbox 清单持久化 + 重放。
+     * 残余亚毫秒边界（verify 与 put 之间）与降级路径见 ZS-PERM-004.C 登记（§5）。
      */
     @Test
     public void testUpdateRoleStatus_committedTx_staleBackfillFromOtherConnection_selfHeals() throws Exception {

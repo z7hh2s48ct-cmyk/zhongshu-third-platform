@@ -36,4 +36,17 @@ public final class SystemOutboxEventTypes {
     /** biz_type：刷新令牌（{@code system_oauth2_refresh_token}）。 */
     public static final String BIZ_TYPE_OAUTH2_REFRESH_TOKEN = "oauth2_refresh_token";
 
+    /**
+     * 缓存驱逐失败补偿事件：驱逐重试耗尽后预写，dispatcher 派发至
+     * {@link CacheEvictionCompensationSink} 幂等重放 {@code evict/clear}。
+     *
+     * <p>覆盖 ZS-PERM-004.A 遗留缺口：重试耗尽仅 ERROR 日志无持久化，驱逐失败键可能永久残留
+     * （旧授权条目继续放行）；本事件提供可持久恢复的补偿链路（超限转 DEAD 人工台账）。
+     */
+    public static final String CACHE_EVICTION_COMPENSATION =
+            "zszj.system.cache.eviction-compensation";
+
+    /** biz_type：缓存驱逐失败键清单（biz_id = cacheName:key，CLEAR 时 key 为 {@code __clear__}）。 */
+    public static final String BIZ_TYPE_CACHE_EVICTION = "cache_eviction";
+
 }

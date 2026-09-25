@@ -213,6 +213,18 @@ zszj:
     public-allowed-types: [image/png, image/jpeg, image/gif, image/webp, application/pdf, text/plain]
     max-concurrent-uploads: 32 # 在途上传预算（S3 超时为固定 60s 合同，见 S3FileClient）
 
+--- #################### 权限缓存一致性受管白名单（ZS-PERM-004.C） ####################
+
+# 命中白名单的缓存启用两项能力：① @CacheEvict 失败重试耗尽后持久化补偿事件（outbox 分发重放，
+# 超限转 DEAD 人工台账）；② 版本校验拦截「驱逐后晚到写回」的旧值。默认空 = 与现状完全一致。
+zszj:
+  cache:
+    consistency-guarded-cache-names:
+      - role
+      - user_role_ids
+      - menu_role_ids
+      - permission_menu_ids
+
 --- #################### 文件删除自动补偿与孤儿对象清理（ZS-FILE-005.B） ####################
 
 # 开关/间隔/宽限/保留期/上限均为「保守占位」，待真实对象存储接入与运行数据积累后实测回填；
