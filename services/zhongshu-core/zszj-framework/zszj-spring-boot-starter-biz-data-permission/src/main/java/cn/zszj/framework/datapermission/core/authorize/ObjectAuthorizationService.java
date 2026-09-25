@@ -1,6 +1,7 @@
 package cn.zszj.framework.datapermission.core.authorize;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.zszj.framework.datapermission.core.rule.org.OrgDataPermissionChecker;
 import cn.zszj.framework.security.core.service.SecurityFrameworkService;
 import cn.zszj.framework.security.core.util.CrossOrgVisitScopeHolder;
@@ -31,9 +32,10 @@ import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.excep
  *     <li>动作维：候选动作去重后经状态钩子过滤，再与登录主体功能权限取交集（visit 请求由
  *     {@code SecurityFrameworkServiceImpl} 收敛为 {@code visit.allowedActions}，D6）；
  *     恒返回非 null 集合（空集=无任何动作可用）；</li>
- *     <li>字段维：provider 未声明候选字段 → {@code null}（未启用字段级输出，零变化）；启用后非 visit
- *     全候选（字段等级目录 F0～F3 归 ZS-PERM-003.B），visit 请求逐字段经
- *     {@link CrossOrgVisitScopeHolder#areFieldsAllowed} 收敛（{@code allowedFields} 缺失 fail-closed）。</li>
+ *     <li>字段维：provider 未声明候选字段 → {@code null}（未启用字段级输出，零变化）；候选字段过滤
+ *     null/空白（与动作维同口径）；启用后非 visit 全候选（字段等级目录 F0～F3 归 ZS-PERM-003.B），
+ *     visit 请求逐字段经 {@link CrossOrgVisitScopeHolder#areFieldsAllowed} 收敛（{@code allowedFields}
+ *     缺失 fail-closed）。</li>
  * </ol>
  *
  * <p>执行侧 {@link #checkActionAllowed}/{@link #checkFieldsAllowed} 内部复用 {@link #authorize}，
@@ -49,7 +51,7 @@ public class ObjectAuthorizationService {
     private final OrgDataPermissionChecker orgDataPermissionChecker;
 
     /**
-     * 对象类型 → 扩展点（构造时校验唯一性，重复注册 fail-fast，避免裁决路由歧义）
+     * 对象类型 → 扩展点（构造时校验非空白与唯一性，重复注册 fail-fast，避免裁决路由歧义）
      */
     private final Map<String, ObjectAuthorizationProvider> providerMap;
 
@@ -61,6 +63,10 @@ public class ObjectAuthorizationService {
         Map<String, ObjectAuthorizationProvider> map = new HashMap<>();
         if (CollUtil.isNotEmpty(providers)) {
             for (ObjectAuthorizationProvider provider : providers) {
+                if (StrUtil.isBlank(provider.getObjectType())) {
+                    throw new IllegalStateException("对象授权扩展点 objectType 不能为空: "
+                            + provider.getClass().getName());
+                }
                 if (map.put(provider.getObjectType(), provider) != null) {
                     throw new IllegalStateException("重复注册对象授权扩展点: " + provider.getObjectType());
                 }
@@ -183,7 +189,7 @@ public class ObjectAuthorizationService {
         boolean visit = SecurityFrameworkUtils.skipPermissionCheck();
         Set<String> authorizedFields = new LinkedHashSet<>();
         for (String field : candidates) {
-            if (field == null) {
+            if (field == null || field.isBlank()) {
                 continue;
             }
             if (!visit) {

@@ -18,7 +18,7 @@ import java.util.Collections;
 public interface ObjectAuthorizationProvider {
 
     /**
-     * 对象类型标识（同一容器内唯一，重复注册使装配 fail-fast）。
+     * 对象类型标识（非空白且同一容器内唯一，空白/重复注册使装配 fail-fast）。
      */
     String getObjectType();
 

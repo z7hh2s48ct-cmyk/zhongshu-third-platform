@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -38,11 +39,11 @@ import static org.mockito.Mockito.when;
 /**
  * {@link ObjectAuthorizationService} 的单元测试（ZS-PERM-003.A）。
  *
- * <p>覆盖：扩展点路由与重复注册 fail-fast / 对象维（非 visit 走 org 轴 checker；visit 请求经
+ * <p>覆盖：扩展点路由、空白 objectType 与重复注册 fail-fast / 对象维（非 visit 走 org 轴 checker；visit 请求经
  * {@link CrossOrgVisitScopeHolder} 收敛，无 scope fail-closed 且不落 home checker）/ 动作维（RBAC 交集、
  * 全拒=空集、与 D6 收敛共用真实现）/ 状态维钩子 / 字段维（未声明候选=未启用 null、非 visit 零变化、
- * visit 交集且 allowedFields 缺失 fail-closed）/ 执行侧共用（输出=执行同核、伪造动作不生效、撤权与
- * 状态变更后重新校验、未注册 fail-closed、隐藏字段拒绝、空字段请求=不校验字段维）。
+ * visit 交集且 allowedFields 缺失 fail-closed、空白候选过滤）/ 执行侧共用（输出=执行同核、伪造动作不生效、
+ * 撤权与状态变更后重新校验、未注册 fail-closed、隐藏字段拒绝、空字段请求=不校验字段维、非 visit 候选内通过）。
  *
  * <p>技术夹具为测试内中性对象与 provider，不代表任何商业域（字段等级目录 F0～F3 归 ZS-PERM-003.B，
  * 本卡不定义任何商业字段名/等级）。
@@ -140,6 +141,42 @@ class ObjectAuthorizationServiceTest extends BaseMockitoUnitTest {
 
     }
 
+    /** 候选字段含 null/空白（CodeReview P3-1：字段维过滤与动作维 blank 口径对齐） */
+    static class BlankFieldsProvider implements ObjectAuthorizationProvider {
+
+        @Override
+        public String getObjectType() {
+            return "blank-fields";
+        }
+
+        @Override
+        public Collection<String> getCandidateActions() {
+            return List.of("bf:query");
+        }
+
+        @Override
+        public Collection<String> getCandidateFields() {
+            return Arrays.asList("fieldA", null, " ", "fieldB");
+        }
+
+    }
+
+    /** 可配 objectType 的 provider（CodeReview P3-2：空白 objectType 构造 fail-fast） */
+    static class BlankTypeProvider implements ObjectAuthorizationProvider {
+
+        private final String objectType;
+
+        BlankTypeProvider(String objectType) {
+            this.objectType = objectType;
+        }
+
+        @Override
+        public String getObjectType() {
+            return objectType;
+        }
+
+    }
+
     // ========== 测试辅助 ==========
 
     private ObjectAuthorizationService newService(ObjectAuthorizationProvider... providers) {
@@ -154,9 +191,9 @@ class ObjectAuthorizationServiceTest extends BaseMockitoUnitTest {
         return ObjectAuthorizationRequest.of("demo-object", 100L, null, object);
     }
 
-    /** demo/no-fields/plain 全量候选动作参数域（逐候选查询的完整覆盖域） */
+    /** demo/no-fields/plain/blank-fields 全量候选动作参数域（逐候选查询的完整覆盖域） */
     private static final List<String> ALL_CANDIDATE_ACTIONS = List.of(
-            "demo:query", "demo:update", "demo:delete", "nf:query", "plain:query");
+            "demo:query", "demo:update", "demo:delete", "nf:query", "plain:query", "bf:query");
 
     /**
      * 声明授权表：覆盖全量候选动作参数域（授权动作 strict 放行，其余显式拒绝）。
@@ -489,6 +526,46 @@ class ObjectAuthorizationServiceTest extends BaseMockitoUnitTest {
             }
             // 候选内但被裁的动作执行拒绝（与输出裁剪一致）
             assertServiceException(() -> service.checkActionAllowed(demoRequest(), "demo:update"), FORBIDDEN);
+        }
+    }
+
+    // ========== CodeReview P3 补强（blank 口径对齐 / 构造校验 / 执行侧分支补全） ==========
+
+    @Test // 24. 字段维：候选字段含 null/空白 → 过滤（对齐动作维 blank 口径，P3-1）
+    void authorize_fields_blankCandidates_filtered() {
+        try (MockedStatic<SecurityFrameworkUtils> ignored = mockStatic(SecurityFrameworkUtils.class)) {
+            when(orgDataPermissionChecker.isObjectVisible(100L, null)).thenReturn(true);
+            stubPermissions();
+            ObjectAuthorizationService service = newService(new BlankFieldsProvider());
+
+            ObjectAuthorizationRespDTO resp = service.authorize(
+                    ObjectAuthorizationRequest.of("blank-fields", 100L, null));
+            assertEquals(Set.of("fieldA", "fieldB"), resp.getAuthorizedFields());
+        }
+    }
+
+    @Test // 25. 空白/空 objectType：构造 fail-fast（null 键不得静默注册，P3-2）
+    void constructor_blankObjectType_failFast() {
+        assertThrows(IllegalStateException.class, () -> newService(new BlankTypeProvider(null)));
+        assertThrows(IllegalStateException.class, () -> newService(new BlankTypeProvider(" ")));
+    }
+
+    @Test // 26. 执行侧字段维：未注册对象类型 → fail-closed 拒绝（P3-3）
+    void checkFields_unknownObjectType_forbidden() {
+        ObjectAuthorizationService service = newService(new DemoProvider());
+
+        assertServiceException(() -> service.checkFieldsAllowed(
+                ObjectAuthorizationRequest.of("unknown-type", 100L, null), Set.of("fieldA")), FORBIDDEN);
+    }
+
+    @Test // 27. 执行侧字段维（非 visit）：候选内字段通过 / 候选外字段拒绝（P3-3）
+    void checkFields_nonVisit_candidatesPass() {
+        try (MockedStatic<SecurityFrameworkUtils> ignored = mockStatic(SecurityFrameworkUtils.class)) {
+            when(orgDataPermissionChecker.isObjectVisible(100L, null)).thenReturn(true);
+            ObjectAuthorizationService service = newService(new DemoProvider());
+
+            assertDoesNotThrow(() -> service.checkFieldsAllowed(demoRequest(), Set.of("fieldA", "fieldC")));
+            assertServiceException(() -> service.checkFieldsAllowed(demoRequest(), Set.of("fieldD")), FORBIDDEN);
         }
     }
 
