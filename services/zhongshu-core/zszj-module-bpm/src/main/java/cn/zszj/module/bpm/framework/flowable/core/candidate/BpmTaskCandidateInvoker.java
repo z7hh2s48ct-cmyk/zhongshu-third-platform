@@ -113,7 +113,8 @@ public class BpmTaskCandidateInvoker {
             if (CollUtil.isEmpty(userIds)) {
                 userIds = getCandidateStrategy(BpmTaskCandidateStrategyEnum.ASSIGN_EMPTY.getStrategy())
                         .calculateUsersByTask(execution, param);
-                // ASSIGN_EMPTY 策略，不需要移除被禁用的用户。原因是，再移除，可能会出现更没审批人了！！！
+                // 兜底补充的候选人（如发起人本人、管理员等固定用户）仍需移除被禁用的用户，避免通过停用账号补位
+                removeDisableUsers(userIds);
             }
 
             // 3. 移除发起人的用户
@@ -153,7 +154,8 @@ public class BpmTaskCandidateInvoker {
         if (CollUtil.isEmpty(userIds)) {
             userIds = getCandidateStrategy(BpmTaskCandidateStrategyEnum.ASSIGN_EMPTY.getStrategy())
                     .calculateUsersByActivity(bpmnModel, activityId, param, startUserId, processDefinitionId, processVariables);
-            // ASSIGN_EMPTY 策略，不需要移除被禁用的用户。原因是，再移除，可能会出现更没审批人了！！！
+            // 兜底补充的候选人（如发起人本人、管理员等固定用户）仍需移除被禁用的用户，避免通过停用账号补位
+            removeDisableUsers(userIds);
         }
 
         // 3. 移除发起人的用户

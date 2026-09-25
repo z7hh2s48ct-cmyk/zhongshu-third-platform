@@ -488,10 +488,8 @@ public class BpmTaskServiceImplSecurityTest extends BaseMockitoUnitTest {
     public void testDeleteSignTask_notParticipant_throw() {
         // mock 数据
         Task task = mock(Task.class);
-        when(task.getId()).thenReturn("t1");
         when(task.getAssignee()).thenReturn("2");
         when(task.getParentTaskId()).thenReturn("10");
-        when(task.getProcessInstanceId()).thenReturn("p1");
         TaskQuery query = mock(TaskQuery.class);
         mockGetTaskQuery(query, "t1", task);
         Task parentTask = mock(Task.class);

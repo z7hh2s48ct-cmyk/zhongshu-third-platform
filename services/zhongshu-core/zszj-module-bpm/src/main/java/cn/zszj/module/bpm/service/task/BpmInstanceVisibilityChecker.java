@@ -1,10 +1,14 @@
 package cn.zszj.module.bpm.service.task;
 
+import cn.hutool.core.util.StrUtil;
 import cn.zszj.module.bpm.dal.mysql.task.BpmProcessInstanceCopyMapper;
 import jakarta.annotation.Resource;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.springframework.stereotype.Component;
+
+import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static cn.zszj.module.bpm.enums.ErrorCodeConstants.PROCESS_INSTANCE_QUERY_FAIL_NOT_VISIBLE;
 
 /**
  * 流程实例对象可见性校验器
@@ -28,7 +32,9 @@ public class BpmInstanceVisibilityChecker {
      * @param processInstance 流程实例
      */
     public void checkProcessInstanceVisible(Long loginUserId, HistoricProcessInstance processInstance) {
-        // TODO BPM-002（RED）：可见性校验暂未启用
+        if (!isProcessInstanceVisible(loginUserId, processInstance)) {
+            throw exception(PROCESS_INSTANCE_QUERY_FAIL_NOT_VISIBLE);
+        }
     }
 
     /**
@@ -42,8 +48,27 @@ public class BpmInstanceVisibilityChecker {
      * @return 是否可见
      */
     public boolean isProcessInstanceVisible(Long loginUserId, HistoricProcessInstance processInstance) {
-        // TODO BPM-002（RED）：可见性校验暂未启用
-        return true;
+        // 内部调用（loginUserId 为空），跳过校验
+        if (loginUserId == null) {
+            return true;
+        }
+        // 1. 流程发起人，可见
+        if (StrUtil.equals(String.valueOf(loginUserId), processInstance.getStartUserId())) {
+            return true;
+        }
+        // 2. 流程历史任务的参与人（审批人、拥有者），可见
+        String processInstanceId = processInstance.getId();
+        String userIdStr = String.valueOf(loginUserId);
+        if (historyService.createHistoricTaskInstanceQuery().processInstanceId(processInstanceId)
+                .taskAssignee(userIdStr).count() > 0) {
+            return true;
+        }
+        if (historyService.createHistoricTaskInstanceQuery().processInstanceId(processInstanceId)
+                .taskOwner(userIdStr).count() > 0) {
+            return true;
+        }
+        // 3. 流程抄送人，可见
+        return processInstanceCopyMapper.selectCountByUserIdAndProcessInstanceId(loginUserId, processInstanceId) > 0;
     }
 
 }
