@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
 *
 * @author 芋道源码
 */
-@Import(NotifyMessageServiceImpl.class)
+@Import({NotifyMessageServiceImpl.class, NotifyMessageOrgAuthorizer.class})
 public class NotifyMessageServiceImplTest extends BaseDbUnitTest {
 
     @Resource
@@ -109,8 +109,10 @@ public class NotifyMessageServiceImplTest extends BaseDbUnitTest {
     @Test
     public void testGetNotifyMessage() {
         // mock 数据
-        NotifyMessageDO dbNotifyMessage = randomPojo(NotifyMessageDO.class,
-                o -> o.setTemplateParams(randomTemplateParams()));
+        NotifyMessageDO dbNotifyMessage = randomPojo(NotifyMessageDO.class, o -> {
+            o.setTemplateParams(randomTemplateParams());
+            o.setOrganizationId(null); // ZS-MSG-003.C：显式置空 org 归属，保持既有基线（org 门按「本人无组织列消息」放行）
+        });
         notifyMessageMapper.insert(dbNotifyMessage);
         // 准备参数
         Long id = dbNotifyMessage.getId();

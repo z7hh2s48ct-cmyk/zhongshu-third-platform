@@ -9,6 +9,7 @@ import cn.zszj.module.system.controller.admin.notify.vo.message.NotifyMessageLan
 import cn.zszj.module.system.dal.dataobject.notify.NotifyMessageDO;
 import cn.zszj.module.system.dal.mysql.notify.NotifyMessageMapper;
 import cn.zszj.module.system.enums.ErrorCodeConstants;
+import cn.zszj.module.system.service.notify.NotifyMessageOrgAuthorizer;
 import cn.zszj.module.system.service.notify.landing.NotifyLandingServiceTest.FixtureConfig.DisabledModuleLandingProvider;
 import cn.zszj.module.system.service.notify.landing.NotifyLandingServiceTest.FixtureConfig.RevokedLandingProvider;
 import cn.zszj.module.system.service.notify.landing.NotifyLandingServiceTest.FixtureConfig.WebAndMobileLandingProvider;
@@ -37,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 不得宣称复用 ZS-DB-018 既有 PG 回归——其用例未覆盖消息表与本接口）。本测试覆盖应用层
  * fail-closed 防线（租户缺失/存在性/归属/注册/模块/重授权/端描述）。
  */
-@Import({NotifyLandingServiceImpl.class, NotifyLandingServiceTest.FixtureConfig.class})
+@Import({NotifyLandingServiceImpl.class, NotifyMessageOrgAuthorizer.class, NotifyLandingServiceTest.FixtureConfig.class})
 public class NotifyLandingServiceTest extends BaseDbUnitTest {
 
     private static final Long USER_ID = 1L;
@@ -95,6 +96,7 @@ public class NotifyLandingServiceTest extends BaseDbUnitTest {
             o.setTemplateCode(WebAndMobileLandingProvider.TEMPLATE_CODE);
             o.setTemplateContent("机密业务正文-SECRET-BODY-1024");
             o.setTemplateParams(Map.of("token", "机密参数-SECRET-PARAM", "bizId", 1024));
+            o.setOrganizationId(null); // ZS-MSG-003.C：显式置空 org 归属，保持既有基线（org 门按「本人无组织列消息」放行）
         });
         notifyMessageMapper.insert(message);
         NotifyMessageLandingRespVO result = notifyLandingService.resolveMessageLanding(
@@ -208,6 +210,7 @@ public class NotifyLandingServiceTest extends BaseDbUnitTest {
             o.setUserType(userType);
             o.setTemplateCode(templateCode);
             o.setTemplateParams(params);
+            o.setOrganizationId(null); // ZS-MSG-003.C：显式置空 org 归属，保持既有基线（org 门按「本人无组织列消息」放行）
         });
         notifyMessageMapper.insert(message);
         return message;
