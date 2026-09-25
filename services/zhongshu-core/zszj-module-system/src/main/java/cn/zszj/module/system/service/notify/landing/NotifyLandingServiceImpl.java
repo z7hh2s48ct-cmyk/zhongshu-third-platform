@@ -6,6 +6,7 @@ import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.module.system.controller.admin.notify.vo.message.NotifyMessageLandingRespVO;
 import cn.zszj.module.system.dal.dataobject.notify.NotifyMessageDO;
 import cn.zszj.module.system.dal.mysql.notify.NotifyMessageMapper;
+import cn.zszj.module.system.service.notify.NotifyMessageOrgAuthorizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +33,8 @@ import static cn.zszj.module.system.enums.ErrorCodeConstants.NOTIFY_LANDING_TENA
  *       （技术收件箱边界：他人消息不能解析落点、不泄露他人可触达的业务入口）。
  *       r0-P3：NOT_FOUND 与 ACCESS_DENIED 的对外文案统一（防同租户消息 ID 存在性探测），
  *       错误码保持区分供内部日志与本卡验收证据；</li>
+ *   <li><b>org 归属门</b>（ZS-MSG-003.C）：消息 org 归属不在当前主体授权范围（组织授权收缩 /
+ *       跨组织 visit 目标外）→ REVOKED，旧消息不得借落点进入详情、下载附件；</li>
  *   <li><b>落点注册判定</b>：模板编码未注册 → NOT_REGISTERED（未知消息类型明确不可用）；
  *       归属模块未启用（{@link ModuleCatalog} 运行白名单）→ MODULE_DISABLED，
  *       且不再触碰业务（关闭模块的业务 Bean 不在，重读无意义）；</li>
@@ -53,6 +56,10 @@ public class NotifyLandingServiceImpl implements NotifyLandingService {
     @Resource
     private NotifyLandingRegistry landingRegistry;
 
+    /** org 轴对象门（ZS-MSG-003.C）：落点解析前裁决消息 org 归属是否在当前主体授权范围。 */
+    @Resource
+    private NotifyMessageOrgAuthorizer notifyMessageOrgAuthorizer;
+
     @Override
     public NotifyMessageLandingRespVO resolveMessageLanding(Long messageId, Long userId, Integer userType,
                                                             NotifyLandingClient client) {
@@ -67,6 +74,13 @@ public class NotifyLandingServiceImpl implements NotifyLandingService {
             log.info("[resolveMessageLanding][消息({}) 归属不匹配：消息 userId/userType={}/{}, 登录主体 {}/{}]",
                     messageId, message.getUserId(), message.getUserType(), userId, userType);
             throw exception(NOTIFY_LANDING_ACCESS_DENIED);
+        }
+        // ZS-MSG-003.C：org 轴对象门（归属校验后、注册判定前——不向越界者泄露「未注册/模块关闭」信息）
+        if (!notifyMessageOrgAuthorizer.isObjectAllowed(message)) {
+            log.info("[resolveMessageLanding][消息({}) org 归属({}) 不在当前主体授权范围，落点判不可用]",
+                    messageId, message.getOrganizationId());
+            return NotifyMessageLandingRespVO.unavailable(NotifyLandingUnavailable.REVOKED,
+                    "消息所属业务组织已不在授权范围");
         }
         NotifyLandingProvider provider = landingRegistry.getByTemplateCode(message.getTemplateCode());
         if (provider == null) {

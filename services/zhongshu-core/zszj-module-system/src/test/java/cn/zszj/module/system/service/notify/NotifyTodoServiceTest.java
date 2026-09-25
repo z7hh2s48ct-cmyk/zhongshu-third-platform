@@ -52,8 +52,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 手动构建 JdbcTemplate/TransactionTemplate（BaseDbUnitTest 不直接暴露二者为 Bean）+
  * TransactionTemplate 显式控制事务（applyTransition 须在业务事务内——Inbox MANDATORY）+ JdbcTemplate 直查断言。
  */
-@Import({NotifyTodoServiceImpl.class, NotifyMessageServiceImpl.class, DefaultTodoStatusMapper.class,
-        JdbcConsumerInboxPort.class})
+@Import({NotifyTodoServiceImpl.class, NotifyMessageServiceImpl.class, NotifyMessageOrgAuthorizer.class,
+        DefaultTodoStatusMapper.class, JdbcConsumerInboxPort.class})
 public class NotifyTodoServiceTest extends BaseDbUnitTest {
 
     @Resource
