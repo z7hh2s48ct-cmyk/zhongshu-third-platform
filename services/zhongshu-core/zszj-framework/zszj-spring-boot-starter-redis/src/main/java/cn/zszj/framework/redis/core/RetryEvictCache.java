@@ -211,8 +211,9 @@ public class RetryEvictCache implements Cache {
             } catch (RuntimeException ex) {
                 if (attempt >= MAX_RETRIES) {
                     log.error("[boundedRetry][{} 重试 {} 次仍失败——旧授权条目可能残留，鉴权可能继续放行！"
-                                    + "修复动作：人工 DEL 该键/清空该 cache 或等待 TTL；失败键清单已持久化"
-                                    + "（ZS-PERM-004.C），自动重放依赖调度接线（D-07）；DEAD 兜底见 JOB-004 人工台账]",
+                                    + "修复动作：人工 DEL 该键/清空该 cache 或等待 TTL；失败键清单记录"
+                                    + "见紧随其后的 record 日志（可能降级为仅日志）；自动重放依赖调度接线（D-07）；"
+                                    + "DEAD 兜底见 JOB-004 人工台账]",
                             desc, MAX_RETRIES, ex);
                     recordFailure(operation, key, ex);
                     if (CacheEvictionReplayContext.isInReplay()) {

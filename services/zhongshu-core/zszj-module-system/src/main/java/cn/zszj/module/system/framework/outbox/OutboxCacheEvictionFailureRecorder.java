@@ -24,8 +24,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>为什么需要：驱逐失败发生在事务提交后的 afterCommit 路径（无事务上下文），
  * {@code ReliableEventPort.append} 的 MANDATORY 传播与租户强制无法直接满足——
  * 本实现自开独立短事务（<b>REQUIRES_NEW</b>：afterCommit 窗口下 ConnectionHolder 仍绑定且
- * {@code isTransactionActive()==true}，REQUIRED 会静默并入已提交事务导致写入随连接归还丢失，
- * CodeReview R1 P1）+ port 懒解析（{@code ObjectProvider}，infra 缺位时降级为仅日志）。
+ * {@code isTransactionActive()==true}，REQUIRED 会静默并入已提交事务——参与者无显式 commit，
+ * 落库仅依赖池/驱动的连接归还副作用兜底（H2/Druid 下为 setAutoCommit(true) 隐式提交，非合同
+ * 保证；CodeReview R1 P1，行为判别锁见集成用例 32）+ port 懒解析（{@code ObjectProvider}，
+ * infra 缺位时降级为仅日志）。
  *
  * <p>链路：重试耗尽 → record → 进程内去重（防双层重试重复记录）→ outbox 事件预写（PENDING）→
  * dispatcher 重放 → {@link CacheEvictionCompensationSink} 完成最终驱逐；超限转 DEAD 人工台账。

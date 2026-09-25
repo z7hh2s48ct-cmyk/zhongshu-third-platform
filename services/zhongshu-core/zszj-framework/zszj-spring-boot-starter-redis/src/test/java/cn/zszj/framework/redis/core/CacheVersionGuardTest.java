@@ -11,10 +11,12 @@ import org.springframework.data.redis.core.RedisTemplate;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -100,20 +102,23 @@ public class CacheVersionGuardTest {
     // ========== 用例 4：版本值损坏 → DEL 后重试 INCR（一次性自愈） ==========
 
     /**
-     * CodeReview R1 P3-2：键存在但值非数值（人工误写）→ INCR 报错必须 DEL 损坏键后重试一次 INCR
-     * （不自愈则 bump 在 delegate.evict 之前抛错，受管缓存驱逐永久失效）。
+     * CodeReview R1 P3-2：键存在但值非数值（人工误写）→ INCR 报错，探测确认损坏后必须 DEL 损坏键
+     * 再重试一次 INCR（不自愈则 bump 在 delegate.evict 之前抛错，受管缓存驱逐永久失效）；
+     * CodeReview R2 F2：探测（GET）命中损坏值才允许 DEL——命令序 incr → get → del → incr。
      */
     @Test
     public void bumpVersion_corruptedValue_deletesAndReincs() {
         when(connection.incr(any(byte[].class)))
                 .thenThrow(new RuntimeException("ERR value is not an integer or out of range"))
                 .thenReturn(1L);
+        when(connection.get(any(byte[].class))).thenReturn("corrupted".getBytes(StandardCharsets.UTF_8));
         when(connection.del(any(byte[].class))).thenReturn(1L);
 
         new CacheVersionGuard(redisTemplate, "").bumpVersion("role");
 
         InOrder inOrder = inOrder(connection);
         inOrder.verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        inOrder.verify(connection).get("__cachever__:role".getBytes(StandardCharsets.UTF_8));
         inOrder.verify(connection).del("__cachever__:role".getBytes(StandardCharsets.UTF_8));
         inOrder.verify(connection).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
     }
@@ -121,16 +126,55 @@ public class CacheVersionGuardTest {
     // ========== 用例 5：自愈重试仍失败 → 原样上抛（由调用方有界重试兜底） ==========
 
     /**
-     * 保护边界：DEL 后 INCR 仍失败（如连接故障）→ 必须上抛（不得静默吞），
+     * 保护边界：探测确认损坏后 DEL 再 INCR 仍失败（如连接故障）→ 必须上抛（不得静默吞），
      * 由 {@code RetryEvictCache} 有界重试与失败键清单补偿兜底。
      */
     @Test
     public void bumpVersion_secondIncrFails_propagates() {
         when(connection.incr(any(byte[].class))).thenThrow(new RuntimeException("redis down"));
+        when(connection.get(any(byte[].class))).thenReturn("corrupted".getBytes(StandardCharsets.UTF_8));
         when(connection.del(any(byte[].class))).thenReturn(1L);
 
         assertThrows(RuntimeException.class,
                 () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
+    }
+
+    // ========== 用例 6：瞬时故障（值正常）→ 原样上抛且不得 DEL（CodeReview R2 F2） ==========
+
+    /**
+     * CodeReview R2 F2：INCR 因超时/连接类故障失败而键值正常（"5"）——探测不可判定为损坏，
+     * 必须原样上抛且不得 DEL（否则重置正常版本计数、破坏「版本只增不减」单调性）。
+     */
+    @Test
+    public void bumpVersion_transientFailure_noDelete_propagates() {
+        when(connection.incr(any(byte[].class))).thenThrow(new RuntimeException("redis timeout"));
+        when(connection.get(any(byte[].class))).thenReturn("5".getBytes(StandardCharsets.UTF_8));
+
+        assertThrows(RuntimeException.class,
+                () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
+
+        verify(connection, times(1)).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        verify(connection, never()).del(any(byte[].class));
+    }
+
+    // ========== 用例 7：探测自身失败 → 不可判定 → 原样上抛不 DEL（CodeReview R2 F2） ==========
+
+    /**
+     * CodeReview R2 F2：探测（GET）也失败时按「不可判定损坏」处理——上抛原始 INCR 异常、
+     * 不得 DEL（宁过度保守不误删正常键）。
+     */
+    @Test
+    public void bumpVersion_probeFails_treatedAsUndecidable() {
+        RuntimeException incrFailure = new RuntimeException("incr timeout");
+        when(connection.incr(any(byte[].class))).thenThrow(incrFailure);
+        when(connection.get(any(byte[].class))).thenThrow(new RuntimeException("get timeout"));
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> new CacheVersionGuard(redisTemplate, "").bumpVersion("role"));
+
+        assertSame(incrFailure, thrown, "不可判定时必须原样上抛原始 INCR 异常（不 DEL、不重试）");
+        verify(connection, times(1)).incr("__cachever__:role".getBytes(StandardCharsets.UTF_8));
+        verify(connection, never()).del(any(byte[].class));
     }
 
 }

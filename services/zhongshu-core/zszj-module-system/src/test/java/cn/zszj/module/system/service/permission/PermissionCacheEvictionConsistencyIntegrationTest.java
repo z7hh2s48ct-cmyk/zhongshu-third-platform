@@ -7,6 +7,7 @@ import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.framework.test.core.ut.BaseDbAndRedisUnitTest;
 import cn.zszj.module.infra.framework.outbox.JdbcReliableEventPort;
 import cn.zszj.module.infra.framework.outbox.OutboxDispatcherService;
+import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
 import cn.zszj.module.system.framework.outbox.CacheEvictionCompensationSink;
 import cn.zszj.module.system.framework.outbox.OutboxCacheEvictionFailureRecorder;
 import cn.zszj.module.system.framework.outbox.SystemOutboxEventTypes;
@@ -17,15 +18,20 @@ import org.junit.jupiter.api.Test;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,6 +79,8 @@ public class PermissionCacheEvictionConsistencyIntegrationTest extends BaseDbAnd
     private DataSource dataSource;
     @Resource
     private PlatformTransactionManager transactionManager;
+    @Resource
+    private ApplicationContext applicationContext;
 
     private JdbcTemplate jdbcTemplate;
 
@@ -266,6 +274,75 @@ public class PermissionCacheEvictionConsistencyIntegrationTest extends BaseDbAnd
         Integer retryCount = jdbcTemplate.queryForObject(
                 "SELECT retry_count FROM outbox_event WHERE event_type = ?", Integer.class, EVENT_TYPE);
         assertEquals(5, retryCount, "5 次失败后 retry_count 必须为 5");
+    }
+
+    // ========== 用例 32：REQUIRES_NEW 行为判别锁（CodeReview R2 F3） ==========
+
+    /**
+     * CodeReview R2 F3：用例 30 在 H2/Druid 下依赖「连接归还副作用」兜底，对 REQUIRED 无判别力——
+     * 本用例以事务管理器代理从行为层判别：afterCommit 窗口内 record 必须以 REQUIRES_NEW 额外开启
+     * 1 个独立事务（新开启事务计数：外层 1 + 记录 1 = 2；REQUIRED 静默并入 → 仅 1）。
+     *
+     * <p>判别口径说明：commit 调用数无法判别——TransactionTemplate 对参与式事务同样调用
+     * commit(status)（processCommit 内部 no-op 不提交），REQUIRES_NEW 与 REQUIRED 均为 2；
+     * 必须以「{@link TransactionStatus#isNewTransaction()} 新开启事务数」判别（探针实测坐实）。
+     */
+    @Test
+    public void afterCommitEvictionFailure_opensIndependentTransaction() {
+        TransactionCountingManager countingTm =
+                new TransactionCountingManager(transactionManager);
+        OutboxCacheEvictionFailureRecorder countingRecorder = new OutboxCacheEvictionFailureRecorder(
+                applicationContext.getBeanProvider(ReliableEventPort.class), countingTm);
+
+        Cache failingRedis = mock(Cache.class);
+        when(failingRedis.getName()).thenReturn("role");
+        doThrow(new RuntimeException("redis down")).when(failingRedis).evict("tx-2");
+        Cache txAwareGuarded = new TransactionAwareCacheDecorator(
+                new RetryEvictCache(failingRedis, countingRecorder, null));
+
+        new TransactionTemplate(countingTm).executeWithoutResult(status -> txAwareGuarded.evict("tx-2"));
+
+        assertEquals(2, countingTm.newTransactionCount(),
+                "afterCommit 窗口内 record 必须以独立事务（REQUIRES_NEW）额外开启：外层 1 个 + 记录 1 个");
+        assertEquals(1L, countEvents("PENDING"), "独立事务显式提交后补偿事件必须恰落库 1 条");
+    }
+
+    /**
+     * 新事务计数代理 TM：委托真实 TM，统计 {@code isNewTransaction} 的开启次数
+     * （CodeReview R2 F3 行为判别锁——参与式 REQUIRED 与 REQUIRES_NEW 的 commit 调用数相同，
+     * 仅「是否新开启事务」可判别静默并入）。
+     */
+    private static final class TransactionCountingManager implements PlatformTransactionManager {
+
+        private final PlatformTransactionManager delegate;
+        private final AtomicInteger newTransactions = new AtomicInteger();
+
+        private TransactionCountingManager(PlatformTransactionManager delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public TransactionStatus getTransaction(TransactionDefinition definition) throws TransactionException {
+            TransactionStatus status = delegate.getTransaction(definition);
+            if (status.isNewTransaction()) {
+                newTransactions.incrementAndGet();
+            }
+            return status;
+        }
+
+        @Override
+        public void commit(TransactionStatus status) throws TransactionException {
+            delegate.commit(status);
+        }
+
+        @Override
+        public void rollback(TransactionStatus status) throws TransactionException {
+            delegate.rollback(status);
+        }
+
+        private int newTransactionCount() {
+            return newTransactions.get();
+        }
     }
 
 }
