@@ -2,6 +2,7 @@ package cn.zszj.module.system.convert.auth;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjUtil;
+import cn.zszj.framework.common.catalog.ModuleCatalog;
 import cn.zszj.framework.common.util.object.BeanUtils;
 import cn.zszj.module.system.api.sms.dto.code.SmsCodeSendReqDTO;
 import cn.zszj.module.system.api.sms.dto.code.SmsCodeUseReqDTO;
@@ -37,6 +38,9 @@ public interface AuthConvert {
                 .permissions(convertSet(menuList, MenuDO::getPermission))
                 // 菜单树
                 .menus(buildMenuTree(menuList))
+                // ZS-CLIENT-002.B：启用模块清单随登录权限信息下发（客户端关闭停用模块的导航落点，
+                // 不自行推导；空角色路径同样携带——本 builder 为唯一出口）
+                .enabledModules(ModuleCatalog.ENABLED_MODULES)
                 .build();
     }
 

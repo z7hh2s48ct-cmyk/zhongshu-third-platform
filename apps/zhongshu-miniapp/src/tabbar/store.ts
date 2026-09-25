@@ -65,10 +65,11 @@ export function isTabbarItemVisible(itemOrIndex?: CustomTabBarItem | number) {
   if (!item) {
     return false
   }
-  // ZS-CLIENT-002.A：TabBar 授权化——入口按路由权限注册表过滤（注册表为单一真相源，
-  // 与 interceptor 直达守卫同源）；无对应服务端权限的受保护入口不渲染（如未授权审批/通讯录）。
+  // ZS-CLIENT-002.A/B：TabBar 授权化——入口按路由权限注册表过滤（注册表为单一真相源，
+  // 与 interceptor 直达守卫同源）；无对应服务端权限 / 模块已停用的受保护入口不渲染
+  // （如未授权审批、通讯录、停用模块入口）。
   const userStore = useUserStore()
-  if (!hasRouteAccess(item.pagePath, userStore.permissions ?? [])) {
+  if (!hasRouteAccess(item.pagePath, userStore.permissions ?? [], userStore.enabledModules ?? null)) {
     return false
   }
   if (!item.roles?.length) {

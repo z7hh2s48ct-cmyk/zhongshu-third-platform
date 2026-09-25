@@ -96,10 +96,11 @@ export const navigateToInterceptor = {
     // 不管黑白名单，登录了就直接去吧（但是当前不能是登录页）
     if (tokenStore.hasLogin) {
       if (path !== LOGIN_PAGE) {
-        // ZS-CLIENT-002.A：服务端授权导航——登录后仍须校验页面授权；无对应权限标识
-        // 不得进入，reLaunch 到 403 落点（与「页面不存在」的 404 区分）。注册表为单一真相源，
-        // 客户端只做服务端下发权限的集合成员判断，不重算业务权限。
-        if (!hasRouteAccess(path, useUserStore().permissions ?? [])) {
+        // ZS-CLIENT-002.A/B：服务端授权导航——登录后仍须校验页面授权（含 CLIENT-002.B 启用模块门）；
+        // 无对应权限标识 / 模块已停用不得进入，reLaunch 到 403 落点（与「页面不存在」的 404 区分）。
+        // 注册表为单一真相源，客户端只做服务端下发权限的集合成员判断，不重算业务权限。
+        const userStore = useUserStore()
+        if (!hasRouteAccess(path, userStore.permissions ?? [], userStore.enabledModules ?? null)) {
           uni.reLaunch({ url: UNAUTHORIZED_PAGE })
           return false // 明确表示阻止原路由继续执行
         }

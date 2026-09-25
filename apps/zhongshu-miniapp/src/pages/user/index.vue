@@ -27,7 +27,8 @@
     <view class="mx-24rpx mt-32rpx">
       <wd-cell-group custom-class="menu-group" border>
         <TenantVisitPicker
-          v-if="tenantEnabled && tenantVisitEnabled && hasAccessByCodes(['system:tenant:visit'])"
+          v-if="showVisitPicker"
+          :options="visitOptions"
           @confirm="handleTenantConfirm"
         >
           <template #default="{ value }">
@@ -81,18 +82,19 @@
 </template>
 
 <script lang="ts" setup>
-import type { TenantVO } from '@/api/login'
 import type { UserProfileVO } from '@/api/system/user/profile'
+import type { VisitSwitchIO, VisitTarget, VisitTenantOption } from '@/utils/tenant-visit'
 import { useDialog } from '@wot-ui/ui/components/wd-dialog'
 import { useToast } from '@wot-ui/ui/components/wd-toast'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref } from 'vue'
+import { getMyVisitTargets } from '@/api/system/cross-org-visit'
 import { getUserProfile } from '@/api/system/user/profile'
-import { useAccess } from '@/hooks/useAccess'
 import { LOGIN_PAGE } from '@/router/config'
 import { useUserStore } from '@/store'
 import { useDictStore } from '@/store/dict'
 import { useTokenStore } from '@/store/token'
+import { buildVisitTenantOptions, performVisitSwitch, planVisitSwitch, resolveStaleVisit } from '@/utils/tenant-visit'
 import TenantVisitPicker from './components/tenant-visit-picker.vue'
 
 definePage({
@@ -106,17 +108,23 @@ const tokenStore = useTokenStore()
 const dictStore = useDictStore()
 const toast = useToast()
 const dialog = useDialog()
-const { hasAccessByCodes } = useAccess()
 const { userInfo } = storeToRefs(userStore)
 const userProfile = ref<UserProfileVO | null>(null) // 用户详细信息
 const tenantEnabled = computed(() => import.meta.env.VITE_APP_TENANT_ENABLE === 'true') // 租户开关
 // ZS-SEC-001.A：跨租户访问能力总开关，默认关闭；关闭时不显示租户切换入口
 const tenantVisitEnabled = computed(() => import.meta.env.VITE_APP_TENANT_VISIT_ENABLE === 'true')
+// ZS-CLIENT-002.B：跨组织访问（获批业务组织导航）——服务端下单的授权目标为唯一数据源
+const visitTargets = ref<VisitTarget[]>([]) // 服务端下发的授权目标
+const visitOptions = ref<VisitTenantOption[]>([]) // 切换选项（登录租户恒为首项）
+const visitLoginTenantId = ref<number | null>(null) // 登录租户编号（切换计划判定基准）
+// 切换入口显隐：仅「获批（服务端返回非空目标列表）」才显示——不再依赖旧粗粒度 system:tenant:visit
+const showVisitPicker = computed(() => tenantEnabled.value && tenantVisitEnabled.value && visitTargets.value.length > 0)
 
 /** 页面加载时获取用户信息 */
 onMounted(async () => {
   userProfile.value = await getUserProfile()
   await userStore.fetchUserInfo()
+  await loadVisitTargets()
 })
 
 /** 跳转到个人资料 */
@@ -149,30 +157,71 @@ function handleGoSettings() {
   uni.navigateTo({ url: '/pages-core/user/settings/index' })
 }
 
-/** 切换当前访问的租户 */
-async function handleTenantConfirm(tenant: TenantVO) {
-  const currentTenantId = userStore.visitTenantId || userStore.tenantId
-  if (String(tenant.id) === String(currentTenantId ?? '')) {
+/**
+ * 加载跨组织访问授权目标（ZS-CLIENT-002.B：服务端为唯一真相源，客户端不做授权推导）。
+ * 未获批 / 加载失败 → 清空目标（不显示切换入口）；失效访问态（授权撤销 / 过期 / 脏状态）→ 清理本地访问态。
+ */
+async function loadVisitTargets() {
+  if (!tenantEnabled.value || !tenantVisitEnabled.value) {
     return
   }
-  const restoreLoginTenant = String(tenant.id) === String(userStore.tenantId ?? '')
+  try {
+    const res = await getMyVisitTargets()
+    if (res.loginTenantId == null) {
+      return
+    }
+    const currentVisitTenantId = userStore.visitTenantId != null ? Number(userStore.visitTenantId) : null
+    const stale = resolveStaleVisit(currentVisitTenantId, res.loginTenantId, res.targets)
+    if (stale) {
+      // 仅清理本地脏状态，不打断当前浏览；下次导航 / 刷新即回到登录租户视野
+      userStore.setVisitTenantId(null)
+    }
+    visitLoginTenantId.value = res.loginTenantId
+    visitTargets.value = res.targets
+    visitOptions.value = buildVisitTenantOptions(
+      res.loginTenantId,
+      res.loginTenantName ?? '',
+      res.targets,
+      stale ? null : currentVisitTenantId,
+    )
+  } catch {
+    visitTargets.value = []
+    visitOptions.value = []
+  }
+}
+
+/** 切换当前访问的租户（获批业务组织导航）：noop 幂等跳过；执行切换并失败回滚，绝不遗留半切态 */
+async function handleTenantConfirm(option: VisitTenantOption) {
+  const loginTenantId = visitLoginTenantId.value
+  if (loginTenantId == null) {
+    return
+  }
+  const currentVisitTenantId = userStore.visitTenantId != null ? Number(userStore.visitTenantId) : null
+  const plan = planVisitSwitch(option.tenantId, loginTenantId, currentVisitTenantId)
+  if (plan.action === 'noop') {
+    return
+  }
   try {
     await dialog.confirm({
       title: '切换租户',
-      msg: restoreLoginTenant
-        ? `确定恢复访问登录租户「${tenant.name}」吗？`
-        : `确定切换至租户「${tenant.name}」吗？切换后业务数据将按该租户展示。`,
+      msg: plan.action === 'restore'
+        ? `确定恢复访问登录租户「${option.name}」吗？`
+        : `确定切换至租户「${option.name}」吗？切换后业务数据将按该租户展示。`,
     })
   } catch {
     return
   }
-  // 访问租户只切换数据上下文，用户与权限仍沿用登录租户
-  userStore.setVisitTenantId(restoreLoginTenant ? null : tenant.id)
-  dictStore.clearDictCache()
-  toast.success(restoreLoginTenant ? '已恢复登录租户' : `已切换至${tenant.name}`)
-  setTimeout(() => {
-    uni.reLaunch({ url: '/pages/index/index' })
-  }, 500)
+  // 访问租户只切换数据上下文，用户与权限仍沿用登录租户；刷新权限失败（授权已撤销）自动回滚
+  const io: VisitSwitchIO = {
+    setVisitTenantId: id => userStore.setVisitTenantId(id),
+    clearDictCache: () => dictStore.clearDictCache(),
+    refreshUserInfo: async () => {
+      await userStore.fetchUserInfo()
+    },
+    reLaunch: url => uni.reLaunch({ url }),
+    toast: message => toast.error(message),
+  }
+  await performVisitSwitch(io, plan)
 }
 
 /** 退出登录 */

@@ -25,6 +25,9 @@ export const useUserStore = defineStore(
     const visitTenantId = ref<string | null>(null) // 当前访问的租户编号
     const roles = ref<string[]>([]) // 角色标识列表
     const permissions = ref<string[]>([]) // 权限标识列表
+    // ZS-CLIENT-002.B：服务端下发的启用模块清单（对齐 ModuleCatalog.ENABLED_MODULES），
+    // 供路由守卫关闭停用模块的导航落点；null = 旧后端未下发（跳过模块门）
+    const enabledModules = ref<string[] | null>(null)
     const favoriteMenus = ref<string[]>([]) // 常用菜单 key 列表
     const recentMenus = ref<string[]>([]) // 最近使用菜单 key 列表（按点击时间倒序）
 
@@ -38,6 +41,7 @@ export const useUserStore = defineStore(
       userInfo.value = val.user
       roles.value = val.roles
       permissions.value = val.permissions
+      enabledModules.value = Array.isArray(val.enabledModules) ? [...val.enabledModules] : null
     }
 
     const setUserAvatar = (avatar: string) => {
@@ -52,6 +56,7 @@ export const useUserStore = defineStore(
       visitTenantId.value = null
       roles.value = []
       permissions.value = []
+      enabledModules.value = null
       uni.removeStorageSync('user')
     }
 
@@ -92,6 +97,7 @@ export const useUserStore = defineStore(
       visitTenantId,
       roles,
       permissions,
+      enabledModules,
       favoriteMenus,
       recentMenus,
       clearUserInfo,
