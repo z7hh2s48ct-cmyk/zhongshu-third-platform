@@ -19,6 +19,8 @@ import { customTabbarList } from '@/tabbar/config'
 const h = vi.hoisted(() => ({
   hasLogin: true,
   permissions: [] as string[],
+  // 服务端下发启用模块清单（CLIENT-002.B）：null = 未下发 → 跳过模块门（兼容旧后端）
+  enabledModules: null as string[] | null,
   // 受控页面表：替代测试环境缺失的 @/pages.json（getAllPages 数据源）；含被 interceptor 存在性校验的业务页
   PAGES: [
     { path: '/pages/index/index' }, // 工作台（公共外壳）
@@ -61,7 +63,7 @@ vi.mock('@/store/token', () => ({
 }))
 
 vi.mock('@/store/user', () => ({
-  useUserStore: () => ({ permissions: h.permissions, roles: [] as string[] }),
+  useUserStore: () => ({ permissions: h.permissions, roles: [] as string[], enabledModules: h.enabledModules }),
 }))
 
 vi.mock('@/tabbar/store', () => ({
@@ -74,6 +76,7 @@ const uni = (globalThis as any).uni
 beforeEach(() => {
   h.hasLogin = true
   h.permissions = []
+  h.enabledModules = null
   uni.reLaunch.mockClear()
   uni.navigateTo.mockClear()
   uni.switchTab?.mockClear?.()
@@ -201,6 +204,111 @@ describe('hasRouteAccess：具体子目录拒绝不被更宽兜底覆盖（r2-P2
   })
 })
 
+// ---------------------------------------------------------------------------
+// ZS-CLIENT-002.B 新增：模块门 / 声明目录精度 / 共享表单动作级 / 差集补登
+// ---------------------------------------------------------------------------
+
+describe('hasRouteAccess：模块门（服务端启用模块清单驱动，r2-P2-2 停用模块提供不可用落点）', () => {
+  it('停用模块页：模块清单不含 ai → 拒绝（即使 menu.json 登录即用登记，也不得进入撞服务端 501）', () => {
+    expect(hasRouteAccess('/pages-ai/chat/index', [], ['system', 'infra'])).toBe(false)
+  })
+  it('启用模块页：模块清单含 ai → AI 会话页按原登记（登录即用）放行', () => {
+    expect(hasRouteAccess('/pages-ai/chat/index', [], ['system', 'infra', 'ai'])).toBe(true)
+  })
+  it('未下发模块清单（null / 缺省）→ 跳过模块门（兼容旧后端，行为与注册表一致）', () => {
+    expect(hasRouteAccess('/pages-ai/chat/index', [], null)).toBe(true)
+    expect(hasRouteAccess('/pages-ai/chat/index', [])).toBe(true)
+  })
+  it('无法归属模块的页面（hrm 不在 15 项模块白名单）不受模块门影响', () => {
+    expect(hasRouteAccess('/pages-hrm/employee/detail/index', ['hrm:employee:query'], ['system', 'infra'])).toBe(true)
+  })
+  it('公共应用外壳不受模块门影响', () => {
+    expect(hasRouteAccess('/pages/index/index', [], ['system'])).toBe(true)
+    expect(hasRouteAccess('/pages/user/index', [], ['system'])).toBe(true)
+  })
+})
+
+describe('hasRouteAccess：声明目录精度（r3-P2-1：后代言权限不得上溢兄弟目录）', () => {
+  it('员工详情页：持 employee:config:query 不再放行（仅最近声明目录 /pages-hrm/employee/ 直接声明的权限集）', () => {
+    expect(hasRouteAccess('/pages-hrm/employee/detail/index', ['hrm:employee:config:query'])).toBe(false)
+    expect(hasRouteAccess('/pages-hrm/employee/detail/index', ['hrm:employee:query'])).toBe(true)
+  })
+  it('员工表单页（孪生样本）：同样按 employee:query 判定', () => {
+    expect(hasRouteAccess('/pages-hrm/employee/form/index', ['hrm:employee:config:query'])).toBe(false)
+    expect(hasRouteAccess('/pages-hrm/employee/form/index', ['hrm:employee:query'])).toBe(true)
+  })
+  it('招聘候选人子页：持 employee:query 不得进入（recruit 目录独立声明，不上溢）', () => {
+    expect(hasRouteAccess('/pages-hrm/recruit/candidate/detail/index', ['hrm:employee:query'])).toBe(false)
+  })
+})
+
+describe('hasRouteAccess：dept 共享表单按动作级登记（r3-P2-2：登记动作权限而非无条件要求 query）', () => {
+  it('持 system:dept:create → 可进入新增表单（HRM 组织管理「新增」跳入）', () => {
+    expect(hasRouteAccess('/pages-system/dept/form/index', ['system:dept:create'])).toBe(true)
+  })
+  it('持 system:dept:update → 可进入编辑表单', () => {
+    expect(hasRouteAccess('/pages-system/dept/form/index', ['system:dept:update'])).toBe(true)
+  })
+  it('仅持 system:dept:query → 表单页拒绝（查询用户走 dept/detail 页，按钮守卫不会跳 form）', () => {
+    expect(hasRouteAccess('/pages-system/dept/form/index', ['system:dept:query'])).toBe(false)
+  })
+  it('部门详情页仍按 query 放行（detail 独立承担查询职责）', () => {
+    expect(hasRouteAccess('/pages-system/dept/detail/index', ['system:dept:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-system/dept/detail/index', ['system:dept:create'])).toBe(false)
+  })
+})
+
+describe('hasRouteAccess：NEW 继承语义差集补登（CLIENT-002.B：21 页失去继承禁止回归）', () => {
+  it('IM 通讯录子页（8 页组）：登录即用', () => {
+    expect(hasRouteAccess('/pages-im/home/contact/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/request/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/friend/apply/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/friend/detail/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/friend/setting/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/group/detail/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/group/form/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/home/contact/group/list/index', [])).toBe(true)
+  })
+  it('IM 人脸管理子页（3 页组）：登录即用', () => {
+    expect(hasRouteAccess('/pages-im/manager/face/item/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/manager/face/item/detail/index', [])).toBe(true)
+    expect(hasRouteAccess('/pages-im/manager/face/item/form/index', [])).toBe(true)
+  })
+  it('IoT OTA 固件页（4 页组）：按 iot:ota-firmware:query 授权', () => {
+    expect(hasRouteAccess('/pages-iot/ota/record/index', ['iot:ota-firmware:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-iot/ota/record/index', [])).toBe(false)
+    expect(hasRouteAccess('/pages-iot/ota/task/index', ['iot:ota-firmware:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-iot/ota/task/detail/index', ['iot:ota-firmware:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-iot/ota/task/form/index', ['iot:ota-firmware:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-iot/ota/task/detail/index', [])).toBe(false)
+  })
+  it('FMS 凭证详情页：凭证三联权限任一命中放行', () => {
+    expect(hasRouteAccess('/pages-fms/voucher/detail/index', ['fms:voucher:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-fms/voucher/detail/index', ['fms:voucher:statistics:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-fms/voucher/detail/index', [])).toBe(false)
+  })
+  it('HRM 门户页（2 条）：按 hrm:portal:query 授权', () => {
+    expect(hasRouteAccess('/pages-hrm/portal/opening-guide/index', ['hrm:portal:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-hrm/portal/opening-guide/index', [])).toBe(false)
+    expect(hasRouteAccess('/pages-hrm/portal/attendance/leave/form/index', ['hrm:portal:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-hrm/portal/attendance/leave/form/index', [])).toBe(false)
+  })
+  it('MES 安灯配置页：按 mes:pro-andon-record:query 授权', () => {
+    expect(hasRouteAccess('/pages-mes/pro/andon/config/index', ['mes:pro-andon-record:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-mes/pro/andon/config/index', [])).toBe(false)
+  })
+  it('Mall 砍价助力页：活动 / 记录两权限任一命中放行', () => {
+    expect(hasRouteAccess('/pages-mall/promotion/bargain/help/index', ['promotion:bargain-activity:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-mall/promotion/bargain/help/index', ['promotion:bargain-record:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-mall/promotion/bargain/help/index', ['system:user:list'])).toBe(false)
+  })
+  it('CRM 跟进表单页：持任一 crm 模块权限即可进入（14 权限并集，维持 OLD 行为）', () => {
+    expect(hasRouteAccess('/pages-crm/followup/form/index', ['crm:customer:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-crm/followup/form/index', ['crm:contract:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-crm/followup/form/index', ['bpm:task:query'])).toBe(false)
+  })
+})
+
 describe('navigateToInterceptor：登录后授权门禁与直达守卫', () => {
   it('已登录 + 持有权限 → 放行受保护页（不跳 403）', () => {
     h.permissions = ['bpm:task:query']
@@ -297,13 +405,30 @@ describe('navigateToInterceptor：登录后授权门禁与直达守卫', () => {
     expect(ret).toBe(false)
     expect(uni.reLaunch).toHaveBeenCalledWith({ url: UNAUTHORIZED_PAGE })
   })
+
+  it('已登录 + 直达停用模块页（模块清单不含 ai）→ 拦截到 403（CLIENT-002.B：关闭模块落点，不撞服务端 501）', () => {
+    h.permissions = []
+    h.enabledModules = ['system', 'infra']
+    const ret = navigateToInterceptor.invoke({ url: '/pages-ai/chat/index' })
+    expect(ret).toBe(false)
+    expect(uni.reLaunch).toHaveBeenCalledWith({ url: UNAUTHORIZED_PAGE })
+  })
+
+  it('未下发模块清单（null）→ 跳过模块门，直达 AI 会话页放行（旧后端兼容）', () => {
+    h.permissions = []
+    h.enabledModules = null
+    const ret = navigateToInterceptor.invoke({ url: '/pages-ai/chat/index' })
+    expect(ret).toBe(true)
+  })
 })
 
 describe('tabbar 授权化：入口按服务端权限过滤（验收：不同技术权限看到对应入口）', () => {
   // isTabbarItemVisible 委托 hasRouteAccess（menu.json + 补充登记为单一真相源）；此处以真实 customTabbarList
   // 数据验证「哪些入口对哪些权限可见」的端到端分类结果。
-  const visibleTabs = (perms: string[]) =>
-    customTabbarList.filter(item => hasRouteAccess(item.pagePath.startsWith('/') ? item.pagePath : `/${item.pagePath}`, perms)).map(item => item.text)
+  const visibleTabs = (perms: string[], modules: string[] | null = null) =>
+    customTabbarList
+      .filter(item => hasRouteAccess(item.pagePath.startsWith('/') ? item.pagePath : `/${item.pagePath}`, perms, modules))
+      .map(item => item.text)
 
   it('无业务权限：仅公共入口（工作台/消息/我的），审批与通讯录隐藏', () => {
     expect(visibleTabs([])).toEqual(['工作台', '消息', '我的'])
@@ -317,5 +442,11 @@ describe('tabbar 授权化：入口按服务端权限过滤（验收：不同技
   it('全权限：五入口按配置顺序全可见', () => {
     expect(visibleTabs(['bpm:task:query', 'system:user:list']))
       .toEqual(['工作台', '审批', '通讯录', '消息', '我的'])
+  })
+  it('模块清单不含 bpm：审批入口隐藏（CLIENT-002.B：关闭模块提供不可用落点）', () => {
+    expect(visibleTabs(['bpm:task:query'], ['system', 'infra'])).not.toContain('审批')
+  })
+  it('模块清单含 bpm：审批入口按权限可见', () => {
+    expect(visibleTabs(['bpm:task:query'], ['system', 'infra', 'bpm'])).toContain('审批')
   })
 })

@@ -28,6 +28,10 @@ public class AuthPermissionInfoRespVO {
     @Schema(description = "菜单树", requiredMode = Schema.RequiredMode.REQUIRED)
     private List<MenuVO> menus;
 
+    @Schema(description = "启用的业务模块清单（ZS-CLIENT-002.B：客户端据以关闭停用模块的导航落点，对齐 ModuleCatalog.ENABLED_MODULES）",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    private List<String> enabledModules;
+
     @Schema(description = "用户信息 VO")
     @Data
     @NoArgsConstructor

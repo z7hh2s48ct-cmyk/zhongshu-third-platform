@@ -12,6 +12,7 @@ import cn.zszj.framework.common.enums.CommonStatusEnum;
 import cn.zszj.framework.common.util.monitor.TracerUtils;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.util.TenantUtils;
+import cn.zszj.module.system.controller.admin.permission.vo.crossorgvisit.CrossOrgVisitMyTargetsRespVO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
 import cn.zszj.module.system.dal.dataobject.permission.CrossOrgVisitGrantDO;
 import cn.zszj.module.system.dal.dataobject.tenant.TenantDO;
@@ -27,8 +28,10 @@ import org.springframework.validation.annotation.Validated;
 
 import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -219,6 +222,69 @@ public class CrossOrgVisitServiceImpl implements CrossOrgVisitService {
                 .tenantId(grant.getVisitorTenantId())
                 .traceId(TracerUtils.getTraceId())
                 .build());
+    }
+
+    @Override
+    public CrossOrgVisitMyTargetsRespVO listMyAuthorizedTargets(Long visitorUserId, Long loginTenantId) {
+        // 1. 登录租户名（容错：租户记录缺失不阻断目标列表，名称回传 null）
+        TenantDO loginTenant = loginTenantId == null ? null : tenantService.getTenant(loginTenantId);
+        // 2. D-09 资格门：非显式平台角色无任何可切换目标（与 authorizeVisit step5 同源判定）
+        OrgDataPermissionRespDTO orgPermission = visitorUserId == null ? null
+                : permissionService.getOrgDataPermission(visitorUserId);
+        List<CrossOrgVisitMyTargetsRespVO.TargetVO> targets = new ArrayList<>();
+        if (orgPermission != null && Boolean.TRUE.equals(orgPermission.getAll())) {
+            // 3. 取该访问者全部授权记录（id 倒序）：同一目标只认最新记录（撤销后不回退更早的有效记录）
+            List<CrossOrgVisitGrantDO> grants = crossOrgVisitGrantMapper.selectListByVisitor(visitorUserId);
+            Map<Long, CrossOrgVisitGrantDO> latestPerTarget = new LinkedHashMap<>();
+            for (CrossOrgVisitGrantDO grant : grants) {
+                latestPerTarget.putIfAbsent(grant.getTargetTenantId(), grant);
+            }
+            LocalDateTime now = LocalDateTime.now();
+            for (CrossOrgVisitGrantDO grant : latestPerTarget.values()) {
+                // 4. 状态 / 有效期：与 authorizeVisit step3/4 对齐——撤销、过期（或未生效）目标不出现
+                if (!CrossOrgVisitStatusEnum.isActive(grant.getStatus())
+                        || (grant.getValidFrom() != null && now.isBefore(grant.getValidFrom()))
+                        || (grant.getValidTo() != null && now.isAfter(grant.getValidTo()))) {
+                    continue;
+                }
+                // 5. 目标即登录租户：非跨组织目标，剔除（与 authorizeVisit step1 INVALID_REQUEST 对齐）
+                if (Objects.equals(grant.getTargetTenantId(), loginTenantId)) {
+                    continue;
+                }
+                // 6. 目标租户存在且启用（与 authorizeVisit step6 对齐）
+                TenantDO targetTenant = tenantService.getTenant(grant.getTargetTenantId());
+                if (targetTenant == null || !CommonStatusEnum.isEnable(targetTenant.getStatus())) {
+                    continue;
+                }
+                // 7. 限定组织范围逐一校验：任一组织缺失/停用 → 整条剔除（不得降级 whole-tenant 放行）
+                if (CollUtil.isNotEmpty(grant.getTargetOrgIds()) && !isAllTargetOrgValid(grant)) {
+                    continue;
+                }
+                targets.add(CrossOrgVisitMyTargetsRespVO.TargetVO.builder()
+                        .tenantId(grant.getTargetTenantId())
+                        .tenantName(targetTenant.getName())
+                        .targetOrgIds(grant.getTargetOrgIds() == null ? null : new ArrayList<>(grant.getTargetOrgIds()))
+                        .validTo(grant.getValidTo())
+                        .build());
+            }
+        }
+        return CrossOrgVisitMyTargetsRespVO.builder()
+                .loginTenantId(loginTenantId)
+                .loginTenantName(loginTenant == null ? null : loginTenant.getName())
+                .targets(targets)
+                .build();
+    }
+
+    /** 目标组织范围有效性：逐一在目标租户上下文校验组织存在且启用（与 authorizeVisit step6b 同源） */
+    private boolean isAllTargetOrgValid(CrossOrgVisitGrantDO grant) {
+        for (Long orgId : grant.getTargetOrgIds()) {
+            OrganizationDO org = TenantUtils.execute(grant.getTargetTenantId(),
+                    () -> organizationService.getOrganization(orgId));
+            if (org == null || !CommonStatusEnum.isEnable(org.getStatus())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ========== 判定收尾：审计 + 结论构造 ==========

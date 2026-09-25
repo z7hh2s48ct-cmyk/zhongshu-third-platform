@@ -5,6 +5,8 @@ import cn.zszj.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.zszj.module.system.dal.dataobject.permission.CrossOrgVisitGrantDO;
 import org.apache.ibatis.annotations.Mapper;
 
+import java.util.List;
+
 /**
  * 跨组织访问授权记录 Mapper（ZS-SEC-001.B）。
  *
@@ -32,6 +34,22 @@ public interface CrossOrgVisitGrantMapper extends BaseMapperX<CrossOrgVisitGrant
                 .eq(CrossOrgVisitGrantDO::getTargetTenantId, targetTenantId)
                 .orderByDesc(CrossOrgVisitGrantDO::getId)
                 .last("LIMIT 1"));
+    }
+
+    /**
+     * 取某访问者名下的全部授权记录（未删除），按 id 倒序。
+     *
+     * <p>供「我的授权目标」列表（ZS-CLIENT-002.B）使用：调用方按 target_tenant_id 分组取 id 最大者
+     * （最新记录），再按状态/有效期/目标有效性逐条过滤——与 {@link #selectLatestByVisitorAndTarget}
+     * 判定同源语义，撤销后不回退更早的有效记录。
+     *
+     * @param visitorUserId 原主体账号编号
+     * @return 授权记录列表（id 倒序）；无记录返回空列表
+     */
+    default List<CrossOrgVisitGrantDO> selectListByVisitor(Long visitorUserId) {
+        return selectList(new LambdaQueryWrapperX<CrossOrgVisitGrantDO>()
+                .eq(CrossOrgVisitGrantDO::getVisitorUserId, visitorUserId)
+                .orderByDesc(CrossOrgVisitGrantDO::getId));
     }
 
 }

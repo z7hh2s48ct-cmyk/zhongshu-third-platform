@@ -39,6 +39,9 @@ export interface AuthPermissionInfo {
   user: IUserInfoRes
   roles: string[]
   permissions: string[]
+  // ZS-CLIENT-002.B：服务端下发启用模块清单（对齐 ModuleCatalog.ENABLED_MODULES）；
+  // 旧后端未下发为 null/undefined（路由守卫跳过模块门）
+  enabledModules?: string[] | null
   // menus: AppRouteRecordRaw[]; // add by 芋艿：暂时用不到
 }
 

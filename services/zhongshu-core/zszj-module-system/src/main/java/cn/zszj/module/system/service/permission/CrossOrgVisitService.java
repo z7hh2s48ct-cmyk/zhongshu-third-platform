@@ -2,6 +2,7 @@ package cn.zszj.module.system.service.permission;
 
 import cn.zszj.framework.common.biz.system.permission.dto.CrossOrgVisitCheckReqDTO;
 import cn.zszj.framework.common.biz.system.permission.dto.CrossOrgVisitDecisionDTO;
+import cn.zszj.module.system.controller.admin.permission.vo.crossorgvisit.CrossOrgVisitMyTargetsRespVO;
 import cn.zszj.module.system.dal.dataobject.permission.CrossOrgVisitGrantDO;
 
 /**
@@ -44,5 +45,18 @@ public interface CrossOrgVisitService {
      * @param reason 撤销理由（不含敏感明文）
      */
     void revokeGrant(Long id, String reason);
+
+    /**
+     * 查询「我的授权目标」列表（ZS-CLIENT-002.B：获批业务组织导航的唯一数据源）。
+     *
+     * <p>仅返回可用目标：D-09 平台角色资格（非平台角色返回空列表）→ 同目标只取最新记录 → 状态 ACTIVE
+     * 且未过期 → 目标非登录租户 → 目标租户存在且启用 → 限定组织范围逐一有效（任一无效整条剔除，
+     * 不得降级 whole-tenant）。拒绝维度与 {@link #authorizeVisit} 对齐，客户端只消费不推导。
+     *
+     * @param visitorUserId 原主体账号编号
+     * @param loginTenantId 登录租户编号（登录主体所属租户；名称容错可空）
+     * @return 登录租户信息 + 可切换目标列表
+     */
+    CrossOrgVisitMyTargetsRespVO listMyAuthorizedTargets(Long visitorUserId, Long loginTenantId);
 
 }
