@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <li>完成：版本乐观锁推进 + 审计 + 待办流转事件预写（Outbox 同事务，MANDATORY）；</li>
  *   <li>派发：事件确认 DISPATCHED + 待办 COMPLETED + Inbox 消费留痕（租户上下文 + 编程式事务包裹投递）；</li>
  *   <li>绕过版本：旧版本更新被拒 + DENIED 拒绝留痕独立事务保留 + 无任何副作用；</li>
+ *   <li>重复完成：终态守卫 0 行即拒（携带当前版本二次完成不产生第二次成功审计与重复流转事件）；</li>
  *   <li>乱序旧版本事件：到达晚于高版本 → Inbox 版本水位拒绝（不复活、不回退水位）；</li>
  *   <li>伪造对象归属：无租户上下文写侧入口拒绝（样例 + registerTodo 双层）；</li>
  *   <li>无租户上下文 Outbox 追加拒绝（事务内租户强制）；</li>
@@ -218,6 +219,28 @@ public class TechNeutralContractSampleTest extends BaseDbUnitTest {
         assertThat(rowCount("outbox_event")).isZero();
         assertThat(queryTodo(contractKey).get("status")).isEqualTo("PENDING");
         assertThat(rowCountWhere("audit_event", "event_type = 'OBJECT_UPDATED'")).isZero();
+    }
+
+    // ========= 验收② 重复完成：终态守卫拒绝 =========
+
+    @Test
+    void test_重复完成_终态守卫拒绝不重复副作用() {
+        String contractKey = newKey();
+        submit(contractKey);
+        sample.complete(contractKey, 0L, "首次完成");
+        // 携带当前版本（1）再次完成：终态守卫 0 行即拒（不能把已完成对象「再完成一次」）
+        assertThatThrownBy(() -> sample.complete(contractKey, 1L, "重复完成尝试"))
+                .isInstanceOf(IllegalStateException.class);
+        // 对象终态与版本均未被推进
+        Map<String, Object> record = queryRecord(contractKey);
+        assertThat(record.get("status")).isEqualTo(TechNeutralContractSample.STATUS_DONE);
+        assertThat(((Number) record.get("version")).longValue()).isEqualTo(1L);
+        // 无第二次成功审计、无第二次事件预写；拒绝留痕记录被拒的期望版本
+        assertThat(rowCountWhere("audit_event", "event_type = 'OBJECT_UPDATED' AND result = 'SUCCESS'")).isEqualTo(1);
+        assertThat(rowCount("outbox_event")).isEqualTo(1);
+        Map<String, Object> denied = queryAudit("ACCESS_DENIED", contractKey);
+        assertThat(denied.get("result")).isEqualTo("DENIED");
+        assertThat(denied.get("biz_version")).isEqualTo("1");
     }
 
     // ========= 验收② 乱序旧版本事件：水位拒绝不复活 =========

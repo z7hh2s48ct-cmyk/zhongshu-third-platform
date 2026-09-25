@@ -157,7 +157,8 @@ public class TechNeutralContractSample {
      * 完成：版本乐观锁推进 + 审计 + 待办流转事件预写（三者同一事务）；携带 {@code expectedVersion} 防止绕过版本。
      *
      * <p>版本并发合同：更新必须携带编辑时（或前置流程读取时）的版本号——0 行即冲突，拒绝留痕（DENIED 走
-     * JdbcAuditPort 独立事务，业务回滚不丢失）并抛出，<b>不静默覆盖他人更新</b>；成功路径同事务追加
+     * JdbcAuditPort 独立事务，业务回滚不丢失）并抛出，<b>不静默覆盖他人更新</b>；同时以状态条件做终态守卫，
+     * 携带当前版本的重复完成同样 0 行即拒（不产生第二次成功审计与重复流转事件）；成功路径同事务追加
      * {@code NOTIFY_TODO_TRANSITION} 事件（Outbox MANDATORY，业务回滚则事件一并回滚）。
      *
      * @param contractKey     对象稳定业务键
@@ -167,12 +168,13 @@ public class TechNeutralContractSample {
     public void complete(String contractKey, long expectedVersion, String reason) {
         Long tenantId = requireTenantId();
         transactionTemplate.executeWithoutResult(status -> {
-            // 版本乐观锁推进：必须携带期望版本，0 行即拒（版本不符 / 跨租户不可见 / 不存在），不静默覆盖
+            // 版本乐观锁 + 终态守卫：必须携带期望版本，且仅允许从初始态推进——0 行即拒
+            //（版本不符 / 已终态重复完成 / 跨租户不可见 / 不存在），不静默覆盖、不重复完成
             int updated = jdbcTemplate.update(
                     "UPDATE tech_neutral_contract_record SET status = ?, version = version + 1, updater = ?, "
                             + "update_time = CURRENT_TIMESTAMP WHERE tenant_id = ? AND contract_key = ? AND version = ? "
-                            + "AND deleted = FALSE",
-                    STATUS_DONE, SAMPLE_ACTOR_ID, tenantId, contractKey, expectedVersion);
+                            + "AND status = ? AND deleted = FALSE",
+                    STATUS_DONE, SAMPLE_ACTOR_ID, tenantId, contractKey, expectedVersion, STATUS_PENDING);
             if (updated != 1) {
                 // 拒绝留痕：DENIED 走独立事务（业务回滚不丢失），记录被拒的期望版本
                 auditPort.record(AuditEventMessage.builder()
