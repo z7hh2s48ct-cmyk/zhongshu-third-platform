@@ -1,11 +1,14 @@
 package cn.zszj.framework.datapermission.config;
 
 import cn.zszj.framework.common.biz.system.permission.PermissionCommonApi;
+import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationProvider;
+import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationService;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionChecker;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionRule;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionRuleCustomizer;
 import cn.zszj.framework.datapermission.core.rule.org.OrgDataPermissionChecker;
 import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.security.core.service.SecurityFrameworkService;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -53,6 +56,20 @@ public class ZszjDeptDataPermissionAutoConfiguration {
     @Bean
     public OrgDataPermissionChecker orgDataPermissionChecker(PermissionCommonApi permissionApi) {
         return new OrgDataPermissionChecker(permissionApi);
+    }
+
+    /**
+     * ZS-PERM-003.A：统一「动作 / 字段」授权输出与执行共用机制。
+     *
+     * <p>业务域按 {@link ObjectAuthorizationProvider} 声明候选动作/字段与状态约束，输出与执行共用同一
+     * 裁决核心（前端伪造不生效）；未注册扩展点时 {@code authorize} 返回 null（未接入=零变化）。
+     * 裁决依赖 {@code SecurityFrameworkService}（RBAC/visit 收敛）与 {@link OrgDataPermissionChecker}（org 轴对象门）。
+     */
+    @Bean
+    public ObjectAuthorizationService objectAuthorizationService(SecurityFrameworkService securityFrameworkService,
+                                                                 OrgDataPermissionChecker orgDataPermissionChecker,
+                                                                 List<ObjectAuthorizationProvider> providers) {
+        return new ObjectAuthorizationService(securityFrameworkService, orgDataPermissionChecker, providers);
     }
 
 }
