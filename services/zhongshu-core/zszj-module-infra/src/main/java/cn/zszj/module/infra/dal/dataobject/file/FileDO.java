@@ -33,6 +33,11 @@ public class FileDO extends TenantBaseDO {
      */
     public static final String STATUS_DELETING = "DELETING";
 
+    /**
+     * 用途（ZS-FILE-004.B）：导出件——按用途保留期清理的判别依据（普通上传/历史为 null）
+     */
+    public static final String PURPOSE_EXPORT = "export";
+
 
     /**
      * 上传主体用户编号（ZS-FILE-001.A：服务端确认的所有者，匿名/系统上传为 0）
@@ -100,5 +105,16 @@ public class FileDO extends TenantBaseDO {
      * 引用保护拒绝回退 PUBLISHED 时清空。迁移 V20260916.102 对存量 DELETING 按 update_time 回填。
      */
     private LocalDateTime deletingTime;
+
+    /**
+     * 用途（ZS-FILE-004.B）：导出件固定 'export'（按用途保留期清理的判别依据）；普通上传为 null。
+     */
+    private String purpose;
+
+    /**
+     * 保留期到期时间（ZS-FILE-004.B）：purpose='export' 的导出件写入（生成时刻 + 配置保留天数，
+     * 见 FileExportProperties#retentionDays）；null=无保留期约束（历史/普通上传零变化）。
+     */
+    private LocalDateTime retentionExpireTime;
 
 }

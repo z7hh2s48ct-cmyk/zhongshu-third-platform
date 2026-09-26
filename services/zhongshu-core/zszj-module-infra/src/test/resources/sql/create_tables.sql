@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS "infra_file" (
     "owner_user_id" bigint NOT NULL DEFAULT 0,
     "scope" varchar(16) NOT NULL DEFAULT 'PRIVATE',
     "organization_id" bigint DEFAULT NULL, -- ZS-FILE-001.B：业务组织归属（org 轴对象授权载体；null=历史/匿名由 tenant 轴治理）
+    "purpose" varchar(32) DEFAULT NULL, -- ZS-FILE-004.B：用途（'export'=导出件，按用途保留期清理的判别依据；null=普通上传零变化）
+    "retention_expire_time" timestamp DEFAULT NULL, -- ZS-FILE-004.B：保留期到期时间（导出件生成时刻+保留天数，专供保留期清理）
     "creator" varchar(64) DEFAULT '',
     "create_time" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updater" varchar(64) DEFAULT '',

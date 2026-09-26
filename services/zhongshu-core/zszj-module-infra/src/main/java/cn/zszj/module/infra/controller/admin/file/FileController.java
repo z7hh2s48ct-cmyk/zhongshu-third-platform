@@ -46,6 +46,9 @@ public class FileController {
     @Resource
     private cn.zszj.module.infra.service.file.FileOrphanService fileOrphanService;
 
+    @Resource
+    private cn.zszj.module.infra.service.file.FileExportRetentionService fileExportRetentionService;
+
     @PostMapping("/upload")
     @Operation(summary = "上传文件", description = "模式一：后端上传文件")
     @Parameter(name = "file", description = "文件附件", required = true,
@@ -132,6 +135,23 @@ public class FileController {
     public CommonResult<FileOrphanCleanupRespVO> cleanupOrphanObjects(
             @Valid @RequestBody FileOrphanCleanupReqVO reqVO) {
         return success(fileOrphanService.cleanup(reqVO));
+    }
+
+    @GetMapping("/export/retention/preview")
+    @Operation(summary = "导出件保留期清理预览", description = "ZS-FILE-004.B：只读候选清点——purpose='export' ∧ PUBLISHED ∧ "
+            + "保留期已到（租户内；超上限如实标注截断）；清理须以本预览结果显式授权")
+    @PreAuthorize("@ss.hasPermission('infra:file:query')")
+    public CommonResult<FileExportRetentionPreviewRespVO> previewExportRetention() {
+        return success(fileExportRetentionService.preview());
+    }
+
+    @PostMapping("/export/retention/cleanup")
+    @Operation(summary = "导出件保留期清理", description = "ZS-FILE-004.B：显式 id 授权（有界批次）；执行前逐项"
+            + "重核验（用途/状态/保留期），逐项记录结果不伪报全成功；走 deleteFile 既有保护（引用/中间态）")
+    @PreAuthorize("@ss.hasPermission('infra:file:delete')")
+    public CommonResult<FileExportRetentionCleanupRespVO> cleanupExportRetention(
+            @Valid @RequestBody FileExportRetentionCleanupReqVO reqVO) {
+        return success(fileExportRetentionService.cleanup(reqVO));
     }
 
     @GetMapping("/{configId}/get/**")
