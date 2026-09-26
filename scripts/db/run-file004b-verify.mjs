@@ -124,11 +124,16 @@ WHERE c.relname = 'infra_file' AND a.attname IN ('purpose', 'retention_expire_ti
   const order = candidates(1, 10);
   // 恰 2 个过期导出件（9301/9302），排序 retention ASC ⇒ 9301 在前（更早到期）
   const limited = candidates(1, 1);
+  const full = candidates(1, 10);
   const total = candidateCount(1);
-  const truncated = total !== '0' && Number(total) >= 1;
-  record('P2 候选查询形状：过滤链（purpose/status/非空/<=now）+ FIFO 排序 + LIMIT 截断如实',
-    order === '9301,9302' && limited === '9301' && total === '2' && truncated,
-    `order=${order} limit1=${limited} total=${total}`);
+  // 截断判定对齐服务端 `size >= max` 双向对照（codex r1 P3-4，防同义反复）：
+  //   上限 1（2 候选 ≥ 1 ⇒ truncated=true）；上限 10（2 候选 < 10 ⇒ truncated=false）
+  const truncatedAtLimit1 = Number(total) >= 1;
+  const truncatedAtLimit10 = Number(total) >= 10;
+  record('P2 候选查询形状：过滤链（purpose/status/非空/<=now）+ FIFO 排序 + LIMIT 截断双向对照',
+    order === '9301,9302' && limited === '9301' && full === '9301,9302' && total === '2'
+    && truncatedAtLimit1 && !truncatedAtLimit10,
+    `order=${order} limit1=${limited} limit10=${full} total=${total} trunc1=${truncatedAtLimit1} trunc10=${truncatedAtLimit10}`);
 }
 
 // P3 保留期边界（含 NULL 与 <= 语义）：NULL 不命中 / 恰到期命中 / 未来不命中

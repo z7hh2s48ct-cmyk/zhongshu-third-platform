@@ -75,6 +75,10 @@ public interface ErrorCodeConstants {
     // ZS-FILE-004.B：导出生成-交付两阶段重检与用途保留期清理
     ErrorCode FILE_EXPORT_FORBIDDEN = new ErrorCode(1_001_003_038, "导出生成请求不满足接入契约（登录主体/对象类型缺失）或导出裁决服务未装配，拒绝生成");
     ErrorCode FILE_EXPORT_RETENTION_BATCH_EXCEED = new ErrorCode(1_001_003_039, "单次导出件保留期清理数量（{}）超过上限（{}），请分批授权");
+    // ZS-FILE-004.B：导出件保留期清理逐项跳过原因（携真实注册码，便于对账；codex r1 P3-1）
+    ErrorCode FILE_EXPORT_RETENTION_PURPOSE_NOT_EXPORT = new ErrorCode(1_001_003_040, "非导出件（用途门），不在导出件保留期清理通道范围");
+    ErrorCode FILE_EXPORT_RETENTION_STATUS_NOT_PUBLISHED = new ErrorCode(1_001_003_041, "记录不处于 PUBLISHED 状态（中间态保护，进行中删除不由本通道介入）");
+    ErrorCode FILE_EXPORT_RETENTION_NOT_EXPIRED = new ErrorCode(1_001_003_042, "导出件保留期未到，跳过（边界保护）");
     ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");

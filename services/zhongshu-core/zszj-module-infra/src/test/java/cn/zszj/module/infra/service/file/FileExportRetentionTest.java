@@ -32,6 +32,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import static cn.zszj.framework.test.core.util.RandomUtils.randomString;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELETE_REFERENCED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_BATCH_EXCEED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_NOT_EXPIRED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_PURPOSE_NOT_EXPORT;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_STATUS_NOT_PUBLISHED;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -161,6 +164,9 @@ public class FileExportRetentionTest extends BaseDbUnitTest {
         assertEquals(1, resp.getFailures().size());
         assertEquals(becameDeleting.getId(), resp.getFailures().get(0).getFileId());
         assertNotNull(resp.getFailures().get(0).getErrorMessage());
+        assertTrue(resp.getFailures().get(0).getErrorMessage()
+                        .contains(String.valueOf(FILE_EXPORT_RETENTION_STATUS_NOT_PUBLISHED.getCode())),
+                "重核验失败须携状态门真实注册码（codex r1 P3-1，便于对账）");
         // 成功项：记录移除 + 对象删除；失败项：原样保留
         assertNull(fileMapper.selectById(clean.getId()));
         assertFalse(objectStore.containsKey(clean.getPath()));
@@ -178,6 +184,9 @@ public class FileExportRetentionTest extends BaseDbUnitTest {
 
         assertTrue(resp.getSuccessIds().isEmpty());
         assertEquals(1, resp.getFailures().size());
+        assertTrue(resp.getFailures().get(0).getErrorMessage()
+                        .contains(String.valueOf(FILE_EXPORT_RETENTION_NOT_EXPIRED.getCode())),
+                "未到期跳过须携保留期门真实注册码（codex r1 P3-1，便于对账）");
         assertNotNull(fileMapper.selectById(young.getId()), "未到期不得删除");
         assertTrue(objectStore.containsKey(young.getPath()));
     }
@@ -223,8 +232,26 @@ public class FileExportRetentionTest extends BaseDbUnitTest {
 
         assertTrue(resp.getSuccessIds().isEmpty(), "非导出件不得经本通道清理");
         assertEquals(1, resp.getFailures().size());
+        assertTrue(resp.getFailures().get(0).getErrorMessage()
+                        .contains(String.valueOf(FILE_EXPORT_RETENTION_PURPOSE_NOT_EXPORT.getCode())),
+                "非导出件跳过须携用途门真实注册码（codex r1 P3-1，便于对账）");
         assertNotNull(fileMapper.selectById(normal.getId()));
         assertTrue(objectStore.containsKey(normal.getPath()));
+    }
+
+    // ========== R9 清理：重复 id 去重（成功/失败账本互斥，不重复处理） ==========
+
+    @Test
+    public void cleanup_duplicateIds_deduped() {
+        FileDO expired = seedExportFile("dup", LocalDateTime.now().minusDays(1), FileDO.STATUS_PUBLISHED);
+
+        FileExportRetentionCleanupRespVO resp = exportRetentionService.cleanup(
+                req(List.of(expired.getId(), expired.getId())));
+
+        assertEquals(List.of(expired.getId()), resp.getSuccessIds(), "重复 id 只处理一次（codex r1 P3-2）");
+        assertTrue(resp.getFailures().isEmpty(), "已清理成功项不得再次进入失败账本（互斥性）");
+        assertNull(fileMapper.selectById(expired.getId()));
+        assertFalse(objectStore.containsKey(expired.getPath()));
     }
 
     // ========== 造数辅助 ==========

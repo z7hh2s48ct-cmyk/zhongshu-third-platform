@@ -1,5 +1,6 @@
 package cn.zszj.module.infra.service.file;
 
+import cn.zszj.framework.common.exception.ErrorCode;
 import cn.zszj.framework.common.exception.ServiceException;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileExportRetentionCleanupReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileExportRetentionCleanupRespVO;
@@ -18,6 +19,9 @@ import java.util.List;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_BATCH_EXCEED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_NOT_EXPIRED;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_PURPOSE_NOT_EXPORT;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_RETENTION_STATUS_NOT_PUBLISHED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
 
 /**
@@ -33,7 +37,8 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
  *     任一不再成立即记失败跳过携原因，不伪报全成功）；</li>
  *     <li>清理走 {@link FileService#deleteFile}——引用保护（活跃交付会话=FILE_DELETE_REFERENCED）/
  *     DELETING 可恢复中间态/自动补偿框架全继承，不新增绕过面；</li>
- *     <li>失败留痕受控描述（既有保护携错误码便于对账；存储异常仅落异常类名，循 JOB-002/004 脱敏红线）。</li>
+ *     <li>失败留痕受控描述（跳过/保护均携真实注册码便于对账〔统一 [code=xxx] 格式〕；
+ *     存储异常仅落异常类名，循 JOB-002/004 脱敏红线）。</li>
  * </ul>
  *
  * @author ZS-FILE-004.B
@@ -76,28 +81,29 @@ public class FileExportRetentionServiceImpl implements FileExportRetentionServic
         if (fileIds == null) {
             return resp;
         }
+        // codex r1 P3-2：入参去重——重复 id 不得同时出现在成功与失败账本（互斥性），也不重复处理
+        List<Long> distinctIds = fileIds.stream().distinct().toList();
         LocalDateTime now = LocalDateTime.now();
-        for (Long fileId : fileIds) {
+        for (Long fileId : distinctIds) {
             try {
                 // 执行前逐项重读 + 重核验（任一条件不再成立即记失败跳过，不伪报全成功）
                 FileDO file = fileId == null ? null : fileMapper.selectById(fileId);
                 if (file == null) {
                     // 记录不存在无法证明「属于本通道的过期导出件」（可能已被清理或为混入编号）——
                     // 保守记失败携错误码，不假报幂等成功
-                    addFailure(resp, fileId, "FILE_NOT_EXISTS(" + FILE_NOT_EXISTS.getCode()
-                            + ")：记录不存在（可能已被清理或非本通道编号）");
+                    addFailure(resp, fileId, codeMessage(FILE_NOT_EXISTS) + "（可能已被清理或非本通道编号）");
                     continue;
                 }
                 if (!FileDO.PURPOSE_EXPORT.equals(file.getPurpose())) {
-                    addFailure(resp, fileId, "FILE_EXPORT_PURPOSE_NOT_EXPORT：非导出件（用途门），不在本通道清理范围");
+                    addFailure(resp, fileId, codeMessage(FILE_EXPORT_RETENTION_PURPOSE_NOT_EXPORT));
                     continue;
                 }
                 if (!FileDO.STATUS_PUBLISHED.equals(file.getStatus())) {
-                    addFailure(resp, fileId, "FILE_EXPORT_STATUS_NOT_PUBLISHED：记录不处于 PUBLISHED（中间态保护，进行中删除不由本通道介入）");
+                    addFailure(resp, fileId, codeMessage(FILE_EXPORT_RETENTION_STATUS_NOT_PUBLISHED));
                     continue;
                 }
                 if (file.getRetentionExpireTime() == null || file.getRetentionExpireTime().isAfter(now)) {
-                    addFailure(resp, fileId, "FILE_EXPORT_RETENTION_NOT_EXPIRED：保留期未到，跳过（边界保护）");
+                    addFailure(resp, fileId, codeMessage(FILE_EXPORT_RETENTION_NOT_EXPIRED));
                     continue;
                 }
                 // 复用既有删除链：org 门 / 引用保护 / DELETING 中间态 / 对象删除 / 条件记录移除全继承
@@ -114,8 +120,8 @@ public class FileExportRetentionServiceImpl implements FileExportRetentionServic
                 log.warn("[cleanup][导出件({}) 清理失败: {}]", fileId, ex.getClass().getName());
             }
         }
-        log.info("[cleanup][导出件保留期清理：请求 {} 个，成功 {} 个，失败 {} 个]",
-                fileIds.size(), resp.getSuccessIds().size(), resp.getFailures().size());
+        log.info("[cleanup][导出件保留期清理：请求 {} 个（去重后 {}），成功 {} 个，失败 {} 个]",
+                fileIds.size(), distinctIds.size(), resp.getSuccessIds().size(), resp.getFailures().size());
         return resp;
     }
 
@@ -128,6 +134,14 @@ public class FileExportRetentionServiceImpl implements FileExportRetentionServic
         item.setPurpose(file.getPurpose());
         item.setRetentionExpireTime(file.getRetentionExpireTime());
         return item;
+    }
+
+    /**
+     * codex r1 P3-1：逐项失败/跳过消息统一携真实注册码（[code=xxx] message 对账格式，
+     * 与既有保护（ServiceException catch）同形）——替代未注册的自造前缀。
+     */
+    private static String codeMessage(ErrorCode code) {
+        return "[code=" + code.getCode() + "] " + code.getMsg();
     }
 
     private void addFailure(FileExportRetentionCleanupRespVO resp, Long fileId, String message) {

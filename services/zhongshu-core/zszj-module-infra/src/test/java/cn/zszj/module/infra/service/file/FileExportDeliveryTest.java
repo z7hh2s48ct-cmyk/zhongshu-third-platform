@@ -54,6 +54,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -149,29 +150,63 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
         assertTrue(objectStore.isEmpty());
     }
 
+    @Test
+    public void generate_missingThreadContext_forbidden() {
+        // 入参主体合法但无线程安全上下文：对象维裁决护栏（loginUser==null→可见）会 fail-open，
+        // 锚定必须在此之前关闭该面——不得静默放行落盘（codex r1 P2-1）
+        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+        FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(32));
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+        assertEquals(FILE_EXPORT_FORBIDDEN.getCode(), ex.getCode(), "线程安全上下文缺失必须 fail-closed");
+        assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
+        assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+    }
+
+    @Test
+    public void generate_contextSubjectMismatch_forbidden() {
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            // 线程上下文主体（202）≠ 入参主体（101）：不得凭调用方声明的主体通过裁决
+            ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(user(202L, 1L));
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(32));
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+            assertEquals(FILE_EXPORT_FORBIDDEN.getCode(), ex.getCode(), "上下文主体与入参主体不一致必须 fail-closed");
+            assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
+            assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+        }
+    }
+
     // ========== ② 未接入对象类型：fail-closed（新通道保守，不改既有行为） ==========
 
     @Test
     public void generate_unknownObjectType_forbidden() {
-        FileExportGenerateReqVO req = request("unknown-export", 100L, 101L, sequencedBytes(32));
-        ServiceException ex = assertThrows(ServiceException.class,
-                () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
-        assertEquals(FORBIDDEN.getCode(), ex.getCode(), "未注册 provider 的对象类型 fail-closed");
-        assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
-        assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            FileExportGenerateReqVO req = request("unknown-export", 100L, 101L, sequencedBytes(32));
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+            assertEquals(FORBIDDEN.getCode(), ex.getCode(), "未注册 provider 的对象类型 fail-closed");
+            assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
+            assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+        }
     }
 
     // ========== ③ 业务组织导出重检（对象维） ==========
 
     @Test
     public void generate_objectNotVisible_forbidden() {
-        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(false);
-        FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(32));
-        ServiceException ex = assertThrows(ServiceException.class,
-                () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
-        assertEquals(FORBIDDEN.getCode(), ex.getCode(), "对象不可见（业务组织越权）fail-closed");
-        assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
-        assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(false);
+            FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(32));
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+            assertEquals(FORBIDDEN.getCode(), ex.getCode(), "对象不可见（业务组织越权）fail-closed");
+            assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
+            assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+        }
     }
 
     @Test
@@ -206,14 +241,17 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
 
     @Test
     public void generate_declaredFieldsWhenFieldLevelDisabled_forbidden() {
-        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
-        FileExportGenerateReqVO req = request("demo-export-nofields", 100L, 101L, sequencedBytes(32));
-        req.setFields(Set.of("fieldA"));
-        ServiceException ex = assertThrows(ServiceException.class,
-                () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
-        assertEquals(FORBIDDEN.getCode(), ex.getCode(), "未启用字段级 + 非空敏感字段声明 fail-closed");
-        assertTrue(fileMapper.selectList().isEmpty());
-        assertTrue(objectStore.isEmpty());
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            FileExportGenerateReqVO req = request("demo-export-nofields", 100L, 101L, sequencedBytes(32));
+            req.setFields(Set.of("fieldA"));
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+            assertEquals(FORBIDDEN.getCode(), ex.getCode(), "未启用字段级 + 非空敏感字段声明 fail-closed");
+            assertTrue(fileMapper.selectList().isEmpty());
+            assertTrue(objectStore.isEmpty());
+        }
     }
 
     @Test
@@ -241,78 +279,92 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
     @Test
     public void generate_emptyFields_stillChecksObject() {
         when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(false);
-        FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(32));
-        // fields 为空：不得跳过对象维（字段维与对象维相互独立）
-        ServiceException ex = assertThrows(ServiceException.class,
-                () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
-        assertEquals(FORBIDDEN.getCode(), ex.getCode(), "空字段声明仍必须执行对象维重检");
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(32));
+            // fields 为空：不得跳过对象维（字段维与对象维相互独立）
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+            assertEquals(FORBIDDEN.getCode(), ex.getCode(), "空字段声明仍必须执行对象维重检");
+            // codex r1 P3-3：补强——空字段声明下对象维检查必须真实发生（防与不可见用例重合弱覆盖）
+            verify(orgDataPermissionChecker).isObjectVisible(100L, 101L);
+        }
     }
 
     // ========== ⑤ 导出件落盘语义 ==========
 
     @Test
     public void generate_valid_createsPrivateExportAsset() {
-        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
-        byte[] content = sequencedBytes(256);
-        FileExportGenerateReqVO req = request("demo-export", 100L, 101L, content);
-        req.setName("export-" + randomString() + ".bin");
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            byte[] content = sequencedBytes(256);
+            FileExportGenerateReqVO req = request("demo-export", 100L, 101L, content);
+            req.setName("export-" + randomString() + ".bin");
 
-        FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
+            FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
 
-        assertNotNull(resp.getFileId());
-        FileDO saved = fileMapper.selectById(resp.getFileId());
-        assertNotNull(saved);
-        assertEquals("PRIVATE", saved.getScope(), "导出件一律私有（交付不返回存储 URL）");
-        assertEquals(101L, saved.getOwnerUserId(), "owner=登录主体");
-        assertEquals(100L, saved.getOrganizationId(), "organizationId=源对象组织（生成/交付间撤权载体）");
-        assertEquals(1L, saved.getTenantId());
-        assertEquals("export", saved.getPurpose());
-        assertTrue(saved.getPath().startsWith("export/"), "导出件落盘路径须带用途前缀");
-        assertEquals(DigestUtil.sha256Hex(content), saved.getFileHash(), "散列须与内容一致");
-        assertNotNull(saved.getRetentionExpireTime(), "导出件必须有保留期到期时间");
-        assertTrue(objectStore.containsKey(saved.getPath()), "存储对象必须存在");
-        assertEquals((long) content.length, saved.getSize());
+            assertNotNull(resp.getFileId());
+            FileDO saved = fileMapper.selectById(resp.getFileId());
+            assertNotNull(saved);
+            assertEquals("PRIVATE", saved.getScope(), "导出件一律私有（交付不返回存储 URL）");
+            assertEquals(101L, saved.getOwnerUserId(), "owner=登录主体");
+            assertEquals(100L, saved.getOrganizationId(), "organizationId=源对象组织（生成/交付间撤权载体）");
+            assertEquals(1L, saved.getTenantId());
+            assertEquals("export", saved.getPurpose());
+            assertTrue(saved.getPath().startsWith("export/"), "导出件落盘路径须带用途前缀");
+            assertEquals(DigestUtil.sha256Hex(content), saved.getFileHash(), "散列须与内容一致");
+            assertNotNull(saved.getRetentionExpireTime(), "导出件必须有保留期到期时间");
+            assertTrue(objectStore.containsKey(saved.getPath()), "存储对象必须存在");
+            assertEquals((long) content.length, saved.getSize());
+        }
     }
 
     // ========== ⑥ 生成/交付间撤权不泄露（主证据） ==========
 
     @Test
     public void generate_thenOrgRevoked_beforeIssue_rejected() {
-        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
-        FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(64));
-        FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
-        assertNotNull(resp.getFileId(), "生成时重检通过");
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            FileExportGenerateReqVO req = request("demo-export", 100L, 101L, sequencedBytes(64));
+            FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
+            assertNotNull(resp.getFileId(), "生成时重检通过");
 
-        // 生成后组织撤权（转岗/离任/组织停用）：org 门翻转——交付（issue）重检必须拒绝
-        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(false);
+            // 生成后组织撤权（转岗/离任/组织停用）：org 门翻转——交付（issue）重检必须拒绝
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(false);
 
-        assertThrows(AccessDeniedException.class, () -> deliveryService.issueDeliveryTicket(
-                new FileDeliveryTicketIssueReqVO().setFileId(resp.getFileId()).setPurpose("export"),
-                user(101L, 1L), "sess-101"), "生成/交付间撤权，交付重检必须拒绝");
+            assertThrows(AccessDeniedException.class, () -> deliveryService.issueDeliveryTicket(
+                    new FileDeliveryTicketIssueReqVO().setFileId(resp.getFileId()).setPurpose("export"),
+                    user(101L, 1L), "sess-101"), "生成/交付间撤权，交付重检必须拒绝");
+        }
     }
 
     @Test
     public void generate_thenRevoke_chunkStops() {
-        when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
-        byte[] content = sequencedBytes(300);
-        FileExportGenerateReqVO req = request("demo-export", 100L, 101L, content);
-        FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
-        LoginUser owner = user(101L, 1L);
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            byte[] content = sequencedBytes(300);
+            FileExportGenerateReqVO req = request("demo-export", 100L, 101L, content);
+            FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
+            LoginUser owner = user(101L, 1L);
 
-        FileDeliveryTicketIssueRespVO issued = deliveryService.issueDeliveryTicket(
-                new FileDeliveryTicketIssueReqVO().setFileId(resp.getFileId()).setPurpose("export"),
-                owner, "sess-101");
-        FileDeliverySessionRespVO session = deliveryService.redeemDeliveryTicket(
-                issued.getTicketToken(), "export", owner, "sess-101");
-        FileDeliveryChunkRespVO chunk = deliveryService.readDeliveryChunk(
-                session.getDeliverySessionId(), 0L, 99L, owner, "sess-101");
-        assertArrayEquals(Arrays.copyOfRange(content, 0, 100), chunk.getContent(), "导出件交付取流正常");
+            FileDeliveryTicketIssueRespVO issued = deliveryService.issueDeliveryTicket(
+                    new FileDeliveryTicketIssueReqVO().setFileId(resp.getFileId()).setPurpose("export"),
+                    owner, "sess-101");
+            FileDeliverySessionRespVO session = deliveryService.redeemDeliveryTicket(
+                    issued.getTicketToken(), "export", owner, "sess-101");
+            FileDeliveryChunkRespVO chunk = deliveryService.readDeliveryChunk(
+                    session.getDeliverySessionId(), 0L, 99L, owner, "sess-101");
+            assertArrayEquals(Arrays.copyOfRange(content, 0, 100), chunk.getContent(), "导出件交付取流正常");
 
-        // 在途撤权：后续分块必须停止输出
-        deliveryService.revokeDelivery(session.getDeliverySessionId(), owner);
-        ServiceException ex = assertThrows(ServiceException.class, () -> deliveryService.readDeliveryChunk(
-                session.getDeliverySessionId(), 100L, 199L, owner, "sess-101"));
-        assertEquals(FILE_DELIVERY_TICKET_REVOKED.getCode(), ex.getCode(), "撤权后在途分块必须停止输出");
+            // 在途撤权：后续分块必须停止输出
+            deliveryService.revokeDelivery(session.getDeliverySessionId(), owner);
+            ServiceException ex = assertThrows(ServiceException.class, () -> deliveryService.readDeliveryChunk(
+                    session.getDeliverySessionId(), 100L, 199L, owner, "sess-101"));
+            assertEquals(FILE_DELIVERY_TICKET_REVOKED.getCode(), ex.getCode(), "撤权后在途分块必须停止输出");
+        }
     }
 
     // ========== 测试装配：手建统一裁决服务（循 ObjectAuthorizationServiceTest 先例） ==========
@@ -375,6 +427,11 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
         loginUser.setVisitTenantId(2L);
         ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(loginUser);
         ms.when(SecurityFrameworkUtils::skipPermissionCheck).thenReturn(true);
+    }
+
+    /** 模拟同源安全上下文（codex r1 P2-1 锚定：线程上下文主体与入参主体一致） */
+    private static void stubContext(MockedStatic<SecurityFrameworkUtils> ms) {
+        ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(user(101L, 1L));
     }
 
     private static CrossOrgVisitDecisionDTO visitScope(Set<Long> targetOrgIds, Set<String> allowedActions,

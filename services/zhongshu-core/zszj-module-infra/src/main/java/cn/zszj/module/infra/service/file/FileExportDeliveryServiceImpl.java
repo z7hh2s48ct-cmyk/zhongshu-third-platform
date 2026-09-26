@@ -6,6 +6,7 @@ import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationReques
 import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationRespDTO;
 import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationService;
 import cn.zszj.framework.security.core.LoginUser;
+import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileExportGenerateReqVO;
 import cn.zszj.module.infra.controller.admin.file.vo.file.FileExportGenerateRespVO;
 import cn.zszj.module.infra.framework.file.config.FileExportProperties;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 import static cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants.FORBIDDEN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -28,6 +30,8 @@ import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_EXPORT_FORBIDDE
  * <ol>
  *     <li>接入契约：登录主体必填 + 对象类型非空白（导出通道声明）；裁决服务未装配 fail-closed
  *     （{@link #objectAuthorizationService}，循 {@link FileServiceImpl} org 门先例）；</li>
+ *     <li>安全上下文锚定（codex r1 P2-1）：请求线程上下文缺失或与入参主体不一致 fail-closed
+ *     （关闭 OrgDataPermissionChecker 无线程上下文护栏的 fail-open 面）；</li>
  *     <li>统一裁决（ZS-PERM-003.A）：{@link ObjectAuthorizationService#authorize}——未注册 provider
  *     返回 {@code null} → FORBIDDEN（未接入域继续走既有同步导出，零变化）；authorize 内部完成
  *     对象维（非 visit org 轴 checker / visit 经 visit scope 收敛；不可见即 FORBIDDEN）——
@@ -68,12 +72,20 @@ public class FileExportDeliveryServiceImpl implements FileExportDeliveryService 
             log.warn("[generateExportFile][导出生成拒绝：登录主体缺失或对象类型空白]");
             throw exception(FILE_EXPORT_FORBIDDEN);
         }
-        // 2. 机制可用性：统一裁决服务未装配 fail-closed（宁可拒绝，不绕过重检落盘）
+        // 2. 安全上下文锚定（codex r1 P2-1）：入参主体必须与请求线程安全上下文一致——对象维裁决经
+        //    OrgDataPermissionChecker，无线程上下文时其护栏（loginUser==null→可见）会静默放行对象维；
+        //    上下文缺失或与入参主体不一致均 fail-closed，关闭该 fail-open 面
+        LoginUser contextUser = SecurityFrameworkUtils.getLoginUser();
+        if (contextUser == null || !Objects.equals(contextUser.getId(), loginUser.getId())) {
+            log.warn("[generateExportFile][导出生成拒绝：安全上下文缺失或与入参主体不一致]");
+            throw exception(FILE_EXPORT_FORBIDDEN);
+        }
+        // 3. 机制可用性：统一裁决服务未装配 fail-closed（宁可拒绝，不绕过重检落盘）
         if (objectAuthorizationService == null) {
             log.warn("[generateExportFile][导出生成拒绝：统一裁决服务未装配，fail-closed]");
             throw exception(FILE_EXPORT_FORBIDDEN);
         }
-        // 3. 统一裁决：未注册对象类型=未接入，走既有同步导出通道，不在本通道（新通道保守，零变化）
+        // 4. 统一裁决：未注册对象类型=未接入，走既有同步导出通道，不在本通道（新通道保守，零变化）
         ObjectAuthorizationRespDTO auth = objectAuthorizationService.authorize(ObjectAuthorizationRequest.of(
                 req.getObjectType(), req.getOrgId(), req.getOwnerUserId(), req.getObject()));
         if (auth == null) {
@@ -81,7 +93,7 @@ public class FileExportDeliveryServiceImpl implements FileExportDeliveryService 
                     loginUser.getId(), req.getObjectType());
             throw exception(FORBIDDEN);
         }
-        // 4. 字段维拒绝路径：声明字段必须 ⊆ 授权字段（未启用字段级输出 + 非空声明 fail-closed）。
+        // 5. 字段维拒绝路径：声明字段必须 ⊆ 授权字段（未启用字段级输出 + 非空声明 fail-closed）。
         //    空字段声明不校验字段维；对象维已在 authorize 内完成——不因空字段声明跳过对象维
         if (CollUtil.isNotEmpty(req.getFields())
                 && (auth.getAuthorizedFields() == null || !auth.getAuthorizedFields().containsAll(req.getFields()))) {
@@ -89,7 +101,7 @@ public class FileExportDeliveryServiceImpl implements FileExportDeliveryService 
                     loginUser.getId(), req.getObjectType());
             throw exception(FORBIDDEN);
         }
-        // 5. 落盘私有导出件（org 继承源对象组织=生成/交付间撤权载体；保留期=生成时刻+配置天数）
+        // 6. 落盘私有导出件（org 继承源对象组织=生成/交付间撤权载体；保留期=生成时刻+配置天数）
         LocalDateTime retentionExpireTime = LocalDateTime.now().plusDays(exportProperties.getRetentionDays());
         Long fileId = fileService.createExportFile(req.getContent(), req.getName(), req.getType(),
                 loginUser.getId(), req.getOrgId(), retentionExpireTime);
