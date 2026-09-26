@@ -241,6 +241,11 @@ infra:
         retention-days: 7 # 孤儿对象保留期（占位，待实测回填）；lastModified 未知的对象保守不清理
         scan-max-objects: 1000 # 单次清点上限，超过如实标注截断（占位，待实测回填）
         cleanup-max-paths: 100 # 单次授权清理 path 上限（占位，待实测回填）；孤儿清理为预览→授权两步人工流程
+    export:
+      # ZS-FILE-004.B：导出件生成与用途保留期清理（占位，待实测回填）；导出件一律 PRIVATE，交付走 FILE-004.A 票据链
+      retention-days: 7 # 导出件保留期（天）：生成时刻 + 该天数 = retention_expire_time（占位，待实测回填）
+      preview-max-items: 200 # 预览单次返回候选上限，超过如实标注截断（占位，待实测回填）
+      cleanup-max-ids: 100 # 单次授权清理 id 上限（占位，待实测回填）；导出件清理为预览→授权两步人工流程
 
 zszj:
   ai:

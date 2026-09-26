@@ -109,4 +109,25 @@ public interface FileMapper extends BaseMapperX<FileDO> {
                 .apply("LOWER(path) = LOWER({0})", path));
     }
 
+    // ========== ZS-FILE-004.B：导出件用途保留期清理（候选查询） ==========
+
+    /**
+     * 导出件保留期候选（ZS-FILE-004.B）：{@code purpose='export' ∧ status='PUBLISHED' ∧
+     * retention_expire_time <= now}、有界。retention_expire_time 为 NULL 的记录不进入候选
+     * （普通上传/历史零变化）。排序【retention_expire_time ASC, id ASC】——先到期先清理、
+     * 同刻按下标稳定（LIMIT 截断时结果确定）。
+     * 租户内查询（租户拦截器保证，不跨技术租户；与孤儿清理跨租户核验语义不同——
+     * 导出件清理的对象是「本租户可治理的记录」）。
+     */
+    default List<FileDO> selectExportRetentionCandidates(java.time.LocalDateTime now, int limit) {
+        return selectList(new LambdaQueryWrapperX<FileDO>()
+                .eq(FileDO::getPurpose, FileDO.PURPOSE_EXPORT)
+                .eq(FileDO::getStatus, FileDO.STATUS_PUBLISHED)
+                .isNotNull(FileDO::getRetentionExpireTime)
+                .le(FileDO::getRetentionExpireTime, now)
+                .orderByAsc(FileDO::getRetentionExpireTime)
+                .orderByAsc(FileDO::getId)
+                .last("LIMIT " + limit));
+    }
+
 }

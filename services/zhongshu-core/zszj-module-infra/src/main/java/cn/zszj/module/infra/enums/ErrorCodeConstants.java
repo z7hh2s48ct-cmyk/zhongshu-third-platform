@@ -72,6 +72,9 @@ public interface ErrorCodeConstants {
     ErrorCode FILE_ORPHAN_CLEANUP_BATCH_EXCEED = new ErrorCode(1_001_003_035, "单次孤儿清理数量（{}）超过上限（{}），请分批授权");
     ErrorCode FILE_ORPHAN_SHARED_STORAGE_REFUSED = new ErrorCode(1_001_003_036, "存储根与其他文件配置共享或嵌套（{}），孤儿清点/清理被保守拒绝，请先隔离存储根");
     ErrorCode FILE_ORPHAN_PATH_UNVERIFIABLE = new ErrorCode(1_001_003_037, "孤儿对象路径位于被跳过的别名/不可解析目录下或清点被截断，存在性无法核验，已拒绝清理（防假成功）"); // codex r3 P2
+    // ZS-FILE-004.B：导出生成-交付两阶段重检与用途保留期清理
+    ErrorCode FILE_EXPORT_FORBIDDEN = new ErrorCode(1_001_003_038, "导出生成请求不满足接入契约（登录主体/对象类型缺失）或导出裁决服务未装配，拒绝生成");
+    ErrorCode FILE_EXPORT_RETENTION_BATCH_EXCEED = new ErrorCode(1_001_003_039, "单次导出件保留期清理数量（{}）超过上限（{}），请分批授权");
     ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");

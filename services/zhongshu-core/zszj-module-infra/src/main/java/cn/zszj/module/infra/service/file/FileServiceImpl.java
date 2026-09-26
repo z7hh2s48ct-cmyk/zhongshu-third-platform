@@ -98,6 +98,10 @@ public class FileServiceImpl implements FileService {
      * false：{@code yyyyMMdd/原文件名_<后缀>.ext}；后缀拼到文件名
      */
     static boolean PATH_SUFFIX_AS_DIRECTORY = true;
+    /**
+     * ZS-FILE-004.B：导出件落盘目录（人工可辨识前缀；对象键形如 export/yyyyMMdd/&lt;uuid&gt;/name）
+     */
+    static final String EXPORT_DIRECTORY = "export";
 
     @Resource
     private FileConfigService fileConfigService;
@@ -159,8 +163,40 @@ public class FileServiceImpl implements FileService {
         }
     }
 
+    @Override
+    @SneakyThrows
+    public Long createExportFile(byte[] content, String name, String type, Long ownerUserId,
+                                 Long organizationId, LocalDateTime retentionExpireTime) {
+        // ZS-FILE-004.B：与上传同预算（在途上传许可复用，导出生成与上传共享准入）
+        boolean acquired = uploadPermits().tryAcquire();
+        if (!acquired) {
+            throw exception(FILE_UPLOAD_CONCURRENT_LIMIT);
+        }
+        try {
+            return doCreateAsset(content, name, EXPORT_DIRECTORY, type,
+                    ownerUserId, organizationId, FileDO.PURPOSE_EXPORT, retentionExpireTime).getId();
+        } finally {
+            uploadPermits.release();
+        }
+    }
+
     @SneakyThrows
     private String doCreateFile(byte[] content, String name, String directory, String type) {
+        // ZS-FILE-004.B：与导出件共用同一落盘编排（校验链单一来源，避免双份漂移）
+        return doCreateAsset(content, name, directory, type,
+                currentUserOrZero(), currentOrgIdOrNull(), null, null).getUrl();
+    }
+
+    /**
+     * ZS-FILE-004.B：统一落盘编排（{@link #createFile(byte[], String, String, String)} 与
+     * {@link #createExportFile} 共用同一校验链）：文件名合法化 → 大小限额 → 纯内容类型探测 →
+     * 散列名/扩展名补全 → 危险扩展名黑名单 → 扩展名一致性 → 唯一对象键 → 存储写入 → 记录落库
+     * （owner/org/purpose/retention 参数化；普通上传 purpose/retention 为 null=零变化）。
+     */
+    @SneakyThrows
+    private FileDO doCreateAsset(byte[] content, String name, String directory, String type,
+                                 Long ownerUserId, Long organizationId, String purpose,
+                                 LocalDateTime retentionExpireTime) {
         // 1.1 处理 name 的合法性，禁止携带目录路径
         name = FilePathUtils.validateFileName(name);
 
@@ -201,13 +237,16 @@ public class FileServiceImpl implements FileService {
                 .setName(name).setPath(path).setUrl(url)
                 .setType(type).setSize((long) content.length)
                 .setFileHash(DigestUtil.sha256Hex(content))
-                .setOwnerUserId(currentUserOrZero()).setScope(FileScopeEnum.PRIVATE.getScope())
-                // ZS-FILE-001.B：记录服务端签发的业务组织归属（org 轴数据载体；匿名/系统/无默认任职为 null）
-                .setOrganizationId(currentOrgIdOrNull());
+                .setOwnerUserId(ownerUserId).setScope(FileScopeEnum.PRIVATE.getScope())
+                // ZS-FILE-001.B：记录服务端签发的业务组织归属（org 轴数据载体；普通上传=当前任职，导出件=源对象组织，匿名/系统为 null）
+                .setOrganizationId(organizationId);
         // ZS-FILE-001.A：显式记录技术租户（服务端确认归属，不依赖拦截器装配）
         file.setTenantId(TenantContextHolder.getTenantId());
+        // ZS-FILE-004.B：用途与保留期参数化落库（普通上传为 null=零变化；导出件由 createExportFile 显式传入）
+        file.setPurpose(purpose);
+        file.setRetentionExpireTime(retentionExpireTime);
         fileMapper.insert(file);
-        return url;
+        return file;
     }
 
     @VisibleForTesting

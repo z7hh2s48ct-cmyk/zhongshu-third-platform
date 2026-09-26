@@ -11,6 +11,7 @@ import cn.zszj.module.infra.controller.admin.file.vo.file.FileUploadCredentialCr
 import cn.zszj.module.infra.dal.dataobject.file.FileDO;
 import jakarta.validation.constraints.NotEmpty;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -66,6 +67,22 @@ public interface FileService {
      */
     Long createFile(FileCreateReqVO createReqVO);
     FileDO getFile(Long id);
+
+    /**
+     * ZS-FILE-004.B：导出件落盘（生成通道专用入口）——复用上传同一校验链（大小上限/纯内容类型
+     * 探测/危险扩展名黑名单/散列/存储写入），owner/organizationId/purpose='export'/保留期
+     * 【显式写入】，不取当前登录上下文（导出件归属=源对象组织，非当前操作者默认任职）。
+     *
+     * @param content             导出内容（服务端业务代码按批准字段裁剪后生成）
+     * @param name                文件名（可空=内容散列兜底）
+     * @param type                MIME 声明（不信任；以纯内容探测为准）
+     * @param ownerUserId         导出件所有者（登录主体）
+     * @param organizationId      源对象组织（生成/交付间撤权载体；可空=无组织列对象）
+     * @param retentionExpireTime 保留期到期时间（按用途保留期清理的判别依据）
+     * @return 导出件编号
+     */
+    Long createExportFile(byte[] content, String name, String type, Long ownerUserId,
+                          Long organizationId, LocalDateTime retentionExpireTime);
 
     /**
      * 删除文件（ZS-FILE-005.A：引用保护 + DELETING 可恢复中间态）
