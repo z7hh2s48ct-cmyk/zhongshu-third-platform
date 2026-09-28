@@ -17,12 +17,15 @@ import java.util.Set;
  *     <li>{@link #all}=true：可见租户内全部组织（超级管理员，或 D-09「显式平台角色」——PLATFORM 类型组织任职）；</li>
  *     <li>{@link #orgIds}：授权可见的组织编号集合（非平台任职 = 本人各在职组织 + 其组织树后代）；</li>
  *     <li>{@link #self}=true：对象负责人为登录用户本人即可见（无组织列对象的兜底，避免本人对象因 orgId=null 被判不可见）；</li>
+ *     <li>{@link #ledOrgIds}：登录主体担任负责人的组织编号集合（ZS-PERM-003.B / D-12 §3 字段等级 F2 判定输入；
+ *     与 orgIds 相互独立——orgIds 表达数据范围，ledOrgIds 表达任职身份）；</li>
  *     <li>{@link #scopeType}：范围类型（{@code OrgDataScopeEnum} 的值，仅用于审计/授权矩阵登记，检查器判定不依赖）。</li>
  * </ul>
  *
  * <p>不携带跨租户语义：tenant_id 隔离轴由租户拦截器与 ZS-DB-018 覆盖，本 DTO 只在同一技术租户内表达 org 范围。
  *
  * @author ZS-PERM-002.B
+ * @author ZS-PERM-003.B
  */
 @Data
 public class OrgDataPermissionRespDTO {
@@ -40,6 +43,10 @@ public class OrgDataPermissionRespDTO {
      */
     private Set<Long> orgIds;
     /**
+     * 登录主体担任负责人的组织编号集合（ZS-PERM-003.B / D-12 §3：字段等级「组织负责人=F2」判定输入）
+     */
+    private Set<Long> ledOrgIds;
+    /**
      * 授权范围类型（关联 module-system {@code OrgDataScopeEnum}，仅审计/矩阵用；框架层不解释其枚举语义）
      */
     private Integer scopeType;
@@ -48,6 +55,7 @@ public class OrgDataPermissionRespDTO {
         this.all = false;
         this.self = false;
         this.orgIds = new HashSet<>();
+        this.ledOrgIds = new HashSet<>();
     }
 
 }

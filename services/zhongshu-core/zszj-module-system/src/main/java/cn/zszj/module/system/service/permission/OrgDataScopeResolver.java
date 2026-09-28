@@ -33,7 +33,8 @@ import java.util.Set;
  *   <li>超级管理员 → {@link OrgDataScopeEnum#ORG_ALL}（全部组织）；</li>
  *   <li>存在 PLATFORM 类型组织的<b>有效任职</b> → {@link OrgDataScopeEnum#ORG_ALL}（显式平台角色，跨组织全量）；</li>
  *   <li>存在其它类型的有效任职 → {@link OrgDataScopeEnum#ORG_AND_CHILD}：本人各在职组织 + 其组织树后代并集
- *       （支持两组织合法互授），并置 {@code self=true} 兜底无组织列对象；</li>
+ *       （支持两组织合法互授），并置 {@code self=true} 兜底无组织列对象；同时收录 {@code ledOrgIds}=登录主体
+ *       直接负责的组织集合（ZS-PERM-003.B / D-12 §3 字段等级 F2 判定输入，不影响范围本身）；</li>
  *   <li>无任何有效任职 → {@link OrgDataScopeEnum#ORG_SELF}：仅本人兜底（历史无组织账号兼容，与
  *       {@code MembershipContextResolver} 的降级空上下文一致）。</li>
  * </ol>
@@ -43,6 +44,7 @@ import java.util.Set;
  *
  * @author ZS-PERM-002.B
  * @author ZS-PERM-001.B
+ * @author ZS-PERM-003.B
  */
 @Component
 public class OrgDataScopeResolver {
@@ -93,6 +95,10 @@ public class OrgDataScopeResolver {
         }
         result.setSelf(true);
         result.setOrgIds(scopeOrgIds);
+        // 负责人组织集合（ZS-PERM-003.B / D-12 §3 字段等级 F2 判定输入）：与 orgIds 相互独立——
+        // orgIds 表达数据范围（含后代下钻），ledOrgIds 仅收录登录主体直接负责的组织；
+        // all=true（超管/平台）路径不填充——字段等级已由 F3 兜底，负责人身份无增量语义。
+        result.setLedOrgIds(new HashSet<>(effective.ledOrgIds));
         result.setScopeType(OrgDataScopeEnum.ORG_AND_CHILD.getScope());
         return result;
     }
@@ -138,16 +144,23 @@ public class OrgDataScopeResolver {
             if (OrganizationTypeEnum.PLATFORM.getType().equals(organization.getType())) {
                 result.platform = true;
             }
+            // 负责人身份（ZS-PERM-003.B / D-12）：仅收录「有效任职 ∩ 组织开启」下的负责组织（与范围排除同口径，
+            // 禁用组织的负责人身份一并失效，防止经停用组织越级取 F2）
+            if (userId.equals(organization.getLeaderUserId())) {
+                result.ledOrgIds.add(organization.getId());
+            }
             result.orgIds.add(organization.getId());
         }
         return result;
     }
 
     /**
-     * 有效任职组织收集结果：直接任职组织集合（去重保序）+ 是否含平台类型组织。
+     * 有效任职组织收集结果：直接任职组织集合（去重保序）+ 是否含平台类型组织 + 登录主体负责的组织集合
+     * （ZS-PERM-003.B，字段等级判定输入）。
      */
     private static class EffectiveOrgs {
         private final Set<Long> orgIds = new LinkedHashSet<>();
+        private final Set<Long> ledOrgIds = new LinkedHashSet<>();
         private boolean platform = false;
     }
 
