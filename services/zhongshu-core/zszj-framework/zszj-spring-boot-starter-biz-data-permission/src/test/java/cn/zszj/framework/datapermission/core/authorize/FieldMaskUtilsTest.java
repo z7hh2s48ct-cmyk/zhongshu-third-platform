@@ -31,8 +31,8 @@ class FieldMaskUtilsTest {
 
     @Test // 自定义保留位数（D-12：规则可配置）
     void mask_customKeepTail() {
-        assertEquals("**12", FieldMaskUtils.maskKeepTail("1234", 2));
-        assertEquals("*********1", FieldMaskUtils.maskKeepTail("13812345678", 1));
+        assertEquals("**34", FieldMaskUtils.maskKeepTail("1234", 2));
+        assertEquals("**********8", FieldMaskUtils.maskKeepTail("13812345678", 1));
     }
 
     @Test // null 返回 null；空白原样返回（无可泄露内容）

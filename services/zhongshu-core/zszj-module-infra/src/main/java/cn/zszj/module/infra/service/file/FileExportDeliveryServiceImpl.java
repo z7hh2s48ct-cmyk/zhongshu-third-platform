@@ -101,6 +101,13 @@ public class FileExportDeliveryServiceImpl implements FileExportDeliveryService 
                     loginUser.getId(), req.getObjectType());
             throw exception(FORBIDDEN);
         }
+        // 5b. 导出不放宽（ZS-PERM-003.B / D-12 §3「导出」行）：声明字段命中 maskedFields（F2 脱敏字段）
+        //     一并拒绝——脱敏字段只得以脱敏形态展示，不得经导出通道获取明文（隐藏字段不能经导出旁路）
+        if (CollUtil.isNotEmpty(req.getFields()) && CollUtil.containsAny(req.getFields(), auth.getMaskedFields())) {
+            log.warn("[generateExportFile][登录用户({}) 对象类型({}) 声明字段命中脱敏字段，导出不放宽拒绝]",
+                    loginUser.getId(), req.getObjectType());
+            throw exception(FORBIDDEN);
+        }
         // 6. 落盘私有导出件（org 继承源对象组织=生成/交付间撤权载体；保留期=生成时刻+配置天数）
         LocalDateTime retentionExpireTime = LocalDateTime.now().plusDays(exportProperties.getRetentionDays());
         Long fileId = fileService.createExportFile(req.getContent(), req.getName(), req.getType(),

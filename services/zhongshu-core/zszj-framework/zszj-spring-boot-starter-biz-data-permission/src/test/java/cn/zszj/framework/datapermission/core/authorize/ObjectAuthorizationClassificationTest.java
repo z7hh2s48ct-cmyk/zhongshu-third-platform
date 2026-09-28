@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -210,25 +211,25 @@ class ObjectAuthorizationClassificationTest extends BaseMockitoUnitTest {
         return dto;
     }
 
-    /** 员工访问者：非平台、非目标组织负责人 → 解析上限 F1 */
+    /** 员工访问者：非平台、非目标组织负责人 → 解析上限 F1（stub 用 lenient——plain/no-fields 路径不触达解析器） */
     private void stubEmployee(MockedStatic<SecurityFrameworkUtils> ms) {
         ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(adminUser());
         ms.when(SecurityFrameworkUtils::skipPermissionCheck).thenReturn(false);
-        when(permissionApi.getOrgDataPermission(1L)).thenReturn(accessDto(false, Set.of()));
+        lenient().when(permissionApi.getOrgDataPermission(1L)).thenReturn(accessDto(false, Set.of()));
     }
 
     /** 负责人访问者：ledOrgIds 命中对象所属组织 → 解析上限 F2 */
     private void stubLeader(MockedStatic<SecurityFrameworkUtils> ms) {
         ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(adminUser());
         ms.when(SecurityFrameworkUtils::skipPermissionCheck).thenReturn(false);
-        when(permissionApi.getOrgDataPermission(1L)).thenReturn(accessDto(false, Set.of(100L)));
+        lenient().when(permissionApi.getOrgDataPermission(1L)).thenReturn(accessDto(false, Set.of(100L)));
     }
 
     /** 平台访问者：all=true → 解析上限 F3 */
     private void stubPlatform(MockedStatic<SecurityFrameworkUtils> ms) {
         ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(adminUser());
         ms.when(SecurityFrameworkUtils::skipPermissionCheck).thenReturn(false);
-        when(permissionApi.getOrgDataPermission(1L)).thenReturn(accessDto(true, Set.of()));
+        lenient().when(permissionApi.getOrgDataPermission(1L)).thenReturn(accessDto(true, Set.of()));
     }
 
     /** visit 授权范围（循 SEC-001.B 先例：authorized + whole-tenant + 指定动作/字段） */
