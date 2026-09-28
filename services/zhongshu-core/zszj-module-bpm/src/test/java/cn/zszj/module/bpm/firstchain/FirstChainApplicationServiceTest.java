@@ -273,6 +273,19 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
     }
 
     @Test
+    void withdraw_instanceAlreadyGone_gateStillClassifies() {
+        Long id = createApplication("APP-W4");
+        applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
+        // 引擎侧实例已被处理（端口返回 false）：撤回仍落绑定幂等门（R1 P2 韧性路径——不抛引擎原生异常）
+        ((StubProcessPort) processPort).withdrawResult = false;
+
+        applicationService.withdrawApproval(id, 1L, "creator-1");
+
+        assertThat(queryActiveBinding(id).get("status")).isEqualTo(FirstChainProcessBindingService.STATUS_WITHDRAWN);
+        assertThat(queryApplication(id).get("status")).isEqualTo(FranchiseeApplicationStatus.SUBMITTED.name());
+    }
+
+    @Test
     void withdraw_neverSubmitted_notBound() {
         Long id = createApplication("APP-W2");
         // 从未提交：无任何流程绑定 → NOT_BOUND（可回查分类，区别于「审批已终结后撤回」的绑定冲突）
@@ -349,6 +362,8 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
 
         final List<StartRecord> startCalls = new java.util.ArrayList<>();
         final List<String> withdrawCalls = new java.util.ArrayList<>();
+        /** 撤回返回值（false=实例已被并发操作处理，R1 P2 韧性路径） */
+        boolean withdrawResult = true;
         private int sequence = 0;
 
         record StartRecord(Long tenantId, String appKey, Long approverUserId) {
@@ -357,6 +372,7 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         void reset() {
             startCalls.clear();
             withdrawCalls.clear();
+            withdrawResult = true;
             sequence = 0;
         }
 
@@ -368,8 +384,9 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         }
 
         @Override
-        public void withdrawProcess(String processInstanceId) {
+        public boolean withdrawProcess(String processInstanceId) {
             withdrawCalls.add(processInstanceId);
+            return withdrawResult;
         }
 
     }

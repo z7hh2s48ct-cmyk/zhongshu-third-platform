@@ -56,15 +56,27 @@ public class FlowableFirstChainProcessAdapter implements FirstChainProcessPort {
     @Override
     public synchronized String startApprovalProcess(Long tenantId, String appKey, Long approverUserId) {
         ensureDeployed();
-        Map<String, Object> variables = Map.of(
-                "tenantId", tenantId,
-                VAR_APPROVER, approverUserId);
-        return runtimeService.startProcessInstanceByKey(PROCESS_KEY, appKey, variables).getId();
+        // 引擎级租户标签（循模块惯例 BpmProcessInstanceServiceImpl.processInstanceTenantId）：
+        // 引擎查询按租户分组可见；领域租户权威仍为绑定行
+        return runtimeService.createProcessInstanceBuilder()
+                .processDefinitionKey(PROCESS_KEY)
+                .businessKey(appKey)
+                .tenantId(String.valueOf(tenantId))
+                .variable("tenantId", tenantId)
+                .variable(VAR_APPROVER, approverUserId)
+                .start()
+                .getId();
     }
 
     @Override
-    public void withdrawProcess(String processInstanceId) {
-        runtimeService.deleteProcessInstance(processInstanceId, "WITHDRAWN_BY_APPLICANT");
+    public boolean withdrawProcess(String processInstanceId) {
+        try {
+            runtimeService.deleteProcessInstance(processInstanceId, "WITHDRAWN_BY_APPLICANT");
+            return true;
+        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException alreadyGone) {
+            // 实例已不存在（并发完成/取消先到）：交由绑定幂等门分类（冲突或吸收），不在此处抛引擎原生异常
+            return false;
+        }
     }
 
     /**

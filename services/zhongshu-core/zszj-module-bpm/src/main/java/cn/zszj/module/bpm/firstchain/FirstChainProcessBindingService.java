@@ -112,12 +112,13 @@ public class FirstChainProcessBindingService {
      * @return {@code true}=门由本次调用赢得（调用方继续领域迁移）；{@code false}=已被他人终结（重复/竞争，
      *         由 {@link #resolveGateLost} 分类）
      */
-    public boolean transitionGate(Long tenantId, String processInstanceId, String targetStatus, String outcome) {
+    public boolean transitionGate(Long tenantId, String processInstanceId, String targetStatus, String outcome,
+                                  String updater) {
         int updated = jdbcTemplate.update(
                 "UPDATE bpm_first_chain_process_binding SET status = ?, outcome = ?, updater = ?, "
                         + "update_time = CURRENT_TIMESTAMP WHERE process_instance_id = ? AND tenant_id = ? "
                         + "AND status = ?",
-                targetStatus, outcome, "system", processInstanceId, tenantId, STATUS_BOUND);
+                targetStatus, outcome, updater, processInstanceId, tenantId, STATUS_BOUND);
         return updated == 1;
     }
 

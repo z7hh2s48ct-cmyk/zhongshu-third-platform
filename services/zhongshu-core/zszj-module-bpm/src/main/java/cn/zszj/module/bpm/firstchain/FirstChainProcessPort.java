@@ -24,7 +24,8 @@ public interface FirstChainProcessPort {
      * 撤回审批流程实例（流程侧取消；领域状态由 {@code FirstChainApplicationService#withdrawApproval} 处理）。
      *
      * @param processInstanceId 流程实例编号
+     * @return {@code true}=已取消；{@code false}=实例已不存在（如已被并发完成/取消——调用方须落到绑定幂等门分类）
      */
-    void withdrawProcess(String processInstanceId);
+    boolean withdrawProcess(String processInstanceId);
 
 }

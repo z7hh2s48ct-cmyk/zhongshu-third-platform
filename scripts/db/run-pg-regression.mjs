@@ -22,6 +22,7 @@
  *  18. ZS-IAM-002 组织/任职建模与历史迁移回填（V20260921.001/.002 重放、部门→组织桥接、账号→任职不误合并、默认任职/同组织去重/组织编码 3 部分唯一索引、跨组织隔离、role_ids JSON 聚合）
  *  19. ZS-IAM-004 任职迁移前后核对/恢复方案（parity、一账号一 primary、不合格不回填、rollback 演练、幂等重放）
  *  20. ZS-FILE-004.B 导出件用途保留期清理（V20260925.002 重放、候选查询形状/FIFO/LIMIT 截断、保留期边界 NULL/<=、用途/状态/逻辑删除门、清理路径与引用保护交叉、租户隔离）
+ *  21. ZS-BPM-003 首链领域状态与幂等写回（真实 Flowable+PG：四操作与业务状态一致、重复回调吸收、晚到弃单留痕、并发审批/撤回恰一方生效）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -52,6 +53,7 @@ const cases = [
   { id: 'ZS-IAM-002 组织/任职建模/历史迁移回填不误合并/部分唯一约束', cmd: ['node', 'scripts/db/run-iam002-verify.mjs'] },
   { id: 'ZS-IAM-004 任职迁移前后核对/恢复方案/不误合并', cmd: ['node', 'scripts/db/run-iam004-verify.mjs'] },
   { id: 'ZS-FILE-004.B 导出件用途保留期清理/边界/引用保护交叉', cmd: ['node', 'scripts/db/run-file004b-verify.mjs'] },
+  { id: 'ZS-BPM-003 首链领域状态与幂等写回（真实引擎/四操作/幂等门）', cmd: ['node', 'scripts/db/run-bpm003-verify.mjs'] },
 ];
 
 let failed = false;

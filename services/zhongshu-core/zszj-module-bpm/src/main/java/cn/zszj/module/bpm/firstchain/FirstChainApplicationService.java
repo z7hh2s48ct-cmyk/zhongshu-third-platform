@@ -23,6 +23,7 @@ import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_APPLICATIO
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_PROCESS_BINDING_CONFLICT;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_PROCESS_NOT_BOUND;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_REJECT_REASON_REQUIRED;
+import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_STATE_CONFLICT;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_TENANT_REQUIRED;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_VERSION_CONFLICT;
 
@@ -40,7 +41,8 @@ import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_VERSION_CO
  * </ul>
  *
  * <p>事务边界：全部写路径单事务（领域迁移 + 绑定 + 审计 SUCCESS 同事务，任一失败整体回滚——at-least-once
- * 回调重投安全）；DENIED/弃单审计由 {@code JdbcAuditPort} 独立事务落库（业务回滚不丢失拒绝留痕）。
+ * 回调重投安全；弃单留痕同为 SUCCESS 随事务，弃单分支正常返回故事务提交）；DENIED 冲突拒绝留痕由
+ * {@code JdbcAuditPort} 以 REQUIRES_NEW 独立事务落库（业务回滚不丢失拒绝留痕）。
  * 待办/事件接线（PILOT-REQ-010）随首链业务模块按 BPM-004 接入合同落卡，本卡不引入 bpm→system 主代码依赖。
  *
  * @author ZS-BPM-003
@@ -86,14 +88,19 @@ public class FirstChainApplicationService {
             if (exists != null && exists > 0) {
                 throw exception(FIRST_CHAIN_APP_KEY_EXISTS, cmd.appKey());
             }
-            jdbcTemplate.update(
-                    "INSERT INTO bpm_first_chain_application "
-                            + "(app_key, applicant_name, contact_name, contact_phone, attachment_file_ids, "
-                            + "status, version, tenant_id, creator, updater) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                    cmd.appKey(), cmd.applicantName(), cmd.contactName(), cmd.contactPhone(),
-                    cmd.attachmentFileIds(), FranchiseeApplicationStatus.DRAFT.name(), tenantId,
-                    cmd.actorId(), cmd.actorId());
+            try {
+                jdbcTemplate.update(
+                        "INSERT INTO bpm_first_chain_application "
+                                + "(app_key, applicant_name, contact_name, contact_phone, attachment_file_ids, "
+                                + "status, version, tenant_id, creator, updater) "
+                                + "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                        cmd.appKey(), cmd.applicantName(), cmd.contactName(), cmd.contactPhone(),
+                        cmd.attachmentFileIds(), FranchiseeApplicationStatus.DRAFT.name(), tenantId,
+                        cmd.actorId(), cmd.actorId());
+            } catch (org.springframework.dao.DuplicateKeyException concurrentDuplicate) {
+                // COUNT 快路径的并发窗口由 uk(tenant, app_key) 兜底：裸唯一键异常转译为业务错误码
+                throw exception(FIRST_CHAIN_APP_KEY_EXISTS, cmd.appKey());
+            }
             Long id = jdbcTemplate.queryForObject(
                     "SELECT id FROM bpm_first_chain_application WHERE tenant_id = ? AND app_key = ? AND deleted = FALSE",
                     Long.class, tenantId, cmd.appKey());
@@ -162,7 +169,7 @@ public class FirstChainApplicationService {
         TenantUtils.execute(tenantId, () -> transactionTemplate.executeWithoutResult(status -> {
             // ① 幂等门：条件迁移 BOUND→COMPLETED（记流程侧事实结果）
             boolean gateWon = processBindingService.transitionGate(tenantId, processInstanceId,
-                    FirstChainProcessBindingService.STATUS_COMPLETED, outcome);
+                    FirstChainProcessBindingService.STATUS_COMPLETED, outcome, actorId);
             if (!gateWon) {
                 // 重复同结果=吸收返回；异结果/撤回竞争=显式冲突（先到者生效）
                 processBindingService.resolveGateLost(tenantId, processInstanceId,
@@ -232,9 +239,11 @@ public class FirstChainApplicationService {
             String processInstanceId = (String) binding.get("process_instance_id");
             switch (bindingStatus) {
                 case FirstChainProcessBindingService.STATUS_BOUND -> {
+                    // 引擎侧取消（false=实例已被并发完成/取消先到处理）→ 无论真假都落绑定幂等门分类：
+                    // 门赢=撤回生效；门输（完成已写回）=显式冲突，不静默、不抛引擎原生异常
                     processPort.withdrawProcess(processInstanceId);
                     boolean gateWon = processBindingService.transitionGate(tenantId, processInstanceId,
-                            FirstChainProcessBindingService.STATUS_WITHDRAWN, null);
+                            FirstChainProcessBindingService.STATUS_WITHDRAWN, null, actorId);
                     if (!gateWon) {
                         processBindingService.resolveGateLost(tenantId, processInstanceId,
                                 FirstChainProcessBindingService.STATUS_WITHDRAWN, null);
@@ -263,7 +272,7 @@ public class FirstChainApplicationService {
                 throw exception(FIRST_CHAIN_VERSION_CONFLICT, expectedVersion);
             }
             if (!FranchiseeApplicationStatus.SUBMITTED.name().equals(row.get("status"))) {
-                throw exception(FIRST_CHAIN_APPLICATION_NOT_EXISTS);
+                throw exception(FIRST_CHAIN_STATE_CONFLICT, String.valueOf(row.get("status")));
             }
             processBindingService.assertNoActiveBinding(tenantId, FirstChainObjectType.APPLICATION, applicationId);
             String processInstanceId = processPort.startApprovalProcess(tenantId,
