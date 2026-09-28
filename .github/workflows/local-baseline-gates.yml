@@ -2,7 +2,8 @@ name: local-baseline-gates
 
 # ZS-OPS-001.A：基础构建/文档流水线骨架——与本地 `node scripts/ops/run-local-gates.mjs` 同一规则。
 # fast job 仅静态/单测门禁；PG 层入 pg-regression.yml（ZS-OPS-001.B）；安全/基础管理 API 层入
-# security-chain-regression + sys001-regression job（ZS-OPS-001.C，G12/G14 同规则）；多端 E2E（.D）/流程（.E）按批次接入。
+# security-chain-regression + sys001-regression job（ZS-OPS-001.C，G12/G14 同规则）；多端 E2E（.D）按批次接入；
+# 流程（.E）= pg-regression.yml 通道（bpm001 #9 + bpm003 #21 套件，ZS-OPS-001.E 同入口覆盖）。
 
 on:
   push:

@@ -26,7 +26,7 @@ const outDir = join(root, 'outputs', 'bpm-003');
 const isWin = process.platform === 'win32';
 const TEST_CLASS = 'BpmFirstChainPgRuntimeTest';
 const TEST_FQN = `cn.zszj.module.bpm.firstchain.${TEST_CLASS}`;
-const EXPECTED_TESTS = 6;
+const EXPECTED_TESTS = 7;
 
 function fail(code, message) { console.error(message); process.exit(code); }
 

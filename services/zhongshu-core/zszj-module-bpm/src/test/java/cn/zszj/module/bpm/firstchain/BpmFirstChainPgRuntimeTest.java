@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
+import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_APPLICATION_NOT_EXISTS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -282,6 +284,34 @@ class BpmFirstChainPgRuntimeTest {
         assertTrue(FranchiseeApplicationStatus.APPROVED.name().equals(status)
                         || FranchiseeApplicationStatus.SUBMITTED.name().equals(status),
                 "领域状态应与胜出方一致，实际=" + status);
+    }
+
+    @Test
+    @Order(70)
+    void crossTenantIsolationOnRealEngine() {
+        // 跨组织（技术租户轴=加盟商主体轴，D-09）反向：加盟商 B（tenant 2）对加盟商 A（tenant 1）
+        // 的申请不可见、不可操作（验收「跨组织反向通过」，真实引擎+真实 PG）
+        Long id = createApplication("BPM003-X1");
+        applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
+
+        TenantContextHolder.setTenantId(2L);
+        try {
+            // 视图不可见：域服务读回分类为 NOT_EXISTS（而非越权细节泄露）
+            assertServiceException(() -> applicationService.withdrawApproval(id, 1L, "intruder"),
+                    FIRST_CHAIN_APPLICATION_NOT_EXISTS);
+            assertServiceException(() -> applicationService.restartApproval(id, 1L, APPROVER_ID, "intruder"),
+                    FIRST_CHAIN_APPLICATION_NOT_EXISTS);
+            // 直证：tenant 2 上下文内权威查询无该行（隔离在 SQL 过滤层，非仅服务层判定）
+            Integer rows = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM bpm_first_chain_application WHERE tenant_id = 2 AND id = ?", Integer.class, id);
+            assertEquals(0, rows, "他租户上下文不得见该申请行");
+        } finally {
+            TenantContextHolder.setTenantId(TENANT_ID);
+        }
+        // 归属租户操作不受影响：撤回仍生效（隔离未误伤合法主体，绑定生命周期照常推进）
+        applicationService.withdrawApproval(id, 1L, "creator-1");
+        assertEquals(FirstChainProcessBindingService.STATUS_WITHDRAWN,
+                bindingService.findLatestByDomain(TENANT_ID, FirstChainObjectType.APPLICATION, id).get("status"));
     }
 
     // ========== 测试辅助 ==========
