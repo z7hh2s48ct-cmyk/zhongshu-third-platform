@@ -25,7 +25,7 @@ const outDir = join(root, 'outputs', 'b09-gate');
 
 const suites = [
   { id: 'P1 ZS-BPM-001 PG 流程（独立装配/重启恢复/四操作/事务回滚/积压恢复）', script: 'scripts/db/run-bpm001-verify.mjs' },
-  { id: 'P2 ZS-BPM-003 首链幂等写回与跨组织反向（真实引擎 7 例）', script: 'scripts/db/run-bpm003-verify.mjs' },
+  { id: 'P2 ZS-BPM-003 首链幂等写回与跨组织反向（真实引擎，用例数由 EXPECTED_TESTS 权威）', script: 'scripts/db/run-bpm003-verify.mjs' },
 ];
 
 let pass = 0, failCount = 0;
@@ -35,8 +35,10 @@ const record = (id, ok, note = '') => { results.push({ id, ok, note }); ok ? pas
 for (const suite of suites) {
   console.log(`\n[b09-gate] 运行 ${suite.id} …`);
   const r = spawnSync(process.execPath, [suite.script], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const tail = (r.stdout ?? '').split('\n').filter((l) => l.startsWith('[')).slice(-4).join(' | ');
-  record(suite.id, r.status === 0, r.status === 0 ? tail.slice(0, 300) : `exit=${r.status}；${tail.slice(0, 300)}`);
+  // 失败诊断合并 stdout+stderr（套件早期失败——工具链/Docker/迁移——全走 stderr，R1 P2）
+  const outTail = (r.stdout ?? '').split('\n').filter((l) => l.startsWith('[')).slice(-4).join(' | ');
+  const errTail = String(r.stderr ?? '').trim().split('\n').slice(-2).join(' | ');
+  record(suite.id, r.status === 0, r.status === 0 ? outTail.slice(0, 300) : `exit=${r.status ?? 'ERR'}；${(outTail + ' ' + errTail).slice(0, 300)}`);
 }
 
 mkdirSync(outDir, { recursive: true });

@@ -293,7 +293,6 @@ class BpmFirstChainPgRuntimeTest {
         // 的申请不可见、不可操作（验收「跨组织反向通过」，真实引擎+真实 PG）
         Long id = createApplication("BPM003-X1");
         applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
-        String processInstanceId = activeProcessInstanceId(id);
 
         TenantContextHolder.setTenantId(2L);
         try {
