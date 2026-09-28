@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   userResetCalls: 0,
   tagsClearCalls: 0,
   dictClearCalls: 0,
+  objectAuthClearCalls: 0,
   sessionCacheDeletes: [] as string[],
   localCacheDeletes: [] as string[],
 }))
@@ -76,6 +77,13 @@ vi.mock('@/store/modules/dict', () => ({
     },
   }),
 }))
+vi.mock('@/store/modules/objectAuthorization', () => ({
+  useObjectAuthorizationStoreWithOut: () => ({
+    clearObjectAuthorizationState: () => {
+      h.objectAuthClearCalls++
+    },
+  }),
+}))
 
 import { clearAuthorizedSession, isAuthorizedSessionClearReason } from '@/utils/authSession'
 
@@ -99,6 +107,7 @@ function resetCounters() {
   h.userResetCalls = 0
   h.tagsClearCalls = 0
   h.dictClearCalls = 0
+  h.objectAuthClearCalls = 0
   h.sessionCacheDeletes = []
   h.localCacheDeletes = []
 }
@@ -135,6 +144,11 @@ describe('clearAuthorizedSession：退出 / 装配失败清理合同（验收③
     expect(h.removeTokenCalls).toBe(1)
   })
 
+  it('logout：清理对象授权快照（ZS-CLIENT-001.B 旧页签不泄露——对象级动作/字段快照不得跨主体残留）', () => {
+    clearAuthorizedSession('logout')
+    expect(h.objectAuthClearCalls).toBe(1)
+  })
+
   it('bootstrap-failed：与 logout 同等彻底（授权装配失败即视为会话不可信）', () => {
     clearAuthorizedSession('bootstrap-failed')
     expect(h.tagsClearCalls).toBe(1)
@@ -144,6 +158,7 @@ describe('clearAuthorizedSession：退出 / 装配失败清理合同（验收③
     expect(h.userResetCalls).toBe(1)
     expect(h.deleteUserCacheCalls).toBe(1)
     expect(h.removeTokenCalls).toBe(1)
+    expect(h.objectAuthClearCalls).toBe(1)
   })
 
   it('幂等：重复清理不产生额外副作用累积以外的状态残留', () => {
@@ -160,6 +175,11 @@ describe('clearAuthorizedSession：技术租户变化清理合同（验收③）
     clearAuthorizedSession('tenant-switch')
     expect(h.tagsClearCalls).toBe(1)
     expect(h.dictClearCalls).toBe(1)
+  })
+
+  it('tenant-switch：清理对象授权快照（ZS-CLIENT-001.B——旧租户对象级授权不得残留展示）', () => {
+    clearAuthorizedSession('tenant-switch')
+    expect(h.objectAuthClearCalls).toBe(1)
   })
 
   it('tenant-switch：卸旧路由 + 清身份/权限快照（卡片「调整」明列技术租户变化须清旧路由）', () => {
