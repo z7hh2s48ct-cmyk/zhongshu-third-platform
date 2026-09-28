@@ -95,4 +95,15 @@ public interface ErrorCodeConstants {
     // ========== BPM 流程表达式 1-009-014-000 ==========
     ErrorCode PROCESS_EXPRESSION_NOT_EXISTS = new ErrorCode(1_009_014_000, "流程表达式不存在");
 
+    // ========== 首链领域状态（ZS-BPM-003，D-07）1-009-020-000 ==========
+    ErrorCode FIRST_CHAIN_TENANT_REQUIRED = new ErrorCode(1_009_020_000, "无租户上下文：首链写侧入口拒绝");
+    ErrorCode FIRST_CHAIN_APPLICATION_NOT_EXISTS = new ErrorCode(1_009_020_001, "加盟商申请不存在或不可见");
+    ErrorCode FIRST_CHAIN_APP_KEY_EXISTS = new ErrorCode(1_009_020_002, "申请编号【{}】已存在");
+    ErrorCode FIRST_CHAIN_STATE_TRANSITION_NOT_ALLOWED = new ErrorCode(1_009_020_003, "状态迁移不允许：{} → {}");
+    ErrorCode FIRST_CHAIN_VERSION_CONFLICT = new ErrorCode(1_009_020_004, "版本冲突：对象已被他人更新（期望版本 {}）");
+    ErrorCode FIRST_CHAIN_STATE_CONFLICT = new ErrorCode(1_009_020_005, "状态冲突：对象当前状态为 {}，不允许该操作");
+    ErrorCode FIRST_CHAIN_REJECT_REASON_REQUIRED = new ErrorCode(1_009_020_006, "拒绝必须填写审批意见");
+    ErrorCode FIRST_CHAIN_PROCESS_NOT_BOUND = new ErrorCode(1_009_020_007, "流程实例未绑定首链对象或绑定已终结");
+    ErrorCode FIRST_CHAIN_PROCESS_BINDING_CONFLICT = new ErrorCode(1_009_020_008, "流程绑定冲突：审批/撤回结果与他人操作竞争（已按先到者生效）");
+
 }

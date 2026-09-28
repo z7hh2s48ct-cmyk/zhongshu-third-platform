@@ -44,4 +44,7 @@ public final class AuditEventTypes {
     /** 跨组织访问被拒（ZS-SEC-001.B：无授权/过期/撤销/非平台角色/目标无效/动作·对象·字段越界，独立事务落库）。 */
     public static final String CROSS_ORG_VISIT_DENIED = "CROSS_ORG_VISIT_DENIED";
 
+    /** 首链流程结果弃单（ZS-BPM-003：旧流程晚到结果不覆盖领域新版本，弃单留痕可回查）。 */
+    public static final String FIRST_CHAIN_PROCESS_RESULT_DISCARDED = "FIRST_CHAIN_PROCESS_RESULT_DISCARDED";
+
 }
