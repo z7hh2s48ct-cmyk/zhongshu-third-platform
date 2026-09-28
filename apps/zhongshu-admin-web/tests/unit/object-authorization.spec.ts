@@ -8,6 +8,13 @@ vi.mock('@/api/system/permission', () => ({
   getObjectAuthorization: (...args: any[]) => h.getImpl(...args)
 }))
 
+// store 模块经 WithOut 变体引用全局 pinia（循 dict store 先例）；单测中给轻量替身，
+// 避免拉入真实 '@/store' 依赖链（循 authorization-snapshot.spec.ts 先例）
+vi.mock('@/store', async () => {
+  const { createPinia } = await import('pinia')
+  return { store: createPinia(), setupStore: () => {} }
+})
+
 import {
   buildObjectAuthKey,
   normalizeObjectAuthorization,
@@ -209,6 +216,38 @@ describe('useObjectAuthorizationStore：唯一写路径=服务端响应 + 会话
       store.clearObjectAuthorizationState()
       store.clearObjectAuthorizationState()
     }).not.toThrow()
+  })
+
+  it('在途 fetch 于清理完成后不得回写缓存（R1 P2-1：旧页签不泄露竞态）', async () => {
+    let resolveFetch!: (value: any) => void
+    h.getImpl.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve
+      })
+    )
+    const store = useObjectAuthorizationStore()
+
+    // 发起 fetch（在途）→ 清理会话 → 上一会话响应到达
+    const pending = store.fetchObjectAuthorization('lead', 100n, 1n)
+    store.clearObjectAuthorizationState()
+    resolveFetch({
+      allowedActions: ['lead:query'],
+      authorizedFields: ['name'],
+      maskedFields: []
+    })
+    const snapshot = await pending
+
+    // 上一会话快照被丢弃（不回写、不返回给本次调用）
+    expect(snapshot).toBeNull()
+    expect(Object.keys(store.snapshotMap)).toHaveLength(0)
+    // 下一次 fetch 必须重新请求服务端（缓存确未落任何键）
+    h.getImpl.mockResolvedValueOnce({
+      allowedActions: [],
+      authorizedFields: null,
+      maskedFields: null
+    })
+    await store.fetchObjectAuthorization('lead', 100n, 1n)
+    expect(h.getImpl).toHaveBeenCalledTimes(2)
   })
 
   it('异维键不串缓存：同 objectType 不同 orgId 各自拉取', async () => {
