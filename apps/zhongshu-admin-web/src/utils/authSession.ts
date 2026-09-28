@@ -5,6 +5,7 @@ import { usePermissionStoreWithOut } from '@/store/modules/permission'
 import { useUserStoreWithOut } from '@/store/modules/user'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 import { useDictStoreWithOut } from '@/store/modules/dict'
+import { useObjectAuthorizationStoreWithOut } from '@/store/modules/objectAuthorization'
 
 const { wsCache } = useCache()
 
@@ -64,6 +65,10 @@ export function clearAuthorizedSession(reason: AuthorizedSessionClearReason): vo
   // 2. 字典快照：字典是租户级业务数据，属于卡片所说的「缓存和数据」。
   //    用同步的 clearDictState()，不能用 async resetDict()（后者会立即重新拉取）。
   useDictStoreWithOut().clearDictState()
+
+  // 2.5 对象授权快照（ZS-CLIENT-001.B）：对象级「动作 / 字段 / 脱敏」快照属会话敏感数据，
+  //     退出 / 撤权 / 技术租户变化后旧页签不得残留上一主体 / 上一租户的对象级授权（旧页签不泄露）。
+  useObjectAuthorizationStoreWithOut().clearObjectAuthorizationState()
 
   // 3. 权限快照 store：清空 addRouters / routers，登录失败不留半初始化路由。
   usePermissionStoreWithOut().$reset()
