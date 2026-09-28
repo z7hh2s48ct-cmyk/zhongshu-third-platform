@@ -231,8 +231,8 @@ class BpmFirstChainPgRuntimeTest {
         applicationService.onApprovalCompleted(processInstanceId, false, "晚到拒绝", "approver-1");
         assertEquals(FranchiseeApplicationStatus.APPROVED.name(), queryApplication(id).get("status"),
                 "旧流程晚到结果不得覆盖领域新版本");
-        assertEquals(1, auditCount(id, FirstChainProcessBindingService.EVENT_RESULT_DISCARDED,
-                "DISCARD_LATE_RESULT"), "弃单应留痕可回查");
+        assertEquals(1, auditCount("BPM003-L1", FirstChainProcessBindingService.EVENT_RESULT_DISCARDED,
+                "DISCARD_LATE_RESULT"), "弃单应留痕可回查（按对象 biz_id=appKey 精确过滤）");
     }
 
     @Test
@@ -317,10 +317,10 @@ class BpmFirstChainPgRuntimeTest {
         return ((Number) queryApplication(id).get("version")).longValue();
     }
 
-    private int auditCount(Long applicationId, String eventType, String action) {
+    private int auditCount(String appKey, String eventType, String action) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM audit_event WHERE event_type = ? AND biz_type = ? AND action = ?",
-                Integer.class, eventType, FirstChainObjectType.APPLICATION.getKey(), action);
+                "SELECT COUNT(*) FROM audit_event WHERE event_type = ? AND biz_type = ? AND biz_id = ? AND action = ?",
+                Integer.class, eventType, FirstChainObjectType.APPLICATION.getKey(), appKey, action);
         return count == null ? 0 : count;
     }
 
