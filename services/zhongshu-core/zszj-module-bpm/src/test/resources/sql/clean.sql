@@ -8,3 +8,6 @@ DELETE FROM "inbox_object_watermark";
 DELETE FROM "inbox_event";
 DELETE FROM "outbox_event";
 DELETE FROM "audit_event";
+-- ZS-BPM-003：首链领域状态与幂等写回
+DELETE FROM "bpm_first_chain_process_binding";
+DELETE FROM "bpm_first_chain_application";
