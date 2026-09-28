@@ -172,7 +172,8 @@ describe('useObjectAuthorizationStore：唯一写路径=服务端响应 + 会话
     const first = await store.fetchObjectAuthorization('lead', 100n, 1n)
     expect(resolveActionAllowed(first, 'lead:query')).toBe(true)
     const second = await store.fetchObjectAuthorization('lead', 100n, 1n)
-    expect(second).toBe(first)
+    // Pinia reactive 包装下每次读取返回新代理：以「深等 + 单次请求」断言缓存命中
+    expect(second).toStrictEqual(first)
     expect(h.getImpl).toHaveBeenCalledTimes(1)
   })
 

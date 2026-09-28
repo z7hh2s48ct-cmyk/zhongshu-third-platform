@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：353
+# 端点总数：354
 DELETE|/admin-api/infra/codegen/delete-list|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/codegen/delete|ADMIN|PERMISSION|infra:codegen:delete|infra|CodegenController
 DELETE|/admin-api/infra/config/delete-list|ADMIN|PERMISSION|infra:config:delete|infra|ConfigController
@@ -184,6 +184,7 @@ GET|/admin-api/system/oauth2-token/my-page|ADMIN|AUTHENTICATED|-|system|OAuth2To
 GET|/admin-api/system/oauth2-token/page|ADMIN|PERMISSION|system:oauth2-token:page|system|OAuth2TokenController
 GET|/admin-api/system/oauth2/authorize|ADMIN|AUTHENTICATED|-|system|OAuth2OpenController
 GET|/admin-api/system/oauth2/user/get|ADMIN|PERMISSION|user.read|system|OAuth2UserController
+GET|/admin-api/system/object-authorization/get|ADMIN|AUTHENTICATED|-|system|ObjectAuthorizationController
 GET|/admin-api/system/operate-log/export-excel|ADMIN|PERMISSION|system:operate-log:export|system|OperateLogController
 GET|/admin-api/system/operate-log/get|ADMIN|PERMISSION|system:operate-log:query|system|OperateLogController
 GET|/admin-api/system/operate-log/page|ADMIN|PERMISSION|system:operate-log:query|system|OperateLogController

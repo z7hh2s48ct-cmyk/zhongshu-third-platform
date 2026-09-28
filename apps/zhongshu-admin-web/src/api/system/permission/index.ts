@@ -40,3 +40,19 @@ export const getUserRoleList = async (userId: string) => {
 export const assignUserRole = async (data: PermissionAssignUserRoleReqVO) => {
   return await request.post({ url: '/system/permission/assign-user-role', data })
 }
+
+// ZS-CLIENT-001.B：对象授权输出（允许动作 / 授权字段 / 脱敏字段）
+export interface ObjectAuthorizationRespVO {
+  allowedActions: string[]
+  authorizedFields: string[] | null
+  maskedFields: string[] | null
+}
+
+// 查询对象授权输出（null data = 未接入域；消费逻辑见 utils/objectAuthorization.ts）
+export const getObjectAuthorization = async (params: {
+  objectType: string
+  orgId?: number
+  ownerUserId?: number
+}) => {
+  return await request.get({ url: '/system/object-authorization/get', params })
+}
