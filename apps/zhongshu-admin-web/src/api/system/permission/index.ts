@@ -1,4 +1,5 @@
 import request from '@/config/axios'
+import type { ObjectAuthorizationRespVO } from '@/utils/objectAuthorization'
 
 export interface PermissionAssignUserRoleReqVO {
   userId: string
@@ -42,17 +43,15 @@ export const assignUserRole = async (data: PermissionAssignUserRoleReqVO) => {
 }
 
 // ZS-CLIENT-001.B：对象授权输出（允许动作 / 授权字段 / 脱敏字段）
-export interface ObjectAuthorizationRespVO {
-  allowedActions: string[]
-  authorizedFields: string[] | null
-  maskedFields: string[] | null
-}
+// 响应形状的唯一声明在 utils/objectAuthorization.ts（消费核心），此处复用导出防双份漂移
+export type { ObjectAuthorizationRespVO }
 
 // 查询对象授权输出（null data = 未接入域；消费逻辑见 utils/objectAuthorization.ts）
+// ID 参数 number | string：服务端 Long 超 2^53 时以字符串序列化（NumberSerializer 惯例）
 export const getObjectAuthorization = async (params: {
   objectType: string
-  orgId?: number
-  ownerUserId?: number
-}) => {
+  orgId?: number | string
+  ownerUserId?: number | string
+}): Promise<ObjectAuthorizationRespVO | null> => {
   return await request.get({ url: '/system/object-authorization/get', params })
 }

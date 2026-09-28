@@ -25,7 +25,8 @@ import static org.mockito.Mockito.when;
  *
  * <p>覆盖：授权输出端点的消费合同——注册域委派统一裁决输出（对象/动作/字段/脱敏四维由 PERM-003.A/.B
  * 裁决核心负责，本卡只透传）/ 未接入域与未装配裁决服务与未登录与空白 objectType 一律 success(null)
- * （零输出，不泄露域注册状态）/ 参数透传完整性（objectType/orgId/ownerUserId）。
+ * （零输出；已注册但对象不可见域经裁决核心 FORBIDDEN 拒绝，属 PERM-003.A 既有行为不在本卡范围）/
+ * 参数透传完整性（objectType/orgId/ownerUserId）。
  *
  * @author ZS-CLIENT-001.B
  */
@@ -45,7 +46,7 @@ class ObjectAuthorizationControllerTest extends BaseMockitoUnitTest {
     }
 
     @Test // 注册域：委派统一裁决并原样输出（消费合同=透传，不二次加工）
-    void getObjecAuthorization_registeredType_delegatesAndReturns() {
+    void getObjectAuthorization_registeredType_delegatesAndReturns() {
         try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
             ms.when(SecurityFrameworkUtils::getLoginUser).thenReturn(loginUser());
             ObjectAuthorizationService service = org.mockito.Mockito.mock(ObjectAuthorizationService.class);

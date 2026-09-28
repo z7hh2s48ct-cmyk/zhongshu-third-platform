@@ -27,9 +27,11 @@ import static cn.zszj.framework.common.pojo.CommonResult.success;
  * {@code ObjectAuthorizationService#checkActionAllowed}/{@code #checkFieldsAllowed} 在业务入口
  * 服务端独立拒绝——「前端伪造动作不生效」为结构保证（伪造本地快照不改变服务端裁决）。
  *
- * <p>零输出语义（fail-closed，不泄露域注册状态）：未登录 / 空白 objectType / 未接入对象类型
- * （裁决返回 null）/ 统一裁决服务未装配，一律返回 {@code success(null)}——客户端按「未接入域」
- * 处理（动作不可用、字段不展示），与渐进接入合同一致。visit 请求的字段维收敛由裁决核心内部完成
+ * <p>零输出语义（fail-closed）：未登录 / 空白 objectType / 未接入对象类型（裁决返回 null）/
+ * 统一裁决服务未装配，一律返回 {@code success(null)}——客户端按「未接入域」处理（动作不可用、
+ * 字段不展示），与渐进接入合同一致。已注册但对象不可见的域由裁决核心以 {@code FORBIDDEN} 显式
+ * 拒绝（PERM-003.A 既有行为，fail-closed）——注册状态仅可经该拒绝路径间接推断（输出始终为
+ * 调用者自身的授权，不泄露他人授权与业务数据）。visit 请求的字段维收敛由裁决核心内部完成
  * （授权记录为唯一权威），本端点只透传。
  *
  * @author ZS-CLIENT-001.B
@@ -49,7 +51,7 @@ public class ObjectAuthorizationController {
     @GetMapping("/get")
     @Operation(summary = "获得对象授权输出（允许动作 / 授权字段 / 脱敏字段）")
     @Parameters({
-            @Parameter(name = "objectType", description = "对象类型标识", required = true),
+            @Parameter(name = "objectType", description = "对象类型标识（空白按未接入域返回 null）", required = false),
             @Parameter(name = "orgId", description = "对象所属组织编号"),
             @Parameter(name = "ownerUserId", description = "对象负责人用户编号")
     })

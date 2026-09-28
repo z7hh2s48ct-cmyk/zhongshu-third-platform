@@ -62,12 +62,13 @@ export function normalizeObjectAuthorization(resp: unknown): ObjectAuthSnapshot 
 }
 
 /**
- * 对象授权缓存键：objectType + orgId + ownerUserId 三维规范化（null/undefined 归一为空段）。
+ * 对象授权缓存键：objectType + orgId + ownerUserId 三维规范化（null/undefined 归一为空段；
+ * ID 兼容 number/string 双形态——服务端 Long 超 2^53 时以字符串序列化，模板串同形）。
  */
 export function buildObjectAuthKey(
   objectType: string,
-  orgId?: number | null,
-  ownerUserId?: number | null
+  orgId?: number | string | null,
+  ownerUserId?: number | string | null
 ): string {
   return `${objectType}:${orgId ?? ''}:${ownerUserId ?? ''}`
 }
