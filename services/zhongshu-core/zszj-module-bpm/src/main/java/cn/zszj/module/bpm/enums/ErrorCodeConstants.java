@@ -105,5 +105,6 @@ public interface ErrorCodeConstants {
     ErrorCode FIRST_CHAIN_REJECT_REASON_REQUIRED = new ErrorCode(1_009_020_006, "拒绝必须填写审批意见");
     ErrorCode FIRST_CHAIN_PROCESS_NOT_BOUND = new ErrorCode(1_009_020_007, "流程实例未绑定首链对象或绑定已终结");
     ErrorCode FIRST_CHAIN_PROCESS_BINDING_CONFLICT = new ErrorCode(1_009_020_008, "流程绑定冲突：审批/撤回结果与他人操作竞争（已按先到者生效）");
+    ErrorCode FIRST_CHAIN_LEAD_NOT_EXISTS = new ErrorCode(1_009_020_009, "线索不存在或不可见");
 
 }

@@ -21,6 +21,7 @@ import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_APP_KEY_EX
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_APPLICATION_NOT_EXISTS;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_PROCESS_BINDING_CONFLICT;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_PROCESS_NOT_BOUND;
+import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_STATE_TRANSITION_NOT_ALLOWED;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_REJECT_REASON_REQUIRED;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_STATE_CONFLICT;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_TENANT_REQUIRED;
@@ -86,13 +87,13 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         assertThat(row.get("status")).isEqualTo(FranchiseeApplicationStatus.DRAFT.name());
         assertThat(((Number) row.get("version")).longValue()).isZero();
         assertThat(((Number) row.get("tenant_id")).longValue()).isEqualTo(TENANT_ID);
-        assertThat(queryAuditCount("OBJECT_CREATED", "franchisee_application", id)).isEqualTo(1);
+        assertThat(queryAuditCount("OBJECT_CREATED", "franchisee_application", "APP-001")).isEqualTo(1);
     }
 
     @Test
     void create_duplicateAppKey_sameTenant_rejected() {
         createApplication("APP-DUP");
-        assertServiceException(() -> createApplication("APP-DUP"), FIRST_CHAIN_APP_KEY_EXISTS);
+        assertServiceException(() -> createApplication("APP-DUP"), FIRST_CHAIN_APP_KEY_EXISTS, "APP-DUP");
     }
 
     @Test
@@ -116,7 +117,7 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         assertThat(binding.get("process_instance_id")).isEqualTo("PINST-1");
         assertThat(((StubProcessPort) processPort).startCalls).hasSize(1);
         assertThat(((StubProcessPort) processPort).startCalls.get(0).approverUserId).isEqualTo(APPROVER_ID);
-        assertThat(queryAuditCount("OBJECT_UPDATED", "franchisee_application", id)).isEqualTo(1);
+        assertThat(queryAuditCount("OBJECT_UPDATED", "franchisee_application", "APP-S1")).isEqualTo(1);
     }
 
     @Test
@@ -125,16 +126,17 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
         // 携带旧版本重复提交 → 版本冲突（可回查分类）
         assertServiceException(() -> applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1"),
-                FIRST_CHAIN_VERSION_CONFLICT);
+                FIRST_CHAIN_VERSION_CONFLICT, 0L);
     }
 
     @Test
     void submit_alreadySubmitted_stateConflict() {
         Long id = createApplication("APP-S3");
         applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
-        // 携带当前版本对 SUBMITTED 再提交 → 状态冲突（状态机 DRAFT→SUBMITTED 不复现）
+        // 携带当前版本对 SUBMITTED 再提交 → 状态机拒绝（SUBMITTED→SUBMITTED 非合法迁移，fail-closed）
         assertServiceException(() -> applicationService.submitApplication(id, 1L, APPROVER_ID, "creator-1"),
-                FIRST_CHAIN_STATE_CONFLICT);
+                FIRST_CHAIN_STATE_TRANSITION_NOT_ALLOWED, FranchiseeApplicationStatus.SUBMITTED.name(),
+                FranchiseeApplicationStatus.SUBMITTED.name());
     }
 
     @Test
@@ -190,7 +192,7 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         // 原因进入审计（M3 必填意见留痕）
         Map<String, Object> audit = jdbcTemplate.queryForMap(
                 "SELECT * FROM audit_event WHERE biz_id = ? AND action = 'REJECT' AND result = 'SUCCESS'",
-                String.valueOf(id));
+                "APP-A3");
         assertThat(audit.get("reason")).isEqualTo("资质材料不全");
     }
 
@@ -206,11 +208,11 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
 
         assertThat(((Number) queryApplication(id).get("version")).longValue()).isEqualTo(2L);
         assertThat(queryApplication(id).get("status")).isEqualTo(FranchiseeApplicationStatus.APPROVED.name());
-        assertThat(queryAuditCount("OBJECT_UPDATED", "franchisee_application", id)).isEqualTo(2L); // SUBMIT + APPROVE 各一次
+        assertThat(queryAuditCount("OBJECT_UPDATED", "franchisee_application", "APP-A4")).isEqualTo(2L); // SUBMIT + APPROVE 各一次
     }
 
     @Test
-    void approval_concurrentWithdrawAfterCompleted_bindingConflict() {
+    void withdraw_afterCompleted_bindingConflict() {
         Long id = createApplication("APP-A5");
         applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
         String processInstanceId = (String) queryActiveBinding(id).get("process_instance_id");
@@ -238,7 +240,7 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
         assertThat(queryApplication(id).get("status")).isEqualTo(FranchiseeApplicationStatus.APPROVED.name());
         assertThat(((Number) queryApplication(id).get("version")).longValue()).isEqualTo(2L);
         assertThat(queryAuditCount(FirstChainProcessBindingService.EVENT_RESULT_DISCARDED,
-                "franchisee_application", id)).isEqualTo(1);
+                "franchisee_application", "APP-A6")).isEqualTo(1);
     }
 
     @Test
@@ -271,13 +273,10 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
     }
 
     @Test
-    void withdraw_withoutActiveBinding_notBound() {
+    void withdraw_neverSubmitted_notBound() {
         Long id = createApplication("APP-W2");
-        applicationService.submitApplication(id, 0L, APPROVER_ID, "creator-1");
-        String processInstanceId = (String) queryActiveBinding(id).get("process_instance_id");
-        applicationService.onApprovalCompleted(processInstanceId, true, null, "approver-1");
-
-        assertServiceException(() -> applicationService.withdrawApproval(id, 2L, "creator-1"),
+        // 从未提交：无任何流程绑定 → NOT_BOUND（可回查分类，区别于「审批已终结后撤回」的绑定冲突）
+        assertServiceException(() -> applicationService.withdrawApproval(id, 0L, "creator-1"),
                 FIRST_CHAIN_PROCESS_NOT_BOUND);
     }
 
@@ -329,16 +328,19 @@ class FirstChainApplicationServiceTest extends BaseDbUnitTest {
                 "SELECT * FROM bpm_first_chain_application WHERE id = ? AND tenant_id = ?", id, TENANT_ID);
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> queryActiveBinding(Long applicationId) {
-        return jdbcTemplate.queryForMap(
-                "SELECT * FROM bpm_first_chain_process_binding WHERE domain_type = ? AND domain_id = ?",
-                FirstChainObjectType.APPLICATION.getKey(), applicationId);
+        return (Map<String, Object>) jdbcTemplate.queryForList(
+                        "SELECT * FROM bpm_first_chain_process_binding WHERE domain_type = ? AND domain_id = ? "
+                                + "ORDER BY id DESC LIMIT 1",
+                        FirstChainObjectType.APPLICATION.getKey(), applicationId)
+                .get(0);
     }
 
-    private long queryAuditCount(String eventType, String bizType, Long bizId) {
+    private long queryAuditCount(String eventType, String bizType, String bizId) {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM audit_event WHERE event_type = ? AND biz_type = ? AND biz_id = ? AND result = 'SUCCESS'",
-                Long.class, eventType, bizType, String.valueOf(bizId));
+                Long.class, eventType, bizType, bizId);
         return count == null ? 0 : count;
     }
 

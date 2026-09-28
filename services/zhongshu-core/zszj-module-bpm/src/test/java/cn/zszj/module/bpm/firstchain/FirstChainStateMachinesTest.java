@@ -69,7 +69,8 @@ class FirstChainStateMachinesTest {
     void assertAllowed_serviceException() {
         assertServiceException(() -> FirstChainStateMachines.assertAllowed(FirstChainObjectType.APPLICATION,
                 FranchiseeApplicationStatus.APPROVED.name(), FranchiseeApplicationStatus.SUBMITTED.name()),
-                FIRST_CHAIN_STATE_TRANSITION_NOT_ALLOWED);
+                FIRST_CHAIN_STATE_TRANSITION_NOT_ALLOWED, FranchiseeApplicationStatus.APPROVED.name(),
+                FranchiseeApplicationStatus.SUBMITTED.name());
         FirstChainStateMachines.assertAllowed(FirstChainObjectType.APPLICATION,
                 FranchiseeApplicationStatus.DRAFT.name(), FranchiseeApplicationStatus.SUBMITTED.name());
     }
