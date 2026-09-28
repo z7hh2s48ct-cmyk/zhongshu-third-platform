@@ -180,7 +180,8 @@ class ObjectAuthorizationServiceTest extends BaseMockitoUnitTest {
     // ========== 测试辅助 ==========
 
     private ObjectAuthorizationService newService(ObjectAuthorizationProvider... providers) {
-        return new ObjectAuthorizationService(securityFrameworkService, orgDataPermissionChecker, List.of(providers));
+        return new ObjectAuthorizationService(securityFrameworkService, orgDataPermissionChecker,
+                new FieldLevelScopeResolver(permissionApi), List.of(providers));
     }
 
     private ObjectAuthorizationRequest demoRequest() {
@@ -359,7 +360,7 @@ class ObjectAuthorizationServiceTest extends BaseMockitoUnitTest {
             // 真 SecurityFrameworkServiceImpl：visit 请求下 hasAnyPermissions → CrossOrgVisitScopeHolder 收敛
             ObjectAuthorizationService service = new ObjectAuthorizationService(
                     new SecurityFrameworkServiceImpl(permissionApi), orgDataPermissionChecker,
-                    List.of(new DemoProvider()));
+                    new FieldLevelScopeResolver(permissionApi), List.of(new DemoProvider()));
 
             ObjectAuthorizationRespDTO resp = service.authorize(demoRequest());
             assertEquals(Set.of("demo:query"), resp.getAllowedActions());

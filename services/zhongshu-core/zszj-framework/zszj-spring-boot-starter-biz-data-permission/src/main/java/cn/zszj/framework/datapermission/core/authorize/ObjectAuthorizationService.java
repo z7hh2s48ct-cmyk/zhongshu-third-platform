@@ -51,15 +51,22 @@ public class ObjectAuthorizationService {
     private final OrgDataPermissionChecker orgDataPermissionChecker;
 
     /**
+     * 访问者可读字段等级上限解析器（ZS-PERM-003.B / D-12 §3 等级×角色默认映射）
+     */
+    private final FieldLevelScopeResolver fieldLevelScopeResolver;
+
+    /**
      * 对象类型 → 扩展点（构造时校验非空白与唯一性，重复注册 fail-fast，避免裁决路由歧义）
      */
     private final Map<String, ObjectAuthorizationProvider> providerMap;
 
     public ObjectAuthorizationService(SecurityFrameworkService securityFrameworkService,
                                       OrgDataPermissionChecker orgDataPermissionChecker,
+                                      FieldLevelScopeResolver fieldLevelScopeResolver,
                                       List<ObjectAuthorizationProvider> providers) {
         this.securityFrameworkService = securityFrameworkService;
         this.orgDataPermissionChecker = orgDataPermissionChecker;
+        this.fieldLevelScopeResolver = fieldLevelScopeResolver;
         Map<String, ObjectAuthorizationProvider> map = new HashMap<>();
         if (CollUtil.isNotEmpty(providers)) {
             for (ObjectAuthorizationProvider provider : providers) {
@@ -90,6 +97,8 @@ public class ObjectAuthorizationService {
         ObjectAuthorizationRespDTO resp = new ObjectAuthorizationRespDTO();
         resp.setAllowedActions(resolveAllowedActions(provider, request));
         resp.setAuthorizedFields(resolveAuthorizedFields(provider, request));
+        // maskedFields 合同（D-12 §5.2）：authorizedFields 非 null 时恒非 null（RED 骨架=空集，分级裁剪待 GREEN）
+        resp.setMaskedFields(resp.getAuthorizedFields() != null ? Collections.emptySet() : null);
         return resp;
     }
 

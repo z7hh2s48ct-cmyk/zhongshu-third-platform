@@ -1,6 +1,8 @@
 package cn.zszj.framework.datapermission.config;
 
 import cn.zszj.framework.common.biz.system.permission.PermissionCommonApi;
+import cn.zszj.framework.datapermission.core.authorize.ClassifiedObjectAuthorizationProvider;
+import cn.zszj.framework.datapermission.core.authorize.FieldLevelScopeResolver;
 import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationProvider;
 import cn.zszj.framework.datapermission.core.authorize.ObjectAuthorizationService;
 import cn.zszj.framework.datapermission.core.rule.dept.DeptDataPermissionChecker;
@@ -59,17 +61,28 @@ public class ZszjDeptDataPermissionAutoConfiguration {
     }
 
     /**
+     * ZS-PERM-003.B：访问者可读字段等级上限解析器（D-12 §3 等级×角色默认映射——平台 F3/组织负责人 F2/成员 F1）。
+     */
+    @Bean
+    public FieldLevelScopeResolver fieldLevelScopeResolver(PermissionCommonApi permissionApi) {
+        return new FieldLevelScopeResolver(permissionApi);
+    }
+
+    /**
      * ZS-PERM-003.A：统一「动作 / 字段」授权输出与执行共用机制。
      *
      * <p>业务域按 {@link ObjectAuthorizationProvider} 声明候选动作/字段与状态约束，输出与执行共用同一
      * 裁决核心（前端伪造不生效）；未注册扩展点时 {@code authorize} 返回 null（未接入=零变化）。
-     * 裁决依赖 {@code SecurityFrameworkService}（RBAC/visit 收敛）与 {@link OrgDataPermissionChecker}（org 轴对象门）。
+     * 裁决依赖 {@code SecurityFrameworkService}（RBAC/visit 收敛）与 {@link OrgDataPermissionChecker}（org 轴对象门）；
+     * ZS-PERM-003.B 起对 {@link ClassifiedObjectAuthorizationProvider} 按 D-12 字段等级目录裁剪并输出 maskedFields。
      */
     @Bean
     public ObjectAuthorizationService objectAuthorizationService(SecurityFrameworkService securityFrameworkService,
                                                                  OrgDataPermissionChecker orgDataPermissionChecker,
+                                                                 FieldLevelScopeResolver fieldLevelScopeResolver,
                                                                  List<ObjectAuthorizationProvider> providers) {
-        return new ObjectAuthorizationService(securityFrameworkService, orgDataPermissionChecker, providers);
+        return new ObjectAuthorizationService(securityFrameworkService, orgDataPermissionChecker,
+                fieldLevelScopeResolver, providers);
     }
 
 }

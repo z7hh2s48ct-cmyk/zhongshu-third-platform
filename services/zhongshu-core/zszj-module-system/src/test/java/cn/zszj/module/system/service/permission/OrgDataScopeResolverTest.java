@@ -45,12 +45,18 @@ public class OrgDataScopeResolverTest extends BaseDbUnitTest {
     private OrganizationMapper organizationMapper;
 
     private void insertOrg(Long id, OrganizationTypeEnum type, Long parentId, CommonStatusEnum status) {
+        insertOrg(id, type, parentId, status, null);
+    }
+
+    private void insertOrg(Long id, OrganizationTypeEnum type, Long parentId, CommonStatusEnum status,
+                           Long leaderUserId) {
         organizationMapper.insert(randomPojo(OrganizationDO.class, o -> {
             o.setId(id);
             o.setType(type.getType());
             o.setParentId(parentId);
             o.setStatus(status.getStatus());
             o.setRefDeptId(null);
+            o.setLeaderUserId(leaderUserId);
         }));
     }
 
@@ -228,6 +234,74 @@ public class OrgDataScopeResolverTest extends BaseDbUnitTest {
 
         assertEquals(OrgDataScopeEnum.ORG_AND_CHILD.getScope(), dto.getScopeType());
         assertTrue(dto.getOrgIds().containsAll(SetUtils.asSet(5000L, 5001L)));
+    }
+
+    // ========== 负责人集合 ledOrgIds（ZS-PERM-003.B，D-12 等级×角色映射的判定输入） ==========
+
+    @Test // 组织负责人：ledOrgIds 收录其负责的组织（仅作为字段等级 F2 判定输入，不影响 orgIds 范围）
+    public void testResolve_orgLeader_ledOrgIdsFilled() {
+        Long userId = randomLongId();
+        insertOrg(8000L, OrganizationTypeEnum.STORE, OrganizationDO.PARENT_ID_ROOT, CommonStatusEnum.ENABLE,
+                userId);
+        insertMembership(userId, 8000L, MembershipStatusEnum.ACTIVE, null, null);
+
+        OrgDataPermissionRespDTO dto = resolver.resolve(userId, false);
+
+        assertEquals(SetUtils.asSet(8000L), dto.getLedOrgIds());
+        assertEquals(OrgDataScopeEnum.ORG_AND_CHILD.getScope(), dto.getScopeType());
+    }
+
+    @Test // 普通成员（非任何组织负责人）：ledOrgIds 为空集
+    public void testResolve_memberNotLeader_ledOrgIdsEmpty() {
+        Long userId = randomLongId();
+        Long otherUser = randomLongId();
+        insertOrg(8100L, OrganizationTypeEnum.STORE, OrganizationDO.PARENT_ID_ROOT, CommonStatusEnum.ENABLE,
+                otherUser);
+        insertMembership(userId, 8100L, MembershipStatusEnum.ACTIVE, null, null);
+
+        OrgDataPermissionRespDTO dto = resolver.resolve(userId, false);
+
+        assertTrue(dto.getLedOrgIds().isEmpty());
+    }
+
+    @Test // 禁用组织的负责人不收录（fail-closed：无效任职排除口径一致，负责人身份不因管理动作越级）
+    public void testResolve_leaderOfDisabledOrg_ledOrgIdsEmpty() {
+        Long userId = randomLongId();
+        insertOrg(8200L, OrganizationTypeEnum.STORE, OrganizationDO.PARENT_ID_ROOT, CommonStatusEnum.DISABLE,
+                userId);
+        insertMembership(userId, 8200L, MembershipStatusEnum.ACTIVE, null, null);
+
+        OrgDataPermissionRespDTO dto = resolver.resolve(userId, false);
+
+        assertTrue(dto.getLedOrgIds().isEmpty());
+        assertEquals(OrgDataScopeEnum.ORG_SELF.getScope(), dto.getScopeType());
+    }
+
+    @Test // 混合：负责 A 组织 + 受雇于 B 组织 → ledOrgIds 仅含 A（负责人身份逐组织判定）
+    public void testResolve_mixedLeaderAndMember_ledOnlyLeaderOrg() {
+        Long userId = randomLongId();
+        insertOrg(8300L, OrganizationTypeEnum.STORE, OrganizationDO.PARENT_ID_ROOT, CommonStatusEnum.ENABLE,
+                userId);
+        insertOrg(8301L, OrganizationTypeEnum.BRAND, OrganizationDO.PARENT_ID_ROOT, CommonStatusEnum.ENABLE,
+                randomLongId());
+        insertMembership(userId, 8300L, MembershipStatusEnum.ACTIVE, null, null);
+        insertMembership(userId, 8301L, MembershipStatusEnum.ACTIVE, null, null);
+
+        OrgDataPermissionRespDTO dto = resolver.resolve(userId, false);
+
+        assertEquals(SetUtils.asSet(8300L), dto.getLedOrgIds());
+    }
+
+    @Test // 非在职/过期任职所在组织的负责人身份不收录（与有效任职判定同口径）
+    public void testResolve_leaderWithTerminatedMembership_ledOrgIdsEmpty() {
+        Long userId = randomLongId();
+        insertOrg(8400L, OrganizationTypeEnum.STORE, OrganizationDO.PARENT_ID_ROOT, CommonStatusEnum.ENABLE,
+                userId);
+        insertMembership(userId, 8400L, MembershipStatusEnum.TERMINATED, null, null);
+
+        OrgDataPermissionRespDTO dto = resolver.resolve(userId, false);
+
+        assertTrue(dto.getLedOrgIds().isEmpty());
     }
 
 }

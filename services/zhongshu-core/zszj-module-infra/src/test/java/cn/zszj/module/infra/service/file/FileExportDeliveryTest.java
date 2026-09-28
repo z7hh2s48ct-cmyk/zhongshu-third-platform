@@ -367,6 +367,47 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
         }
     }
 
+    // ========== ⑥ 字段等级目录导出不放宽（ZS-PERM-003.B / D-12 §3：脱敏字段不得以明文导出） ==========
+
+    @Test
+    public void generate_classified_declaredMaskedField_forbidden() {
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            FileExportGenerateReqVO req = request("demo-export-classified", 100L, 101L, sequencedBytes(32));
+            req.setFields(Set.of("secretField"));
+
+            ServiceException ex = assertThrows(ServiceException.class,
+                    () -> exportDeliveryService.generateExportFile(req, user(101L, 1L)));
+            assertEquals(FORBIDDEN.getCode(), ex.getCode(),
+                    "声明字段命中 maskedFields（F2 脱敏字段）必须拒绝——导出按读取等级收敛，不为导出放宽");
+            assertTrue(fileMapper.selectList().isEmpty(), "拒绝路径不得落库");
+            assertTrue(objectStore.isEmpty(), "拒绝路径不得写入存储");
+        }
+    }
+
+    @Test
+    public void generate_classified_declaredClearField_passes_andOutputForTrimming() {
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            stubContext(ms);
+            when(orgDataPermissionChecker.isObjectVisible(100L, 101L)).thenReturn(true);
+            FileExportGenerateReqVO req = request("demo-export-classified", 100L, 101L, sequencedBytes(64));
+            req.setFields(Set.of("publicField"));
+
+            FileExportGenerateRespVO resp = exportDeliveryService.generateExportFile(req, user(101L, 1L));
+            assertNotNull(resp.getFileId(), "清晰可见字段（F0）导出放行");
+            FileDO saved = fileMapper.selectById(resp.getFileId());
+            assertNotNull(saved);
+            assertEquals("export", saved.getPurpose());
+
+            // 输出侧：同一裁决的 authorizedFields 含脱敏字段、maskedFields 指明脱敏集合（供调用方裁剪依据）
+            ObjectAuthorizationRespDTO auth = objectAuthorizationService.authorize(
+                    ObjectAuthorizationRequest.of("demo-export-classified", 100L, 101L, null));
+            assertEquals(Set.of("publicField", "secretField"), auth.getAuthorizedFields());
+            assertEquals(Set.of("secretField"), auth.getMaskedFields());
+        }
+    }
+
     // ========== 测试装配：手建统一裁决服务（循 ObjectAuthorizationServiceTest 先例） ==========
 
     @TestConfiguration
@@ -375,9 +416,12 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
         @Bean
         public ObjectAuthorizationService objectAuthorizationService(
                 SecurityFrameworkService securityFrameworkService,
-                OrgDataPermissionChecker orgDataPermissionChecker) {
+                OrgDataPermissionChecker orgDataPermissionChecker,
+                cn.zszj.framework.common.biz.system.permission.PermissionCommonApi permissionCommonApi) {
             return new ObjectAuthorizationService(securityFrameworkService, orgDataPermissionChecker,
-                    List.of(new DemoExportProvider(), new NoFieldsExportProvider()));
+                    new cn.zszj.framework.datapermission.core.authorize.FieldLevelScopeResolver(permissionCommonApi),
+                    List.of(new DemoExportProvider(), new NoFieldsExportProvider(),
+                            new ClassifiedExportProvider()));
         }
 
     }
@@ -415,6 +459,38 @@ public class FileExportDeliveryTest extends BaseDbUnitTest {
         @Override
         public Collection<String> getCandidateActions() {
             return List.of("demo:export");
+        }
+
+    }
+
+    /**
+     * 分级编目 provider（ZS-PERM-003.B 导出不放宽验证用）：publicField=F0、secretField=F2。
+     * 测试访问者非 ADMIN/MEMBER 类型（见 {@link #stubContext}）→ 解析上限 F1 → secretField 落 maskedFields。
+     */
+    static class ClassifiedExportProvider
+            implements cn.zszj.framework.datapermission.core.authorize.ClassifiedObjectAuthorizationProvider {
+
+        @Override
+        public String getObjectType() {
+            return "demo-export-classified";
+        }
+
+        @Override
+        public Collection<String> getCandidateActions() {
+            return List.of("demo:export");
+        }
+
+        @Override
+        public Collection<String> getCandidateFields() {
+            return List.of("publicField", "secretField");
+        }
+
+        @Override
+        public Map<String, cn.zszj.framework.datapermission.core.authorize.FieldLevel> getFieldLevels() {
+            Map<String, cn.zszj.framework.datapermission.core.authorize.FieldLevel> levels = new java.util.HashMap<>();
+            levels.put("publicField", cn.zszj.framework.datapermission.core.authorize.FieldLevel.F0);
+            levels.put("secretField", cn.zszj.framework.datapermission.core.authorize.FieldLevel.F2);
+            return levels;
         }
 
     }
