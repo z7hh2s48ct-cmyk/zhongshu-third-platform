@@ -44,7 +44,8 @@ public class FlowableFirstChainProcessAdapter implements FirstChainProcessPort {
 
     private final TaskService taskService;
 
-    private volatile boolean deployed = false;
+    /** 已完成（按租户）幂等部署的租户标记（引擎定义按 key+tenant 查找，部署须同租户） */
+    private final java.util.Set<String> deployedTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public FlowableFirstChainProcessAdapter(RepositoryService repositoryService, RuntimeService runtimeService,
                                             TaskService taskService) {
@@ -55,7 +56,7 @@ public class FlowableFirstChainProcessAdapter implements FirstChainProcessPort {
 
     @Override
     public synchronized String startApprovalProcess(Long tenantId, String appKey, Long approverUserId) {
-        ensureDeployed();
+        ensureDeployed(String.valueOf(tenantId));
         // 引擎级租户标签（循模块惯例 BpmProcessInstanceServiceImpl.processInstanceTenantId）：
         // 引擎查询按租户分组可见；领域租户权威仍为绑定行
         return runtimeService.createProcessInstanceBuilder()
@@ -116,26 +117,31 @@ public class FlowableFirstChainProcessAdapter implements FirstChainProcessPort {
         return tasks.get(0);
     }
 
-    /** 部署幂等：按流程定义 key 判重（并发部署由 Flowable 定义版本机制兜底，重复部署无业务影响）。 */
-    private void ensureDeployed() {
-        if (deployed) {
+    /**
+     * 部署幂等（按流程定义 key + 租户判重）：定义查找按 (key, tenantId) 匹配，部署必须与实例同租户；
+     * 并发部署由 Flowable 定义版本机制兜底，重复部署无业务影响。
+     */
+    private void ensureDeployed(String tenantId) {
+        if (deployedTenants.contains(tenantId)) {
             return;
         }
         synchronized (this) {
-            if (deployed) {
+            if (deployedTenants.contains(tenantId)) {
                 return;
             }
             long existing = repositoryService.createProcessDefinitionQuery()
                     .processDefinitionKey(PROCESS_KEY)
+                    .processDefinitionTenantId(tenantId)
                     .count();
             if (existing == 0) {
                 repositoryService.createDeployment()
+                        .tenantId(tenantId)
                         .addBpmnModel(PROCESS_KEY + ".bpmn20.xml", buildModel())
                         .name("首链加盟商申请审批（ZS-BPM-003）")
                         .deploy();
-                log.info("[ensureDeployed][首链审批流程已部署：key={}]", PROCESS_KEY);
+                log.info("[ensureDeployed][首链审批流程已部署：key={} tenant={}]", PROCESS_KEY, tenantId);
             }
-            deployed = true;
+            deployedTenants.add(tenantId);
         }
     }
 
