@@ -224,13 +224,20 @@ public class ObjectAuthorizationService {
                 }
             }
         } else if (provider instanceof ClassifiedObjectAuthorizationProvider classified) {
-            // 非 visit 分级裁剪：等级 = 显式编目 ?? 域级默认（注册校验保证可解析）
+            // 非 visit 分级裁剪：等级 = 显式编目 ?? 域级默认（装配校验覆盖构造期候选）
             FieldLevel maxLevel = fieldLevelScopeResolver.resolveMaxLevel(request.getOrgId());
             for (String field : candidates) {
                 if (field == null || field.isBlank()) {
                     continue;
                 }
                 FieldLevel level = resolveFieldLevel(classified, field);
+                if (level == null) {
+                    // 运行期动态候选未编目且无域级默认（SPI 允许运行期计算候选集，装配校验不可达）：
+                    // fail-closed 拒绝输出（不进授权集合，方向与超上限拒绝一致），不以 NPE 中断整次裁决
+                    log.warn("[resolveFields][对象({}) 运行期候选字段({}) 未编目且无域级默认，fail-closed 拒绝输出]",
+                            classified.getObjectType(), field);
+                    continue;
+                }
                 if (level.isWithin(maxLevel)) {
                     authorized.add(field);
                 } else if (level == FieldLevel.F2) {
@@ -254,7 +261,8 @@ public class ObjectAuthorizationService {
     }
 
     /**
-     * 字段等级解析：显式编目优先，未编目字段落域级默认（装配校验保证二者至少其一覆盖候选字段）。
+     * 字段等级解析：显式编目优先，未编目字段落域级默认；二者皆无时返回 null
+     * （运行期动态候选的兜底由调用方 fail-closed 处理）。
      */
     private FieldLevel resolveFieldLevel(ClassifiedObjectAuthorizationProvider classified, String field) {
         FieldLevel level = classified.getFieldLevels().get(field);
@@ -283,7 +291,11 @@ public class ObjectAuthorizationService {
         if (classified.getDomainDefaultLevel() != null) {
             return;
         }
-        for (String field : classified.getCandidateFields()) {
+        Collection<String> candidateFields = classified.getCandidateFields();
+        if (candidateFields == null) {
+            return; // null 候选集合与运行期「字段维未启用」同语义（CollUtil.isEmpty），不视为配置错误
+        }
+        for (String field : candidateFields) {
             if (StrUtil.isNotBlank(field) && !levels.containsKey(field)) {
                 throw new IllegalStateException("候选字段未编目且无域级默认: "
                         + classified.getObjectType() + "." + field);

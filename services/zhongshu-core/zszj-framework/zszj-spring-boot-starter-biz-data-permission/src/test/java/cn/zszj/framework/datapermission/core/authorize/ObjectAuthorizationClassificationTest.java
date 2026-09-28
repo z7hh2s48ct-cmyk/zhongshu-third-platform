@@ -184,6 +184,54 @@ class ObjectAuthorizationClassificationTest extends BaseMockitoUnitTest {
 
     }
 
+    /** 运行期动态候选 provider：构造期仅返回已编目字段（装配校验通过），激活后返回未编目字段（R1 P2-1 回归） */
+    static class DynamicCandidateProvider implements ClassifiedObjectAuthorizationProvider {
+
+        private boolean runtime = false;
+
+        void activateRuntime() {
+            this.runtime = true;
+        }
+
+        @Override
+        public String getObjectType() {
+            return "dynamic-candidate";
+        }
+
+        @Override
+        public Collection<String> getCandidateFields() {
+            return runtime ? List.of("cataloged", "ghost") : List.of("cataloged");
+        }
+
+        @Override
+        public Map<String, FieldLevel> getFieldLevels() {
+            Map<String, FieldLevel> levels = new HashMap<>();
+            levels.put("cataloged", FieldLevel.F1);
+            return levels;
+        }
+
+    }
+
+    /** 候选集合为 null（与「字段维未启用」同语义，装配与运行均不视为配置错误，R1 P3-1 回归） */
+    static class NullCandidatesProvider implements ClassifiedObjectAuthorizationProvider {
+
+        @Override
+        public String getObjectType() {
+            return "null-candidates";
+        }
+
+        @Override
+        public Collection<String> getCandidateFields() {
+            return null;
+        }
+
+        @Override
+        public Map<String, FieldLevel> getFieldLevels() {
+            return Map.of();
+        }
+
+    }
+
     // ========== 测试辅助 ==========
 
     private ObjectAuthorizationService newService(ObjectAuthorizationProvider... providers) {
@@ -274,6 +322,42 @@ class ObjectAuthorizationClassificationTest extends BaseMockitoUnitTest {
     @Test // 5. 域级默认覆盖未编目候选 → 构造通过
     void constructor_domainDefaultCoversUncataloged_passes() {
         assertDoesNotThrow(() -> newService(new DomainDefaultProvider()));
+    }
+
+    @Test // 5b. 候选集合为 null（与字段维未启用同语义）→ 构造通过且裁决输出双 null（R1 P3-1 回归）
+    void constructor_nullCandidates_treatedAsDisabled() {
+        ObjectAuthorizationService service = assertDoesNotThrow(() -> newService(new NullCandidatesProvider()));
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            when(orgDataPermissionChecker.isObjectVisible(100L, null)).thenReturn(true);
+            stubEmployee(ms);
+            ObjectAuthorizationRespDTO resp = service.authorize(
+                    ObjectAuthorizationRequest.of("null-candidates", 100L, null));
+            assertNull(resp.getAuthorizedFields());
+            assertNull(resp.getMaskedFields());
+        }
+    }
+
+    @Test // 5c. 运行期动态候选出现未编目且无域默认字段 → fail-closed 拒绝该字段（不以 NPE 中断裁决，R1 P2-1 回归）
+    void authorize_runtimeDynamicUncatalogedField_failClosedSkipped() {
+        DynamicCandidateProvider provider = new DynamicCandidateProvider();
+        ObjectAuthorizationService service = assertDoesNotThrow(() -> newService(provider));
+        try (MockedStatic<SecurityFrameworkUtils> ms = mockStatic(SecurityFrameworkUtils.class)) {
+            when(orgDataPermissionChecker.isObjectVisible(100L, null)).thenReturn(true);
+            stubEmployee(ms);
+
+            // 构造期候选（已编目）：正常输出
+            ObjectAuthorizationRespDTO before = service.authorize(
+                    ObjectAuthorizationRequest.of("dynamic-candidate", 100L, null));
+            assertEquals(Set.of("cataloged"), before.getAuthorizedFields());
+
+            // 运行期动态出现未编目字段 ghost：该字段 fail-closed 拒绝输出，已编目字段不受影响
+            provider.activateRuntime();
+            ObjectAuthorizationRespDTO after = service.authorize(
+                    ObjectAuthorizationRequest.of("dynamic-candidate", 100L, null));
+            assertEquals(Set.of("cataloged"), after.getAuthorizedFields(),
+                    "运行期未编目字段不得进入授权集合（fail-closed，与超上限拒绝同方向）");
+            assertTrue(after.getMaskedFields().isEmpty());
+        }
     }
 
     // ========== 分级裁剪（非 visit，D-12 §3 默认映射） ==========
