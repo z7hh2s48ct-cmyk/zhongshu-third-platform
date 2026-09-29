@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：433
+# 端点总数：440
 DELETE|/admin-api/bpm/category/delete|ADMIN|PERMISSION|bpm:category:delete|bpm|BpmCategoryController
 DELETE|/admin-api/bpm/form/delete|ADMIN|PERMISSION|bpm:form:delete|bpm|BpmFormController
 DELETE|/admin-api/bpm/model/clean|ADMIN|PERMISSION|bpm:model:clean|bpm|BpmModelController
@@ -114,6 +114,8 @@ GET|/admin-api/bpm/task/todo-page|ADMIN|PERMISSION|bpm:task:query|bpm|BpmTaskCon
 GET|/admin-api/bpm/user-group/get|ADMIN|PERMISSION|bpm:user-group:query|bpm|BpmUserGroupController
 GET|/admin-api/bpm/user-group/page|ADMIN|PERMISSION|bpm:user-group:query|bpm|BpmUserGroupController
 GET|/admin-api/bpm/user-group/simple-list|ADMIN|AUTHENTICATED|-|bpm|BpmUserGroupController
+GET|/admin-api/firstchain/application/get|ADMIN|PERMISSION|firstchain:application:query|firstchain|FirstchainApplicationController
+GET|/admin-api/firstchain/application/page|ADMIN|PERMISSION|firstchain:application:query|firstchain|FirstchainApplicationController
 GET|/admin-api/infra/api-access-log/export-excel|ADMIN|PERMISSION|infra:api-access-log:export|infra|ApiAccessLogController
 GET|/admin-api/infra/api-access-log/get|ADMIN|PERMISSION|infra:api-access-log:query|infra|ApiAccessLogController
 GET|/admin-api/infra/api-access-log/page|ADMIN|PERMISSION|infra:api-access-log:query|infra|ApiAccessLogController
@@ -302,6 +304,11 @@ POST|/admin-api/bpm/process-expression/create|ADMIN|PERMISSION|bpm:process-expre
 POST|/admin-api/bpm/process-instance/create|ADMIN|PERMISSION|bpm:process-instance:query|bpm|BpmProcessInstanceController
 POST|/admin-api/bpm/process-listener/create|ADMIN|PERMISSION|bpm:process-listener:create|bpm|BpmProcessListenerController
 POST|/admin-api/bpm/user-group/create|ADMIN|PERMISSION|bpm:user-group:create|bpm|BpmUserGroupController
+POST|/admin-api/firstchain/application/approve|ADMIN|PERMISSION|firstchain:application:approve|firstchain|FirstchainApplicationController
+POST|/admin-api/firstchain/application/create|ADMIN|PERMISSION|firstchain:application:create|firstchain|FirstchainApplicationController
+POST|/admin-api/firstchain/application/reject|ADMIN|PERMISSION|firstchain:application:reject|firstchain|FirstchainApplicationController
+POST|/admin-api/firstchain/application/submit|ADMIN|PERMISSION|firstchain:application:submit|firstchain|FirstchainApplicationController
+POST|/admin-api/firstchain/application/withdraw|ADMIN|PERMISSION|firstchain:application:withdraw|firstchain|FirstchainApplicationController
 POST|/admin-api/infra/codegen/create-list|ADMIN|PERMISSION|infra:codegen:create|infra|CodegenController
 POST|/admin-api/infra/config/create|ADMIN|PERMISSION|infra:config:create|infra|ConfigController
 POST|/admin-api/infra/data-source-config/create|ADMIN|PERMISSION|infra:data-source-config:create|infra|DataSourceConfigController
