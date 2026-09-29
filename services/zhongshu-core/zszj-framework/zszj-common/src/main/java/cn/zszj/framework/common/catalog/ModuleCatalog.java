@@ -16,15 +16,15 @@ import java.util.Map;
 public final class ModuleCatalog {
 
     /** 当前启用的业务模块 */
-    public static final List<String> ENABLED_MODULES = List.of("system", "infra");
+    public static final List<String> ENABLED_MODULES = List.of("system", "infra", "bpm", "firstchain");
 
     /** 未启用的业务模块（源码保留，不装配） */
     public static final List<String> DISABLED_MODULES = List.of(
-            "bpm", "mp", "mall", "erp", "wms", "pms", "crm", "mes", "im", "report", "pay", "ai", "iot");
+            "mp", "mall", "erp", "wms", "pms", "crm", "mes", "im", "report", "pay", "ai", "iot");
 
     /** 全部业务模块（归属判定顺序：无前缀重叠，顺序不敏感） */
     private static final List<String> ALL_MODULES = List.of(
-            "system", "infra", "bpm", "mp", "mall", "erp", "wms", "pms", "crm", "mes", "im", "report", "pay", "ai", "iot");
+            "system", "infra", "bpm", "firstchain", "mp", "mall", "erp", "wms", "pms", "crm", "mes", "im", "report", "pay", "ai", "iot");
 
     /** 商城子前缀归属（product/trade/promotion 等属 mall 模块，与 DefaultController 兜底分组一致） */
     private static final Map<String, String> MODULE_ALIASES = Map.of(
@@ -34,7 +34,6 @@ public final class ModuleCatalog {
 
     /** 未启用模块 -> admin-api 兜底前缀（超过 10 项，必须用 ofEntries 而非 Map.of） */
     public static final Map<String, List<String>> DISABLED_MODULE_API_PREFIXES = Map.ofEntries(
-            Map.entry("bpm", List.of("/admin-api/bpm/**")),
             Map.entry("mp", List.of("/admin-api/mp/**")),
             Map.entry("mall", List.of("/admin-api/product/**", "/admin-api/trade/**", "/admin-api/promotion/**")),
             Map.entry("erp", List.of("/admin-api/erp/**")),

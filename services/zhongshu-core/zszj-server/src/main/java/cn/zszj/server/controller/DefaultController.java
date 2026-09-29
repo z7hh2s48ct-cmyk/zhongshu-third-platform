@@ -25,11 +25,6 @@ import static cn.zszj.framework.common.exception.enums.GlobalErrorCodeConstants.
 @Slf4j
 public class DefaultController {
 
-    @RequestMapping("/admin-api/bpm/**")
-    public CommonResult<Boolean> bpm404() {
-        return notImplemented("bpm", "工作流");
-    }
-
     @RequestMapping("/admin-api/mp/**")
     public CommonResult<Boolean> mp404() {
         return notImplemented("mp", "微信公众号");

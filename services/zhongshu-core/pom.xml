@@ -15,8 +15,9 @@
         <!-- 各种 module 拓展 -->
         <module>zszj-module-system</module>
         <module>zszj-module-infra</module>
+        <module>zszj-module-bpm</module>
+        <module>zszj-module-firstchain</module>
 <!--        <module>zszj-module-member</module>-->
-<!--        <module>zszj-module-bpm</module>-->
 <!--        <module>zszj-module-report</module>-->
 <!--        <module>zszj-module-mp</module>-->
 <!--        <module>zszj-module-pay</module>-->

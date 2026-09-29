@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>zszj</artifactId>
+        <groupId>cn.zszj</groupId>
+        <version>${revision}</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+    <artifactId>zszj-module-firstchain</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>
+        firstchain 包下，首链业务模块（加盟商开通—线索闭环，D-07 M1~M10）。
+        例如说：加盟商申请与幂等开通、线索分配领取跟进、商机转化等。
+        领域状态机与幂等写回由 zszj-module-bpm 的 cn.zszj.module.bpm.firstchain 承接（ZS-BPM-003）；
+        本模块按《新业务模块接入合同》（ZS-BPM-004）12 项条款接入，不为未来域预建业务表。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-module-system</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <!-- 首链领域状态机与幂等写回（ZS-BPM-003：FirstChainApplicationService/FirstChainProcessBindingService） -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-module-bpm</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <!-- 业务组件 -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-biz-data-permission</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-biz-tenant</artifactId>
+        </dependency>
+
+        <!-- Web 相关 -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- DB 相关 -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-mybatis</artifactId>
+        </dependency>
+
+        <!-- Test 测试相关 -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-test</artifactId>
+        </dependency>
+
+        <!-- 工具类相关 -->
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-spring-boot-starter-excel</artifactId>
+        </dependency>
+    </dependencies>
+</project>

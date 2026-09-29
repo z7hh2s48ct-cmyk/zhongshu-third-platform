@@ -31,6 +31,16 @@
             <artifactId>zszj-module-infra</artifactId>
             <version>${revision}</version>
         </dependency>
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-module-bpm</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.zszj</groupId>
+            <artifactId>zszj-module-firstchain</artifactId>
+            <version>${revision}</version>
+        </dependency>
 
         <!-- ZS-DB-001.A / D-08：目标数据库为 PostgreSQL，运行包显式包含 PG 驱动；
              各方言驱动在 starter 中均为 optional，MySQL 驱动不进入运行包（无 MySQL 回退） -->
@@ -76,12 +86,7 @@
 <!--            <artifactId>zszj-module-report</artifactId>-->
 <!--            <version>${revision}</version>-->
 <!--        </dependency>-->
-        <!-- 工作流 -->
-<!--        <dependency>-->
-<!--            <groupId>cn.zszj</groupId>-->
-<!--            <artifactId>zszj-module-bpm</artifactId>-->
-<!--            <version>${revision}</version>-->
-<!--        </dependency>-->
+        <!-- 工作流（ZS-BPM-001 启用义务随 ZS-FC-001 骨架解封：引擎表 schema 管理器自管，业务扩展表走 Flyway） -->
         <!-- 支付服务。默认注释，保证编译速度 -->
 <!--        <dependency>-->
 <!--            <groupId>cn.zszj</groupId>-->
