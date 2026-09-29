@@ -22,11 +22,21 @@ spring:
 
 mybatis-plus:
   lazy-initialization: true # 单元测试，设置 MyBatis Mapper 延迟加载，加速每个单元测试
-  type-aliases-package: ${zszj.info.base-package}.module.*.dal.dataobject
+  type-aliases-package: cn.zszj.module.firstchain.dal.dataobject
+
+--- #################### 定时任务相关配置 ####################
+
+--- #################### 配置中心相关配置 ####################
+
+--- #################### 服务保障相关配置 ####################
+
+# Lock4j 配置项（单元测试，禁用 Lock4j）
+
+--- #################### 监控相关配置 ####################
 
 --- #################### 众墅之家相关配置 ####################
 
 # 众墅之家配置项，设置当前项目所有自定义的配置
 zszj:
   info:
-    base-package: cn.zszj
+    base-package: cn.zszj.module

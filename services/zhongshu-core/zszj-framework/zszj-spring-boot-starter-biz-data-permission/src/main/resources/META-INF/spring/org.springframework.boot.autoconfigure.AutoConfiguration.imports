@@ -1,2 +1,3 @@
 cn.zszj.framework.datapermission.config.ZszjDataPermissionAutoConfiguration
 cn.zszj.framework.datapermission.config.ZszjDeptDataPermissionAutoConfiguration
+cn.zszj.framework.datapermission.config.ZszjOrgDataPermissionAutoConfiguration
