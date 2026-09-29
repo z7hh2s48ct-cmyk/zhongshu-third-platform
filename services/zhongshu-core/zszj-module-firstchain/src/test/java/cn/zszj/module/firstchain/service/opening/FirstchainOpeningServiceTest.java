@@ -145,6 +145,7 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         mockPlatformOperator();
         mockOrganizationCreation();
         mockLeaderUserCreation();
+        mockMembershipCreation();
         mockRoleCreation();
 
         Long orgId = openingService.approveAndOpen(approveCmd("APP-O1", "资质齐备，同意开通"));
@@ -185,6 +186,7 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         mockPlatformOperator();
         mockOrganizationCreation();
         mockLeaderUserCreation();
+        mockMembershipCreation();
         mockRoleCreation();
 
         Long firstOrgId = openingService.approveAndOpen(approveCmd("APP-DUP", null));
@@ -227,8 +229,12 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         assertThat(row.get("status")).isEqualTo(FranchiseeApplicationStatus.REJECTED.name());
         assertThat(row.get("reject_reason")).isEqualTo("申请方主体资格存疑");
         assertThat(((Number) row.get("version")).longValue()).isEqualTo(2L);
-        // REJECTED 不建任何主体（M4-A）：组织/账号/角色/任职零调用
-        verifyNoInteractions(organizationService, adminUserService, membershipService, roleService);
+        // REJECTED 不建任何主体（M4-A）：组织/账号/角色/任职创建面零调用
+        //（资格校验的只读触碰 getPrimaryMembership/getOrganization 合法，不在断言面）
+        verify(organizationService, times(0)).createOrganization(any());
+        verify(adminUserService, times(0)).createUser(any());
+        verify(membershipService, times(0)).createMembership(any(), any());
+        verify(roleService, times(0)).createRole(any(), any());
         assertThat(queryAuditCount("OBJECT_CREATED", "OPEN", "APP-RJ2", "SUCCESS")).isZero();
     }
 
@@ -299,8 +305,9 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         mockPlatformOperator();
         mockOrganizationCreation();
         mockLeaderUserCreation();
+        mockMembershipCreation();
         mockRoleCreation();
-        // 任职创建失败（开通中段）→ 同事务整体回滚
+        // 任职创建失败（开通中段）→ 同事务整体回滚（覆盖捕获桩：Mockito 后置 stubbing 优先）
         when(membershipService.createMembership(any(), any())).thenThrow(new RuntimeException("任职创建失败"));
 
         assertThatThrownBy(() -> openingService.approveAndOpen(approveCmd("APP-F1", null)))
@@ -323,6 +330,7 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         mockPlatformOperator();
         mockOrganizationCreation();
         mockLeaderUserCreation();
+        mockMembershipCreation();
         mockRoleCreation();
 
         openingService.approveAndOpen(approveCmd("APP-AU1", "同意开通"));
@@ -411,6 +419,14 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         when(adminUserService.createUser(any())).thenAnswer(invocation -> {
             capturedLeaderUser.set(invocation.getArgument(0));
             return LEADER_USER_ID;
+        });
+    }
+
+    /** 负责人任职创建桩：捕获入参（任职归属/授权语义由 system 模块自身测试守护，此处只证接线与默认授权绑定） */
+    private void mockMembershipCreation() {
+        when(membershipService.createMembership(any(), any())).thenAnswer(invocation -> {
+            capturedMembership.set(invocation.getArgument(0));
+            return null;
         });
     }
 
