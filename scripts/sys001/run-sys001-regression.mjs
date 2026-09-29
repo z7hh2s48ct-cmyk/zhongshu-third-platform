@@ -13,6 +13,11 @@
  *
  * 用法：node scripts/sys001/run-sys001-regression.mjs [--keep]
  *   --keep  保留容器与 server 进程供调试（打印连接信息；不用于 CI/收口）
+ *
+ * BPM 启用义务（ZS-FC-001 随骨架解封 BPM 装配；循 services/zhongshu-core/docs/BPM引擎表与业务扩展表
+ * 迁移责任决策 §1.1~§1.3）：引擎表 ACT_* 在「迁移期」由 zhongshu_owner 以 database-schema-update=true
+ * 引导建出（本脚本引导步，一次性进程），正式 server 以 zhongshu_app + database-schema-update=false
+ * 运行（运行期零 DDL；app 对引擎表的 DML 由 env-setup-test.sql default privileges 自动授权）。
  */
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, statSync, readdirSync } from 'node:fs';
@@ -224,6 +229,65 @@ ${(r.stdout + r.stderr).slice(0, 2000)}`);
   }
   console.log('[sys001] 重建完成');
 }
+// ---------- 6.5 Flowable owner 引导（BPM-001 决策 §1.1：迁移期以 owner 账号执行引擎建表） ----------
+// 同一 jar 以 owner 凭据 + database-schema-update=true 启动到就绪后即杀（一次性引导进程）；
+// 引擎表 ACT_* 由引擎自身 schema 管理器建出（版本精确 8.0.0.0），随后正式 server 以 app + 零 DDL 运行。
+{
+  console.log('[sys001] Flowable owner 引导（zhongshu_owner + database-schema-update=true，一次性进程）…');
+  const bootstrapProc = spawn(JAVA, [
+    '-jar', SERVER_JAR,
+    '--spring.profiles.active=local,harness',
+    `--server.port=${serverPort}`, // 引导进程先于正式 server，同端口不冲突
+    '--server.address=127.0.0.1',
+    '--flowable.database-schema-update=true', // 引导期 owner 窗口允许引擎建表
+    '--spring.datasource.dynamic.druid.pool-prepared-statements=false',
+    '--spring.datasource.dynamic.druid.max-pool-prepared-statement-per-connection-size=-1',
+  ], {
+    cwd: root,
+    env: {
+      ...process.env,
+      ZSZJ_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${pgPort}/zhongshu?preparedStatementCacheQueries=0`,
+      ZSZJ_DATASOURCE_USERNAME: 'zhongshu_owner',
+      ZSZJ_DATASOURCE_PASSWORD: 'owner_local_1',
+      ZSZJ_HARNESS_REDIS_HOST: '127.0.0.1',
+      ZSZJ_HARNESS_REDIS_PORT: String(redisPort),
+      ZSZJ_APPLICATION_LOCAL_SPRING_RABBITMQ_PASSWORD: '',
+      ZSZJ_APPLICATION_LOCAL_SPRING_BOOT_ADMIN_CLIENT_PASSWORD: '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const bootstrapLog = [];
+  bootstrapProc.stdout.on('data', (d) => bootstrapLog.push(String(d)));
+  bootstrapProc.stderr.on('data', (d) => bootstrapLog.push(String(d)));
+  const bootstrapDeadline = Date.now() + 240_000;
+  let bootstrapped = false;
+  let bootstrapLastErr = '';
+  while (Date.now() < bootstrapDeadline) {
+    if (bootstrapProc.exitCode !== null) { bootstrapLastErr = `引导进程提前退出（exit=${bootstrapProc.exitCode}）`; break; }
+    try {
+      const r = await fetch(`http://127.0.0.1:${serverPort}/admin-api/system/tenant/simple-list`).then((x) => x.json()).catch(() => null);
+      if (r?.code === 0) { bootstrapped = true; break; }
+      bootstrapLastErr = `code=${r?.code}`;
+    } catch (e) { bootstrapLastErr = String(e).slice(0, 120); }
+    await new Promise((res) => setTimeout(res, 2000));
+  }
+  bootstrapProc.kill();
+  await new Promise((res) => {
+    if (bootstrapProc.exitCode !== null) { res(); return; }
+    const timer = setTimeout(res, 10_000); // 有界兜底：退出事件不达也继续（fail-loud 由后续断言守护）
+    bootstrapProc.on('exit', () => { clearTimeout(timer); res(); });
+  });
+  if (!bootstrapped) {
+    fail(1, `[sys001] Flowable owner 引导失败（${bootstrapLastErr}）；log 尾部：
+${bootstrapLog.join('').slice(-2000)}`);
+  }
+  const actTables = pgQuery("SELECT count(*) FROM information_schema.tables WHERE lower(table_name) LIKE 'act%'");
+  if (!actTables || Number(actTables) <= 0) {
+    fail(1, `[sys001] 引擎表引导数量异常（ACT_=${actTables}，期望引擎自建 ≥39 张形态）`);
+  }
+  console.log(`[sys001] Flowable owner 引导完成：ACT_ 引擎表 ${actTables} 张（正式 server 以 app 运行，零 DDL）`);
+}
+
 mkdirSync(OUT_DIR, { recursive: true });
 const serverLog = [];
 console.log(`[sys001] 启动 zszj-server（profile=local,harness；server 端口 ${serverPort}；log: ${serverLogPath}）…`);
@@ -235,6 +299,8 @@ serverProc = spawn(JAVA, [
   // ZS-DB-001 已登记缺陷的夹具规避（与 scripts/brand/run-brand-004b-runtime.mjs 同款，经 BRAND-004.B 运行期验证）：
   // Druid PSCache 语句包装与 MP 3.5.17 selectOne 光标查询在真实 PG 上高频「statement 已关闭」，显式关闭 PSCache；
   // 根因修复归 ZS-DB-001 依赖升级（MyBatis-Plus/Druid），本覆盖仅为夹具级规避，不改产品 yaml 语义
+  // BPM-001 决策 §1.2：运行期零 DDL（引擎表已由 owner 引导步建出，app 低权限仅 DML）
+  '--flowable.database-schema-update=false',
   '--spring.datasource.dynamic.druid.pool-prepared-statements=false',
   '--spring.datasource.dynamic.druid.max-pool-prepared-statement-per-connection-size=-1',
 ], {
