@@ -100,8 +100,8 @@ public class FirstchainLeadService {
         }
         return transactionTemplate.execute(status -> {
             List<Map<String, Object>> existingRows = jdbcTemplate.queryForList(
-                    "SELECT id, org_id, IFNULL(customer_name, '') AS customer_name, "
-                            + "IFNULL(customer_phone, '') AS customer_phone FROM bpm_first_chain_lead "
+                    "SELECT id, org_id, COALESCE(customer_name, '') AS customer_name, "
+                            + "COALESCE(customer_phone, '') AS customer_phone FROM bpm_first_chain_lead "
                             + "WHERE tenant_id = ? AND lead_key = ? AND deleted = FALSE",
                     tenantId, cmd.leadKey());
             if (!existingRows.isEmpty()) {
