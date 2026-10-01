@@ -159,7 +159,9 @@ public class NotifyLandingServiceTest extends BaseDbUnitTest {
 
     @Test
     public void testResolveMessageLanding_moduleDisabled() {
-        // bpm 在 ModuleCatalog.ENABLED_MODULES 之外：关闭模块落点明确不可用，且不触碰业务授权
+        // mall 在 ModuleCatalog.ENABLED_MODULES 之外（启用面=system/infra/bpm/firstchain）：
+        // 关闭模块落点明确不可用，且不触碰业务授权。bpm 自 B09 骨架（5531487）已入启用面，
+        // 夹具循之改用 mall（原 bpm 假设失效为预存在测试缺陷，2026-10-01 定向复跑暴露后修正）
         NotifyMessageDO message = insertOwnMessage(DisabledModuleLandingProvider.TEMPLATE_CODE, Map.of("bizId", 1024));
         NotifyMessageLandingRespVO result = notifyLandingService.resolveMessageLanding(
                 message.getId(), USER_ID, USER_TYPE, NotifyLandingClient.WEB);
@@ -309,7 +311,7 @@ public class NotifyLandingServiceTest extends BaseDbUnitTest {
 
         }
 
-        /** 关闭模块夹具：module=bpm（ModuleCatalog.DISABLED_MODULES），任何方法都不应被调用 */
+        /** 关闭模块夹具：module=mall（ModuleCatalog.DISABLED_MODULES），任何方法都不应被调用 */
         public static class DisabledModuleLandingProvider implements NotifyLandingProvider {
 
             static final String TEMPLATE_CODE = "zs_fixture_disabled_module";
@@ -321,7 +323,7 @@ public class NotifyLandingServiceTest extends BaseDbUnitTest {
 
             @Override
             public String module() {
-                return "bpm";
+                return "mall";
             }
 
             @Override
