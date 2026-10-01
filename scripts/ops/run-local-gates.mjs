@@ -13,7 +13,7 @@
  * 安全/基础管理 API 层 = G12 + G14（CI 同入口见 local-baseline-gates.yml security/sys001 job）；
  * G15 双端技术联调门禁（ZS-OPS-001.D：自举 sys001 夹具跑 CLIENT-005.B E2E 18 用例；slow+exclusive；
  *   或经 E2E_BASE_URL 直连 deploy/README-local.md 长驻联验环境）；
- * G16 B09 联合门禁（ZS-OPS-001.E：PG 流程 bpm001 + 首链幂等写回/跨组织反向 bpm003 串联；slow+exclusive）。
+ * G16 B09 联合门禁（ZS-OPS-001.E：PG 流程 bpm001 + 首链幂等写回/跨组织反向 bpm003 + 首链申请/线索域 PG 运行期 firstchain 串联；slow+exclusive）。
  *   流程层 CI 由 pg-regression.yml 通道覆盖（bpm001 #9 + bpm003 #21 同入口）。
  *
  * 提速（ZS-GOV-001 提效方案 P1）：
@@ -55,7 +55,7 @@ export const GATES = [
     cmd: ['node', 'scripts/ops/run-b06-joint-gate.mjs'] }, // 自举夹具含 clean 重建，与 mvn 门禁串行
   { id: 'G14 基础管理 API 层回归（ZS-SYS-001.A：七类矩阵 50 用例，Docker PG/Redis + 真实 server）', areas: ['scripts/sys001/', 'services/'], slow: true, exclusive: true,
     cmd: ['node', 'scripts/sys001/run-sys001-regression.mjs'] }, // exclusive：clean 重建共享 target，须与 mvn 门禁串行（codex r0 P2）
-  { id: 'G16 B09 联合门禁（ZS-OPS-001.E：PG 流程 bpm001 + 首链幂等写回/跨组织反向 bpm003）', areas: ['scripts/db/', 'services/'], slow: true, exclusive: true,
+  { id: 'G16 B09 联合门禁（ZS-OPS-001.E：PG 流程 bpm001 + 首链幂等写回/跨组织反向 bpm003 + 首链域 PG 运行期 firstchain）', areas: ['scripts/db/', 'services/'], slow: true, exclusive: true,
     cmd: ['node', 'scripts/ops/run-b09-joint-gate.mjs'] }, // exclusive：串联两个自管理 Docker PG 套件，串行防负载竞态
 ];
 

@@ -41,18 +41,20 @@ INSERT INTO system_menu (id, name, permission, type, sort, parent_id, path, icon
 
 -- 修复本迁移前已开通租户的既有默认模板角色（菜单空集登记期产物）：按 FirstchainMenus 两套菜单面补绑，
 -- 幂等（已存在绑定不重复插入），不动其他角色的任何既有授权。
+-- 注意：system_role/system_role_menu.deleted 为 int2（基线形态），谓词必须写 `= 0`——
+-- 真实 PG 无 `smallint = boolean` 算符（首跑 run-firstchain-verify 实证，勿改回 FALSE）。
 INSERT INTO system_role_menu (id, role_id, menu_id, creator, create_time, updater, update_time, deleted, tenant_id)
 SELECT nextval('system_role_menu_seq'), r.id, m.menu_id, '1', CURRENT_TIMESTAMP, '1', CURRENT_TIMESTAMP, 0, r.tenant_id
 FROM system_role r
 CROSS JOIN (VALUES (5300), (5302), (5303), (5317), (5318), (5319), (5320), (5321), (5322), (5323)) AS m(menu_id)
-WHERE r.code = 'firstchain:franchisee:leader' AND r.deleted = FALSE
+WHERE r.code = 'firstchain:franchisee:leader' AND r.deleted = 0
   AND NOT EXISTS (SELECT 1 FROM system_role_menu rm
-                  WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id AND rm.deleted = FALSE);
+                  WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id AND rm.deleted = 0);
 
 INSERT INTO system_role_menu (id, role_id, menu_id, creator, create_time, updater, update_time, deleted, tenant_id)
 SELECT nextval('system_role_menu_seq'), r.id, m.menu_id, '1', CURRENT_TIMESTAMP, '1', CURRENT_TIMESTAMP, 0, r.tenant_id
 FROM system_role r
 CROSS JOIN (VALUES (5300), (5302), (5318), (5320), (5321), (5322)) AS m(menu_id)
-WHERE r.code = 'firstchain:franchisee:member' AND r.deleted = FALSE
+WHERE r.code = 'firstchain:franchisee:member' AND r.deleted = 0
   AND NOT EXISTS (SELECT 1 FROM system_role_menu rm
-                  WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id AND rm.deleted = FALSE);
+                  WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id AND rm.deleted = 0);

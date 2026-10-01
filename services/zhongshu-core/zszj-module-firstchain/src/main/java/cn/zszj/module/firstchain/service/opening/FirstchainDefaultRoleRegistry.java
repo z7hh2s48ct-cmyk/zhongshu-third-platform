@@ -116,8 +116,10 @@ public class FirstchainDefaultRoleRegistry {
     }
 
     private Long queryRoleIdByCode(Long tenantId, String code) {
+        // system_role.deleted 为 int2（基线形态）：谓词必须写 `= 0`——真实 PG 无 `smallint = boolean` 算符
+        //（run-firstchain-verify 真实容器实证，勿改回 FALSE；H2 bit 列同样兼容 0）
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id FROM system_role WHERE tenant_id = ? AND code = ? AND deleted = FALSE",
+                "SELECT id FROM system_role WHERE tenant_id = ? AND code = ? AND deleted = 0",
                 tenantId, code);
         return rows.isEmpty() ? null : ((Number) rows.get(0).get("id")).longValue();
     }

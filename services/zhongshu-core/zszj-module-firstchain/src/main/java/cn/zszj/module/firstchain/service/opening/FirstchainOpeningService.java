@@ -395,9 +395,10 @@ public class FirstchainOpeningService {
      * 并发双开的残余窗口由 {@link #openFranchisee} 的 DuplicateKey 转译兜底。
      */
     private OrganizationDO findOpenedOrganization(Long tenantId, String appKey) {
+        // system_organization.deleted 为 int2（基线形态）：谓词必须写 `= 0`（真实 PG 无 smallint = boolean 算符）
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT id, name, code, type FROM system_organization "
-                        + "WHERE tenant_id = ? AND code = ? AND deleted = FALSE",
+                        + "WHERE tenant_id = ? AND code = ? AND deleted = 0",
                 tenantId, appKey);
         if (rows.isEmpty()) {
             return null;
@@ -410,8 +411,9 @@ public class FirstchainOpeningService {
     }
 
     private Long queryRoleIdByCode(Long tenantId, String code) {
+        // system_role.deleted 为 int2（基线形态）：谓词必须写 `= 0`（真实 PG 无 smallint = boolean 算符）
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id FROM system_role WHERE tenant_id = ? AND code = ? AND deleted = FALSE",
+                "SELECT id FROM system_role WHERE tenant_id = ? AND code = ? AND deleted = 0",
                 tenantId, code);
         return rows.isEmpty() ? null : ((Number) rows.get(0).get("id")).longValue();
     }

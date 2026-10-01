@@ -23,6 +23,7 @@
  *  19. ZS-IAM-004 任职迁移前后核对/恢复方案（parity、一账号一 primary、不合格不回填、rollback 演练、幂等重放）
  *  20. ZS-FILE-004.B 导出件用途保留期清理（V20260925.002 重放、候选查询形状/FIFO/LIMIT 截断、保留期边界 NULL/<=、用途/状态/逻辑删除门、清理路径与引用保护交叉、租户隔离）
  *  21. ZS-BPM-003 首链领域状态与幂等写回（真实 Flowable+PG：四操作与业务状态一致、重复回调吸收、晚到弃单留痕、并发审批/撤回恰一方生效、跨租户隔离反向）
+ *  22. ZS-FC-001/002 首链申请/线索域 PG 运行期（申请域链路+app_key 撞号、开通同事务幂等/失败回滚〔真实 system 表〕、线索五态全链、COALESCE 下发幂等〔R1 方言回归锚点〕、并发领取恰一方生效、无效原因守卫与终态锁定、跨租户隔离反向）
  * 任一套件失败退出非零。
  * 用法：node scripts/db/run-pg-regression.mjs
  */
@@ -54,6 +55,7 @@ const cases = [
   { id: 'ZS-IAM-004 任职迁移前后核对/恢复方案/不误合并', cmd: ['node', 'scripts/db/run-iam004-verify.mjs'] },
   { id: 'ZS-FILE-004.B 导出件用途保留期清理/边界/引用保护交叉', cmd: ['node', 'scripts/db/run-file004b-verify.mjs'] },
   { id: 'ZS-BPM-003 首链领域状态与幂等写回（真实引擎/四操作/幂等门）', cmd: ['node', 'scripts/db/run-bpm003-verify.mjs'] },
+  { id: 'ZS-FC-001/002 首链申请/线索域 PG 运行期（开通幂等/COALESCE 下发幂等/五态链/并发领取）', cmd: ['node', 'scripts/db/run-firstchain-verify.mjs'] },
 ];
 
 let failed = false;

@@ -71,5 +71,31 @@
             <groupId>cn.zszj</groupId>
             <artifactId>zszj-spring-boot-starter-excel</artifactId>
         </dependency>
+
+        <!-- ZS-FC-001/002：PG 集成夹具驱动（仅测试作用域；循 zszj-module-bpm 同款——模块运行时不携带
+             JDBC 驱动，驱动由 server 侧统一引入） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- 真实 PG 运行期套件（pg/FirstchainPgRuntimeTest）由 scripts/db/run-firstchain-verify.mjs
+                         注入 ZSZJ_FIRSTCHAIN_HARNESS_* 环境变量并以 -Dtest 显式驱动（-Dtest 优先于本排除）；
+                         常规模块单测（mvn test）不装配该套件——缺环境即快速失败是套件自身合同，不得静默跳过，
+                         也不得让本地整跑误红。 -->
+                    <excludes>
+                        <exclude>**/pg/*.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
