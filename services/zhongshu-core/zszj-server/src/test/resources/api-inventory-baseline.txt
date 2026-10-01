@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：451
+# 端点总数：452
 DELETE|/admin-api/bpm/category/delete|ADMIN|PERMISSION|bpm:category:delete|bpm|BpmCategoryController
 DELETE|/admin-api/bpm/form/delete|ADMIN|PERMISSION|bpm:form:delete|bpm|BpmFormController
 DELETE|/admin-api/bpm/model/clean|ADMIN|PERMISSION|bpm:model:clean|bpm|BpmModelController
@@ -116,6 +116,7 @@ GET|/admin-api/bpm/user-group/page|ADMIN|PERMISSION|bpm:user-group:query|bpm|Bpm
 GET|/admin-api/bpm/user-group/simple-list|ADMIN|AUTHENTICATED|-|bpm|BpmUserGroupController
 GET|/admin-api/firstchain/application/get|ADMIN|PERMISSION|firstchain:application:query|firstchain|FirstchainApplicationController
 GET|/admin-api/firstchain/application/page|ADMIN|PERMISSION|firstchain:application:query|firstchain|FirstchainApplicationController
+GET|/admin-api/firstchain/employee/list-members|ADMIN|PERMISSION|firstchain:employee:list|firstchain|FirstchainEmployeeController
 GET|/admin-api/firstchain/lead/get|ADMIN|PERMISSION|firstchain:lead:query|firstchain|FirstchainLeadController
 GET|/admin-api/firstchain/lead/metrics|ADMIN|PERMISSION|firstchain:lead:query|firstchain|FirstchainLeadController
 GET|/admin-api/firstchain/lead/page|ADMIN|PERMISSION|firstchain:lead:query|firstchain|FirstchainLeadController

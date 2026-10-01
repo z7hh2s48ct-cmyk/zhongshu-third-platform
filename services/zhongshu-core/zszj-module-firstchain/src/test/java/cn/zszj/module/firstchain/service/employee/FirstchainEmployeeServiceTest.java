@@ -6,6 +6,7 @@ import cn.zszj.framework.test.core.ut.BaseDbUnitTest;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeCreateReqVO;
 import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeCreatedRespVO;
+import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeMemberRespVO;
 import cn.zszj.module.firstchain.service.opening.FirstchainDefaultRoleRegistry;
 import cn.zszj.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
@@ -200,6 +201,38 @@ class FirstchainEmployeeServiceTest extends BaseDbUnitTest {
         verifyNoInteractions(adminUserService);
     }
 
+    // ========== FC-003 员工选择器：本组织在职成员列表 ==========
+
+    @Test
+    void listOrgMembers_byLeader_returnsActiveMembersOfOwnOrgOnly() {
+        // 负责人 900 + 在职员工 950 属本组织且启用；960 任职停用排除；970 属他组织排除；980 账号禁用排除
+        insertUser(900L, "leader001", "负责人", cn.zszj.framework.common.enums.CommonStatusEnum.ENABLE.getStatus());
+        insertUser(950L, "emp001", "张三", cn.zszj.framework.common.enums.CommonStatusEnum.ENABLE.getStatus());
+        insertUser(960L, "susp001", "停职者", cn.zszj.framework.common.enums.CommonStatusEnum.ENABLE.getStatus());
+        insertUser(970L, "other001", "外组织", cn.zszj.framework.common.enums.CommonStatusEnum.ENABLE.getStatus());
+        insertUser(980L, "disabled001", "禁用者", cn.zszj.framework.common.enums.CommonStatusEnum.DISABLE.getStatus());
+        insertMembership(900L, FRANCHISEE_ORG_ID, MembershipStatusEnum.ACTIVE.getStatus());
+        insertMembership(950L, FRANCHISEE_ORG_ID, MembershipStatusEnum.ACTIVE.getStatus());
+        insertMembership(960L, FRANCHISEE_ORG_ID, MembershipStatusEnum.SUSPENDED.getStatus());
+        insertMembership(970L, 999L, MembershipStatusEnum.ACTIVE.getStatus());
+        insertMembership(980L, FRANCHISEE_ORG_ID, MembershipStatusEnum.ACTIVE.getStatus());
+
+        java.util.List<EmployeeMemberRespVO> members = employeeService.listOrgMembers();
+
+        assertThat(members).extracting(EmployeeMemberRespVO::getUserId)
+                .containsExactly(900L, 950L);
+        assertThat(members.get(1).getNickname()).isEqualTo("张三");
+    }
+
+    @Test
+    void listOrgMembers_byNonLeader_rejected() {
+        OrganizationDO franchiseeOrg = franchiseeOrg(LEADER_USER_ID + 1);
+        when(organizationService.getOrganization(FRANCHISEE_ORG_ID)).thenReturn(franchiseeOrg);
+
+        assertServiceException(() -> employeeService.listOrgMembers(),
+                FIRSTCHAIN_EMPLOYEE_ACTOR_NOT_LEADER);
+    }
+
     // ========== 账号创建失败同事务回滚（fail-closed） ==========
 
     @Test
@@ -256,6 +289,16 @@ class FirstchainEmployeeServiceTest extends BaseDbUnitTest {
             capturedMembership.set(invocation.getArgument(0));
             return null;
         });
+    }
+
+    private void insertUser(Long id, String username, String nickname, Integer status) {
+        jdbcTemplate.update("INSERT INTO system_users (id, username, nickname, status, tenant_id) VALUES (?, ?, ?, ?, ?)",
+                id, username, nickname, status, TENANT_ID);
+    }
+
+    private void insertMembership(Long userId, Long orgId, Integer status) {
+        jdbcTemplate.update("INSERT INTO system_membership (user_id, organization_id, status, tenant_id) VALUES (?, ?, ?, ?)",
+                userId, orgId, status, TENANT_ID);
     }
 
     private static void loginAs(Long userId) {

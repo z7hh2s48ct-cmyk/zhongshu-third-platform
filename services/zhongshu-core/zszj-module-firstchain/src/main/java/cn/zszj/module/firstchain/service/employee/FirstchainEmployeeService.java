@@ -11,6 +11,7 @@ import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeCreateReqVO;
 import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeCreatedRespVO;
+import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeMemberRespVO;
 import cn.zszj.module.firstchain.framework.FirstchainMenus;
 import cn.zszj.module.firstchain.service.opening.FirstchainDefaultRoleRegistry;
 import cn.zszj.module.firstchain.service.opening.FirstchainOpeningService;
@@ -22,11 +23,16 @@ import cn.zszj.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.zszj.module.system.service.membership.MembershipService;
 import cn.zszj.module.system.service.organization.OrganizationService;
 import cn.zszj.module.system.service.user.AdminUserService;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.sql.DataSource;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -78,6 +84,16 @@ public class FirstchainEmployeeService {
     @Resource
     private AuditPort auditPort;
 
+    @Resource
+    private DataSource dataSource;
+
+    private JdbcTemplate jdbcTemplate;
+
+    @PostConstruct
+    void initJdbcTemplate() {
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
+    }
+
     /**
      * 负责人创建员工账号（PILOT-REQ-004 服务端；幂等键=用户名——重复用户名由 system 账号唯一约束
      * 显式分类，不静默吸收）。
@@ -126,6 +142,36 @@ public class FirstchainEmployeeService {
         respVO.setUsername(user.getUsername());
         respVO.setInitialPassword(initialPassword);
         return respVO;
+    }
+
+    /**
+     * 本组织在职成员列表（ZS-FC-003 员工选择器数据源；分配/改派的目标员工只能来自本组织）。
+     *
+     * <p>对象级资格同创建：仅 FRANCHISEE 组织负责人（实时重算）；返回负责人本人在内的全部 ACTIVE
+     * 任职成员（含停用账号排除——账号 status 禁用一并排除，与「停用即失权」口径一致）。
+     */
+    public List<EmployeeMemberRespVO> listOrgMembers() {
+        Long tenantId = requireTenantId();
+        Long operatorUserId = SecurityFrameworkUtils.getLoginUserId();
+        OrganizationDO organization = requireLeaderOrganization(operatorUserId);
+        // 显式租户 + deleted=0（基线表 int2 形态；双表同过滤）；仅 ACTIVE 任职 + 启用账号
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT u.id, u.username, u.nickname FROM system_membership m "
+                        + "JOIN system_users u ON u.id = m.user_id AND u.deleted = 0 "
+                        + "AND u.status = ? AND u.tenant_id = ? "
+                        + "WHERE m.organization_id = ? AND m.status = ? AND m.deleted = 0 AND m.tenant_id = ? "
+                        + "ORDER BY u.id",
+                CommonStatusEnum.ENABLE.getStatus(), tenantId,
+                organization.getId(), MembershipStatusEnum.ACTIVE.getStatus(), tenantId);
+        List<EmployeeMemberRespVO> members = new ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            EmployeeMemberRespVO member = new EmployeeMemberRespVO();
+            member.setUserId(((Number) row.get("id")).longValue());
+            member.setUsername((String) row.get("username"));
+            member.setNickname((String) row.get("nickname"));
+            members.add(member);
+        }
+        return members;
     }
 
     /**

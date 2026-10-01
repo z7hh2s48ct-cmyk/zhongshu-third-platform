@@ -159,8 +159,16 @@
       <el-form-item label="线索编号">
         <span>{{ assignRow?.leadKey }}</span>
       </el-form-item>
-      <el-form-item label="员工用户编号" required>
-        <el-input-number v-model="assignUserId" :min="1" :controls="false" class="!w-180px" />
+      <el-form-item label="目标员工" required>
+        <el-select
+          v-model="assignUserId"
+          filterable
+          :loading="memberLoading"
+          placeholder="选择本组织在职员工"
+          class="!w-240px"
+        >
+          <el-option v-for="m in memberOptions" :key="m.userId" :label="m.label" :value="m.userId" />
+        </el-select>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -221,6 +229,7 @@
 import { dateFormatter } from '@/utils/formatTime'
 import * as LeadApi from '@/api/firstchain/lead'
 import type { LeadStatusMetrics, LeadVO } from '@/api/firstchain/lead'
+import * as EmployeeApi from '@/api/firstchain/employee'
 
 defineOptions({ name: 'FirstchainLead' })
 
@@ -353,11 +362,25 @@ const assignLoading = ref(false)
 const assignMode = ref<'assign' | 'reassign'>('assign')
 const assignRow = ref<LeadVO>()
 const assignUserId = ref<number>()
-const openAssignDialog = (row: LeadVO, mode: 'assign' | 'reassign') => {
+const memberOptions = ref<{ userId: number; label: string }[]>([])
+const memberLoading = ref(false)
+const openAssignDialog = async (row: LeadVO, mode: 'assign' | 'reassign') => {
   assignRow.value = row
   assignMode.value = mode
   assignUserId.value = undefined
   assignVisible.value = true
+  // 员工选择器数据源（本组织在职成员；对象级资格由服务端二次校验）
+  memberOptions.value = []
+  memberLoading.value = true
+  try {
+    const members = await EmployeeApi.listOrgMembers()
+    memberOptions.value = members.map((m) => ({
+      userId: m.userId,
+      label: `${m.nickname}（${m.username} #${m.userId}）`
+    }))
+  } finally {
+    memberLoading.value = false
+  }
 }
 const submitAssign = async () => {
   if (!assignRow.value || !assignUserId.value) {

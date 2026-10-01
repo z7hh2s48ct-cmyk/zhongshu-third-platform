@@ -37,7 +37,7 @@
         block
         type="primary"
         :loading="actionLoading"
-        @click="assignVisible = true"
+        @click="openAssign"
       >
         分配
       </wd-button>
@@ -46,7 +46,7 @@
         block
         type="warning"
         :loading="actionLoading"
-        @click="assignVisible = true"
+        @click="openAssign"
       >
         改派
       </wd-button>
@@ -84,7 +84,13 @@
       <view class="mb-24rpx text-32rpx font-bold">
         {{ isReassign ? '改派线索' : '分配线索' }}
       </view>
-      <wd-input v-model="assignUserIdInput" type="number" label="员工编号" placeholder="输入本组织员工用户编号" />
+      <wd-picker
+        v-model="assignUserIdInput"
+        label="目标员工"
+        :columns="memberColumns"
+        :loading="memberLoading"
+        placeholder="选择本组织在职员工"
+      />
       <view class="mt-32rpx flex gap-20rpx">
         <wd-button plain block @click="assignVisible = false">
           取消
@@ -245,13 +251,29 @@ async function handleClaim() {
   }
 }
 
-// ========== 分配 / 改派 ==========
+// ========== 分配 / 改派（本组织在职成员选择器） ==========
 const assignVisible = ref(false)
 const assignUserIdInput = ref('')
+const memberColumns = ref<{ label: string, value: string }[]>([])
+const memberLoading = ref(false)
+async function openAssign() {
+  assignVisible.value = true
+  memberColumns.value = []
+  memberLoading.value = true
+  try {
+    const members = await listOrgMembers()
+    memberColumns.value = members.map(m => ({
+      label: `${m.nickname}（${m.username} #${m.userId}）`,
+      value: String(m.userId),
+    }))
+  } finally {
+    memberLoading.value = false
+  }
+}
 async function submitAssign() {
   const userId = Number(assignUserIdInput.value)
   if (!userId || userId <= 0) {
-    toast.show('请输入员工用户编号')
+    toast.show('请选择目标员工')
     return
   }
   actionLoading.value = true

@@ -3,6 +3,7 @@ package cn.zszj.module.firstchain.controller.admin.employee;
 import cn.zszj.framework.common.pojo.CommonResult;
 import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeCreateReqVO;
 import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeCreatedRespVO;
+import cn.zszj.module.firstchain.controller.admin.employee.vo.EmployeeMemberRespVO;
 import cn.zszj.module.firstchain.service.employee.FirstchainEmployeeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,9 +27,10 @@ import static org.mockito.Mockito.when;
  */
 class FirstchainEmployeeControllerTest {
 
-    /** 方法名 → 期望权限串（M5-A 负责人面） */
+    /** 方法名 → 期望权限串（M5-A 负责人面 + FC-003 选择器数据源） */
     private static final Map<String, String> EXPECTED_PERMISSIONS = Map.of(
-            "createEmployee", "firstchain:employee:create");
+            "createEmployee", "firstchain:employee:create",
+            "listOrgMembers", "firstchain:employee:list");
 
     @Test
     void everyEndpoint_declaresFirstchainEmployeePermission() {
@@ -66,6 +68,26 @@ class FirstchainEmployeeControllerTest {
         assertThat(result.getData().getUserId()).isEqualTo(950L);
         assertThat(result.getData().getInitialPassword()).isEqualTo("aB3dEf7hIj9kLm2N");
         verify(employeeService).createEmployee(createReqVO);
+    }
+
+    @Test
+    void listOrgMembers_delegatesToEmployeeService() {
+        FirstchainEmployeeService employeeService = mock(FirstchainEmployeeService.class);
+        FirstchainEmployeeController controller = new FirstchainEmployeeController();
+        ReflectionTestUtils.setField(controller, "employeeService", employeeService);
+        java.util.List<EmployeeMemberRespVO> members = new java.util.ArrayList<>();
+        EmployeeMemberRespVO member = new EmployeeMemberRespVO();
+        member.setUserId(950L);
+        member.setUsername("zhangsan001");
+        member.setNickname("张三");
+        members.add(member);
+        when(employeeService.listOrgMembers()).thenReturn(members);
+
+        CommonResult<java.util.List<EmployeeMemberRespVO>> result = controller.listOrgMembers();
+
+        assertThat(result.getData()).hasSize(1);
+        assertThat(result.getData().get(0).getUserId()).isEqualTo(950L);
+        verify(employeeService).listOrgMembers();
     }
 
 }

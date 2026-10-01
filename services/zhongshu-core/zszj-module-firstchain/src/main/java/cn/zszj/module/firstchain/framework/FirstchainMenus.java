@@ -48,14 +48,17 @@ public final class FirstchainMenus {
     public static final long BUTTON_LEAD_INVALIDATE = 5322L;
     public static final long BUTTON_EMPLOYEE_CREATE = 5323L;
 
+    /** 按钮：组织成员列表（分配/改派员工选择器数据源，ZS-FC-003 后续优化 wave；迁移 V20261002.001） */
+    public static final long BUTTON_EMPLOYEE_LIST = 5324L;
+
     // ========== 默认模板角色的菜单面（D-07 M2；申请审批面不授加盟商侧） ==========
 
-    /** 加盟商负责人：首链业务 + 线索管理（分配/领取/改派/跟进/转商机/无效）+ 员工账号创建 */
+    /** 加盟商负责人：首链业务 + 线索管理（分配/领取/改派/跟进/转商机/无效）+ 员工账号（创建/组织成员列表） */
     public static final Set<Long> LEADER_ROLE_MENUS = Set.of(
             MENU_FIRSTCHAIN_ROOT, MENU_LEAD, MENU_EMPLOYEE,
             BUTTON_LEAD_ASSIGN, BUTTON_LEAD_CLAIM, BUTTON_LEAD_REASSIGN,
             BUTTON_LEAD_FOLLOWUP, BUTTON_LEAD_CONVERT, BUTTON_LEAD_INVALIDATE,
-            BUTTON_EMPLOYEE_CREATE);
+            BUTTON_EMPLOYEE_CREATE, BUTTON_EMPLOYEE_LIST);
 
     /** 加盟商员工：首链业务 + 线索管理（领取/跟进/转商机/无效；无分配/改派/员工创建） */
     public static final Set<Long> MEMBER_ROLE_MENUS = Set.of(
