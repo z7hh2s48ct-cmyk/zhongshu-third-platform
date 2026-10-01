@@ -161,15 +161,22 @@ class FirstchainNotifyLandingProviderTest {
     // ========== resolve：结构化落点 ==========
 
     @Test
-    void resolve_webReturnsStructuralDescriptor_mobileUnsupported() {
+    void resolve_webReturnsStructuralDescriptor_mobilePerKind() {
         var web = leadProvider.resolve(NotifyLandingClient.WEB, Map.of("leadId", "2048"));
         assertThat(web).isNotNull();
         assertThat(web.getModule()).isEqualTo("firstchain");
         assertThat(web.getRoute()).isEqualTo("/firstchain/lead");
         assertThat(web.getParams()).containsEntry("id", "2048");
 
-        // MOBILE 未注册 → 解析判 CLIENT_UNSUPPORTED（UniApp 工作台 wave 落地后注册）
-        assertThat(leadProvider.resolve(NotifyLandingClient.MOBILE, Map.of("leadId", "2048"))).isNull();
+        // LEAD 域 MOBILE 落点（FC-003 前端 wave）：UniApp 分包详情页，?id= 接参
+        var mobile = leadProvider.resolve(NotifyLandingClient.MOBILE, Map.of("leadId", "2048"));
+        assertThat(mobile).isNotNull();
+        assertThat(mobile.getRoute()).isEqualTo("/pages-firstchain/lead/detail/index");
+        assertThat(mobile.getParams()).containsEntry("id", "2048");
+
+        // APPLICATION 域无移动工作台 → CLIENT_UNSUPPORTED（五道防线既有语义）
+        assertThat(applicationProvider.resolve(NotifyLandingClient.MOBILE, Map.of("appKey", APP_KEY)))
+                .isNull();
 
         var applicationWeb = applicationProvider.resolve(NotifyLandingClient.WEB, Map.of("appKey", APP_KEY));
         assertThat(applicationWeb.getRoute()).isEqualTo("/firstchain/application");

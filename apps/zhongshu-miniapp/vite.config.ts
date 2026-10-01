@@ -105,7 +105,8 @@ export default defineConfig(({ command, mode }) => {
           'src/pages-core', // 这个是相对必要的路由，尽量留着（登录页、注册页、404页等）
           'src/pages-system', // “系统管理”模块
           'src/pages-infra', // “基础设施”模块
-          'src/pages-bpm', // “工作流程”模块
+          'src/pages-bpm',
+    'src/pages-firstchain', // "首链"模块（FC-003：负责人/员工移动工作台） // “工作流程”模块
           'src/pages-crm', // “客户管理”模块
           'src/pages-statistics', // “统计中心”模块
           'src/pages-iot', // “物联网”模块

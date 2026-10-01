@@ -45,7 +45,7 @@ const PUBLIC_ROUTE_PREFIXES = [
  * 不在白名单内的包前缀（如 pages-hrm / pages-fms）无法归属模块 → 不受模块门约束。
  */
 const KNOWN_MODULES = [
-  'system', 'infra', 'bpm', 'mp', 'mall', 'erp', 'wms', 'pms', 'crm', 'mes', 'im', 'report', 'pay', 'ai', 'iot',
+  'system', 'infra', 'bpm', 'firstchain', 'mp', 'mall', 'erp', 'wms', 'pms', 'crm', 'mes', 'im', 'report', 'pay', 'ai', 'iot',
 ]
 
 /**

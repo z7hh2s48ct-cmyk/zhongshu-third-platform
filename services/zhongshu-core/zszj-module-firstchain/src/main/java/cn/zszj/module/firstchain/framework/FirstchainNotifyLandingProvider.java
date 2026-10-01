@@ -36,8 +36,9 @@ import static cn.zszj.module.firstchain.enums.ErrorCodeConstants.FIRSTCHAIN_APPL
  *   <li><b>结构化落点</b>：{@link #resolve} 只返回模块/路由/业务 ID，不复制业务正文。</li>
  * </ul>
  *
- * <p>边界登记：MOBILE 端落点随 FC-003 UniApp 工作台 wave 落地后注册（本 wave 返回 null →
- * 解析判 CLIENT_UNSUPPORTED，五道防线既有语义）；WEB 路由指向 Web 工作台页面（同 wave 交付）。
+ * <p>边界登记：APPLICATION 域 MOBILE 落点未注册（平台运营审批台为 Web-only，返回 null →
+ * 解析判 CLIENT_UNSUPPORTED）；LEAD 域 MOBILE 落点随 FC-003 前端 wave 注册
+ * （UniApp 分包 {@code /pages-firstchain/lead/detail/index}，页面可达性由 CLIENT-002 既有守卫最终判定）。
  *
  * @author ZS-FC-003
  */
@@ -137,14 +138,22 @@ public class FirstchainNotifyLandingProvider implements NotifyLandingProvider {
 
     @Override
     public NotifyLandingDescriptor resolve(NotifyLandingClient client, Map<String, Object> templateParams) {
-        if (client != NotifyLandingClient.WEB) {
-            return null; // MOBILE 落点随 UniApp 工作台 wave 注册（边界登记）
-        }
-        Map<String, Object> params = Map.of(kind == Kind.APPLICATION
-                ? "appKey" : "id",
+        Map<String, Object> params = Map.of(kind == Kind.APPLICATION ? "appKey" : "id",
                 kind == Kind.APPLICATION
                         ? String.valueOf(templateParams.get("appKey"))
                         : String.valueOf(templateParams.get("leadId")));
+        if (client == NotifyLandingClient.MOBILE) {
+            // LEAD 域移动落点（FC-003 前端 wave）：UniApp 分包详情页，?id= 接参（CLIENT-002 守卫最终判定）；
+            // APPLICATION 域无移动工作台 → 该 client 不支持返回 null（解析判 CLIENT_UNSUPPORTED）
+            if (kind != Kind.LEAD) {
+                return null;
+            }
+            return NotifyLandingDescriptor.builder()
+                    .module(FirstchainNotifyTemplates.MODULE)
+                    .route("/pages-firstchain/lead/detail/index")
+                    .params(params)
+                    .build();
+        }
         String route = kind == Kind.APPLICATION ? "/firstchain/application" : "/firstchain/lead";
         return NotifyLandingDescriptor.builder()
                 .module(FirstchainNotifyTemplates.MODULE)

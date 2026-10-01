@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
     { path: '/pages-im/home/contact/index' }, // IM 通讯录（登录即用目录子页，祖先前缀继承）
     { path: '/pages-crm/followup/form/index' }, // CRM 跟进表单（跨目录子页，crm 前缀继承）
     { path: '/pages-pay/cashier/index' }, // 收银台（显式补登：登录即用）
+    { path: '/pages-firstchain/lead/index' }, // 首链线索工作台（menu.json：firstchain:lead:query，FC-003）
+    { path: '/pages-firstchain/lead/detail/index' }, // 首链线索详情（子页，前缀继承 firstchain:lead:query）
   ] as Array<Record<string, any>>,
 }))
 
@@ -121,6 +123,12 @@ describe('hasRouteAccess：业务页按 menu.json 服务端授权（P1 未授权
   it('子页按模块目录前缀继承列表页权限（详情 / 表单未逐条登记）', () => {
     expect(hasRouteAccess('/pages-system/user/detail/index', ['system:user:list'])).toBe(true)
     expect(hasRouteAccess('/pages-system/user/detail/index', [])).toBe(false)
+  })
+  it('首链线索工作台（FC-003）：持 firstchain:lead:query 放行，否则拒绝；详情子页按前缀继承', () => {
+    expect(hasRouteAccess('/pages-firstchain/lead/index', ['firstchain:lead:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-firstchain/lead/index', ['firstchain:lead:distribute'])).toBe(false)
+    expect(hasRouteAccess('/pages-firstchain/lead/detail/index', ['firstchain:lead:query'])).toBe(true)
+    expect(hasRouteAccess('/pages-firstchain/lead/detail/index', [])).toBe(false)
   })
   it('menu.json 无 permission 的登记项 = 登录即放行（AI 会话 / IM）', () => {
     expect(hasRouteAccess('/pages-ai/chat/index', [])).toBe(true)
@@ -259,7 +267,7 @@ describe('hasRouteAccess：dept 共享表单按动作级登记（r3-P2-2：登�
 })
 
 describe('hasRouteAccess：NEW 继承语义差集补登（CLIENT-002.B：21 页失去继承禁止回归）', () => {
-  it('IM 通讯录子页（8 页组）：登录即用', () => {
+  it('iM 通讯录子页（8 页组）：登录即用', () => {
     expect(hasRouteAccess('/pages-im/home/contact/index', [])).toBe(true)
     expect(hasRouteAccess('/pages-im/home/contact/request/index', [])).toBe(true)
     expect(hasRouteAccess('/pages-im/home/contact/friend/apply/index', [])).toBe(true)
@@ -269,12 +277,12 @@ describe('hasRouteAccess：NEW 继承语义差集补登（CLIENT-002.B：21 页�
     expect(hasRouteAccess('/pages-im/home/contact/group/form/index', [])).toBe(true)
     expect(hasRouteAccess('/pages-im/home/contact/group/list/index', [])).toBe(true)
   })
-  it('IM 人脸管理子页（3 页组）：登录即用', () => {
+  it('iM 人脸管理子页（3 页组）：登录即用', () => {
     expect(hasRouteAccess('/pages-im/manager/face/item/index', [])).toBe(true)
     expect(hasRouteAccess('/pages-im/manager/face/item/detail/index', [])).toBe(true)
     expect(hasRouteAccess('/pages-im/manager/face/item/form/index', [])).toBe(true)
   })
-  it('IoT OTA 固件页（4 页组）：按 iot:ota-firmware:query 授权', () => {
+  it('ioT OTA 固件页（4 页组）：按 iot:ota-firmware:query 授权', () => {
     expect(hasRouteAccess('/pages-iot/ota/record/index', ['iot:ota-firmware:query'])).toBe(true)
     expect(hasRouteAccess('/pages-iot/ota/record/index', [])).toBe(false)
     expect(hasRouteAccess('/pages-iot/ota/task/index', ['iot:ota-firmware:query'])).toBe(true)
@@ -282,27 +290,27 @@ describe('hasRouteAccess：NEW 继承语义差集补登（CLIENT-002.B：21 页�
     expect(hasRouteAccess('/pages-iot/ota/task/form/index', ['iot:ota-firmware:query'])).toBe(true)
     expect(hasRouteAccess('/pages-iot/ota/task/detail/index', [])).toBe(false)
   })
-  it('FMS 凭证详情页：凭证三联权限任一命中放行', () => {
+  it('fMS 凭证详情页：凭证三联权限任一命中放行', () => {
     expect(hasRouteAccess('/pages-fms/voucher/detail/index', ['fms:voucher:query'])).toBe(true)
     expect(hasRouteAccess('/pages-fms/voucher/detail/index', ['fms:voucher:statistics:query'])).toBe(true)
     expect(hasRouteAccess('/pages-fms/voucher/detail/index', [])).toBe(false)
   })
-  it('HRM 门户页（2 条）：按 hrm:portal:query 授权', () => {
+  it('hRM 门户页（2 条）：按 hrm:portal:query 授权', () => {
     expect(hasRouteAccess('/pages-hrm/portal/opening-guide/index', ['hrm:portal:query'])).toBe(true)
     expect(hasRouteAccess('/pages-hrm/portal/opening-guide/index', [])).toBe(false)
     expect(hasRouteAccess('/pages-hrm/portal/attendance/leave/form/index', ['hrm:portal:query'])).toBe(true)
     expect(hasRouteAccess('/pages-hrm/portal/attendance/leave/form/index', [])).toBe(false)
   })
-  it('MES 安灯配置页：按 mes:pro-andon-record:query 授权', () => {
+  it('mES 安灯配置页：按 mes:pro-andon-record:query 授权', () => {
     expect(hasRouteAccess('/pages-mes/pro/andon/config/index', ['mes:pro-andon-record:query'])).toBe(true)
     expect(hasRouteAccess('/pages-mes/pro/andon/config/index', [])).toBe(false)
   })
-  it('Mall 砍价助力页：活动 / 记录两权限任一命中放行', () => {
+  it('mall 砍价助力页：活动 / 记录两权限任一命中放行', () => {
     expect(hasRouteAccess('/pages-mall/promotion/bargain/help/index', ['promotion:bargain-activity:query'])).toBe(true)
     expect(hasRouteAccess('/pages-mall/promotion/bargain/help/index', ['promotion:bargain-record:query'])).toBe(true)
     expect(hasRouteAccess('/pages-mall/promotion/bargain/help/index', ['system:user:list'])).toBe(false)
   })
-  it('CRM 跟进表单页：持任一 crm 模块权限即可进入（14 权限并集，维持 OLD 行为）', () => {
+  it('cRM 跟进表单页：持任一 crm 模块权限即可进入（14 权限并集，维持 OLD 行为）', () => {
     expect(hasRouteAccess('/pages-crm/followup/form/index', ['crm:customer:query'])).toBe(true)
     expect(hasRouteAccess('/pages-crm/followup/form/index', ['crm:contract:query'])).toBe(true)
     expect(hasRouteAccess('/pages-crm/followup/form/index', ['bpm:task:query'])).toBe(false)
@@ -418,6 +426,21 @@ describe('navigateToInterceptor：登录后授权门禁与直达守卫', () => {
     h.permissions = []
     h.enabledModules = null
     const ret = navigateToInterceptor.invoke({ url: '/pages-ai/chat/index' })
+    expect(ret).toBe(true)
+  })
+
+  it('已登录 + 停用首链模块（模块清单不含 firstchain）→ 拦截到 403（FC-003：模块门对齐服务端 ModuleCatalog）', () => {
+    h.permissions = ['firstchain:lead:query']
+    h.enabledModules = ['system', 'infra']
+    const ret = navigateToInterceptor.invoke({ url: '/pages-firstchain/lead/index' })
+    expect(ret).toBe(false)
+    expect(uni.reLaunch).toHaveBeenCalledWith({ url: UNAUTHORIZED_PAGE })
+  })
+
+  it('已登录 + 启用首链模块且持 query 权限 → 放行线索工作台（FC-003）', () => {
+    h.permissions = ['firstchain:lead:query']
+    h.enabledModules = ['system', 'infra', 'firstchain']
+    const ret = navigateToInterceptor.invoke({ url: '/pages-firstchain/lead/index' })
     expect(ret).toBe(true)
   })
 })

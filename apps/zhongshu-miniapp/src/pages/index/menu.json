@@ -3205,6 +3205,26 @@
           ]
         }
       ]
+    },
+    {
+      "key": "firstchain",
+      "name": "首链业务",
+      "subGroups": [
+        {
+          "key": "lead",
+          "name": "线索工作台",
+          "menus": [
+            {
+              "key": "firstchainLead",
+              "name": "线索管理",
+              "icon": "apps",
+              "iconColor": "#1890ff",
+              "url": "/pages-firstchain/lead/index",
+              "permission": "firstchain:lead:query"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
