@@ -453,6 +453,14 @@ infra:
       alert: # ZS-OPS-002.B：周期告警探针（OutboxHealthAlertScheduler）配置，由 @ConditionalOnProperty/@Scheduled 直接消费
         enabled: true # 启用周期探针；false 时不装配探针、不产任何调度开销
         interval-ms: 60000 # 探针周期（毫秒，保守占位，待 WP-19 实测回填；非容量承诺）
+    dispatch: # ZS-FC-003 首链接线：Outbox 生产派发驱动（OutboxDispatchScheduler）——事件驱动待办流转/渠道补发的消费侧轮询
+      enabled: true # 启用生产派发轮询；false 时不装配驱动（验证链/单测仍可显式驱动 dispatchOnce）
+      interval-ms: 5000 # 投递轮周期（毫秒）：待办流转的秒级及时性口径，非容量承诺
+      initial-delay-ms: 10000 # 启动后首投递轮延迟（毫秒）：避开启动迁移/缓存预热窗口
+      lease-heartbeat-ms: 30000 # 实例租约心跳周期（毫秒，可观测；事件级抢占由 claim_* 机制承担）
+      lease-seconds: 60 # 事件租约时长（秒）：领取后未确认的宽限窗口，过期可被其他实例重领
+      max-events: 100 # 单轮最大领取事件数
+      backoff-seconds: 10 # 投递失败退避基数（秒，超 5 次转 DEAD 人工处置）
 
 --- #################### 管理端点（ZS-ENG-005：默认仅健康检查） ####################
 

@@ -14,6 +14,7 @@ import cn.zszj.module.bpm.firstchain.FirstChainObjectType;
 import cn.zszj.module.bpm.firstchain.FirstChainProcessBindingService;
 import cn.zszj.module.bpm.firstchain.FranchiseeApplicationStatus;
 import cn.zszj.module.firstchain.framework.FirstchainMenus;
+import cn.zszj.module.firstchain.service.wiring.FirstchainNotifyWiringService;
 import cn.zszj.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
@@ -121,6 +122,9 @@ public class FirstchainOpeningService {
     private FirstchainDefaultRoleRegistry defaultRoleRegistry;
 
     @Resource
+    private FirstchainNotifyWiringService notifyWiringService;
+
+    @Resource
     private DataSource dataSource;
 
     private JdbcTemplate jdbcTemplate;
@@ -157,6 +161,7 @@ public class FirstchainOpeningService {
         String status = (String) application.get("status");
         // ③ 重复处理兜底幂等（M4-A）：已 APPROVED 即查既有组织（幂等键=申请编号=组织编码）
         OrganizationDO opened = findOpenedOrganization(tenantId, appKey);
+        String processInstanceId = null;
         if (FranchiseeApplicationStatus.APPROVED.name().equals(status)) {
             if (opened != null) {
                 // 重复审批（重复回调/重复处理）：返回既有结果，不产生第二个组织/负责人/一套授权；
@@ -185,10 +190,12 @@ public class FirstchainOpeningService {
             // ④ 审批回调（幂等门在 bpm 域内聚：重复同结果吸收/异结果冲突/晚到弃单；通过意见可空）
             firstChainApplicationService.onApprovalCompleted(
                     (String) binding.get("process_instance_id"), true, cmd.reason(), cmd.actorId());
+            processInstanceId = (String) binding.get("process_instance_id");
         }
         // ⑤ 幂等开通（M4-A）：app_key 查既有组织兜底（见类注释），缺失才建主体
         Long organizationId;
         String initialPassword;
+        Long leaderUserId = null;
         if (opened != null) {
             organizationId = opened.getId();
             initialPassword = null;
@@ -196,9 +203,19 @@ public class FirstchainOpeningService {
             FranchiseeOpening opening = openFranchisee(tenantId, appKey, application, cmd.operatorUserId());
             organizationId = opening.organizationId();
             initialPassword = opening.leaderAccount().initialPassword();
+            leaderUserId = opening.leaderAccount().userId();
         }
         // ⑥ 开通审计 SUCCESS（随本事务：整体回滚则不留，fail-closed）
         recordOpeningAudit(tenantId, appKey, cmd.actorId(), cmd.reason(), organizationId);
+        // ⑦ 接线（ZS-FC-003，同事务）：审批待办经 Outbox 事件流转（COMPLETE）+ 结果/开通通知
+        if (processInstanceId != null) {
+            Long submitterUserId = parseCreatorUserId(application);
+            notifyWiringService.onApprovalCompleted(appKey, applicationId, processInstanceId,
+                    currentApplicationVersion(tenantId, appKey), (String) application.get("applicant_name"),
+                    true, submitterUserId, leaderUserId, cmd.reason(), cmd.actorId());
+        } else {
+            log.warn("[approveAndOpen][审批实例缺失（自愈窗口），跳过待办/通知接线：appKey={}]", appKey);
+        }
         return new OpeningResult(organizationId, initialPassword);
     }
 
@@ -245,6 +262,11 @@ public class FirstchainOpeningService {
         // ④ 审批回调（bpm 域落 reject_reason + REJECT 审计；REJECTED 不建任何主体）
         firstChainApplicationService.onApprovalCompleted(
                 (String) binding.get("process_instance_id"), false, cmd.reason(), cmd.actorId());
+        // ⑤ 接线（ZS-FC-003，同事务）：审批待办经 Outbox 事件流转（COMPLETE）+ 拒绝结果通知致提交人
+        notifyWiringService.onApprovalCompleted(appKey, applicationId,
+                (String) binding.get("process_instance_id"), currentApplicationVersion(tenantId, appKey),
+                (String) application.get("applicant_name"), false, parseCreatorUserId(application),
+                null, cmd.reason(), cmd.actorId());
     }
 
     // ========== 内部：开通主体（M4-A/M5-A） ==========
@@ -355,7 +377,7 @@ public class FirstchainOpeningService {
 
     private Map<String, Object> requireApplication(Long tenantId, String appKey) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id, app_key, applicant_name, contact_name, status, version "
+                "SELECT id, app_key, applicant_name, contact_name, status, version, creator "
                         + "FROM bpm_first_chain_application WHERE tenant_id = ? AND app_key = ? AND deleted = FALSE",
                 tenantId, appKey);
         if (rows.isEmpty()) {
@@ -392,6 +414,27 @@ public class FirstchainOpeningService {
                 "SELECT id FROM system_role WHERE tenant_id = ? AND code = ? AND deleted = FALSE",
                 tenantId, code);
         return rows.isEmpty() ? null : ((Number) rows.get(0).get("id")).longValue();
+    }
+
+    /** 申请行 creator 列（提交人 actorId）→ 用户编号（接线收件人解析；历史脏数据降级 null）。 */
+    private static Long parseCreatorUserId(Map<String, Object> application) {
+        Object creator = application.get("creator");
+        if (creator == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(String.valueOf(creator));
+        } catch (NumberFormatException malformed) {
+            return null;
+        }
+    }
+
+    /** 审批后申请版本（接线乱序护栏基线；随本事务已可见）。 */
+    private Long currentApplicationVersion(Long tenantId, String appKey) {
+        Long version = jdbcTemplate.queryForObject(
+                "SELECT version FROM bpm_first_chain_application WHERE tenant_id = ? AND app_key = ? "
+                        + "AND deleted = FALSE", Long.class, tenantId, appKey);
+        return version == null ? null : version;
     }
 
     /**

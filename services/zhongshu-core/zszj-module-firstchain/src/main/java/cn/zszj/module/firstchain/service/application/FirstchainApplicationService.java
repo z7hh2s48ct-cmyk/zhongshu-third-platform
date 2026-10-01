@@ -9,6 +9,8 @@ import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.framework.tenant.core.context.TenantContextHolder;
 import cn.zszj.module.bpm.firstchain.FirstChainApplicationService;
 import cn.zszj.module.bpm.firstchain.FirstChainApplicationService.CreateApplicationCmd;
+import cn.zszj.module.bpm.firstchain.FirstChainObjectType;
+import cn.zszj.module.bpm.firstchain.FirstChainProcessBindingService;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationCreateReqVO;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationPageReqVO;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationRespVO;
@@ -16,13 +18,16 @@ import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationSubm
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationWithdrawReqVO;
 import cn.zszj.module.firstchain.dal.dataobject.application.ApplicationDO;
 import cn.zszj.module.firstchain.dal.mysql.application.FirstchainApplicationMapper;
+import cn.zszj.module.firstchain.service.wiring.FirstchainNotifyWiringService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.bpm.enums.ErrorCodeConstants.FIRST_CHAIN_APP_KEY_EXISTS;
@@ -60,6 +65,12 @@ public class FirstchainApplicationService {
 
     @Resource
     private FirstChainApplicationService firstChainApplicationService;
+
+    @Resource
+    private FirstChainProcessBindingService processBindingService;
+
+    @Resource
+    private FirstchainNotifyWiringService notifyWiringService;
 
     @Resource
     private FirstchainApplicationMapper applicationMapper;
@@ -100,23 +111,60 @@ public class FirstchainApplicationService {
      *
      * <p>审批人取值：请求显式指定优先（M2：审批人=任意 PLATFORM 有效任职）；缺省为提交人
      * （M2 双人分离后置登记——提交人与审批人同员为试点简化，审批资格的对象级校验随审批入口二次把关）。
+     * 接线（ZS-FC-003）：审批待办注册 + 审批提醒通知随本事务落位（外层 @Transactional 使 Outbox
+     * MANDATORY 合同可达；bpm 域事务模板 REQUIRED 加入本事务）。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void submitApplication(ApplicationSubmitReqVO submitReqVO) {
         requireTenantId();
         Long approverUserId = submitReqVO.getApproverUserId() != null
                 ? submitReqVO.getApproverUserId()
                 : SecurityFrameworkUtils.getLoginUserId();
+        ApplicationDO application = applicationMapper.selectById(submitReqVO.getId());
         firstChainApplicationService.submitApplication(submitReqVO.getId(), submitReqVO.getExpectedVersion(),
+                approverUserId, currentActorId());
+        wireSubmission(application, submitReqVO.getId(), approverUserId);
+    }
+
+    /** 提交后接线（同事务）：读回绑定取流程实例（待办键组成部分），注册审批待办 + 审批提醒通知。 */
+    private void wireSubmission(ApplicationDO application, Long applicationId, Long approverUserId) {
+        if (application == null) {
+            return; // bpm 域已对不存在/不可见申请 fail-closed，此处只防脏读路径
+        }
+        Map<String, Object> binding = processBindingService.findLatestByDomain(
+                TenantContextHolder.getTenantId(), FirstChainObjectType.APPLICATION, applicationId);
+        if (binding == null || binding.get("process_instance_id") == null) {
+            log.warn("[wireSubmission][审批绑定缺失，跳过待办/通知接线（可观测不静默）：applicationId={}]", applicationId);
+            return;
+        }
+        notifyWiringService.onApplicationSubmitted(application.getAppKey(), applicationId,
+                String.valueOf(binding.get("process_instance_id")),
+                ((Number) application.getVersion()).longValue() + 1, application.getApplicantName(),
                 approverUserId, currentActorId());
     }
 
     /**
      * 撤回审批流（M3：领域状态不变仍 SUBMITTED，仅解绑流程实例，可重新发起）。
+     * 接线（ZS-FC-003）：审批待办经 Outbox 事件撤销（WITHDRAW，事件驱动不双写）。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void withdrawApproval(ApplicationWithdrawReqVO withdrawReqVO) {
         requireTenantId();
+        ApplicationDO application = applicationMapper.selectById(withdrawReqVO.getId());
         firstChainApplicationService.withdrawApproval(withdrawReqVO.getId(), withdrawReqVO.getExpectedVersion(),
                 currentActorId());
+        if (application == null) {
+            return;
+        }
+        Map<String, Object> binding = processBindingService.findLatestByDomain(
+                TenantContextHolder.getTenantId(), FirstChainObjectType.APPLICATION, withdrawReqVO.getId());
+        if (binding == null || binding.get("process_instance_id") == null) {
+            log.warn("[withdrawApproval][审批绑定缺失，跳过待办撤销接线：applicationId={}]", withdrawReqVO.getId());
+            return;
+        }
+        notifyWiringService.onApprovalWithdrawn(application.getAppKey(), withdrawReqVO.getId(),
+                String.valueOf(binding.get("process_instance_id")),
+                ((Number) application.getVersion()).longValue() + 1, currentActorId());
     }
 
     /**

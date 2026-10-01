@@ -34,9 +34,10 @@ import java.util.UUID;
  *   <li>领取以单个短事务原子完成：SELECT ... FOR UPDATE SKIP LOCKED 锁行 + 同事务内回填领取字段。
  *       等价于供体的 {@code UPDATE ... RETURNING} 单语句，拆两步系双方言可移植要求（H2 不支持
  *       UPDATE..RETURNING），事务内行锁保证两步间无他实例插入竞争；</li>
- *   <li>Sink 投递在领取/确认短事务之外：<b>在事件自身租户上下文内执行</b>（{@link TenantUtils#execute}，
- *       投递前后恢复调用线程上下文，杜绝跨租户串用）；成功标记 DISPATCHED，失败退避重试，超过 5 次进入
- *       DEAD 人工处置（重试/DEAD 台账与告警归 ZS-JOB-004）；</li>
+ *   <li>Sink 投递在领取/确认短事务之外：<b>在事件自身租户上下文内、以独立投递短事务执行</b>
+ *       （{@link TenantUtils#execute} 投递前后恢复调用线程上下文，杜绝跨租户串用；事务包裹循
+ *       BPM-004 接入合同 §4「Sink.deliver=调用方事务」，ZS-FC-003 首链接线落位）；成功标记
+ *       DISPATCHED，失败退避重试，超过 5 次进入 DEAD 人工处置（重试/DEAD 台账与告警归 ZS-JOB-004）；</li>
  *   <li>Sink 必须幂等（at-least-once：租约过期重领、投递成功但确认丢失都会重投）；无 Sink 声明支持的事件
  *       按失败退避进入可见失败（重试至 DEAD），不丢弃；逐事件异常隔离——任一事件的 Sink 选择/投递异常
  *       不中断本批其余事件；</li>
@@ -93,12 +94,22 @@ public class OutboxDispatcherService {
      */
     private final TransactionTemplate claimTemplate;
 
+    /**
+     * Sink 投递事务模板（REQUIRED，ZS-FC-003 首链接线落位）：每个事件的 Sink 投递包裹在
+     * <b>独立投递短事务</b>内——领取/确认事务之外、每次投递一个事务。BPM-004 接入合同 §4/§5：
+     * {@code Sink.deliver} 以调用方事务为语义（如 {@code NotifyTodoEventSink} 的 Inbox MANDATORY
+     * 与 {@code applyTransition} 业务写入），生产投递路径由本派发器统一提供编程式事务包裹，
+     * 接线方无需自行包裹。投递事务回滚即异常向上 → {@code fail} 退避重试（失败不静默）。
+     */
+    private final TransactionTemplate deliverTemplate;
+
     private final List<OutboxEventSink> sinks;
 
     public OutboxDispatcherService(DataSource dataSource, PlatformTransactionManager transactionManager,
                                    List<OutboxEventSink> sinks) {
         this.jdbcTemplate = new JdbcTemplate(dataSource);
         this.claimTemplate = OutboxTransactions.requiredTemplate(dataSource, transactionManager);
+        this.deliverTemplate = OutboxTransactions.requiredTemplate(dataSource, transactionManager);
         this.sinks = sinks == null ? List.of() : sinks;
     }
 
@@ -195,12 +206,25 @@ public class OutboxDispatcherService {
         return events.size();
     }
 
-    /** 在事件租户上下文内投递（{@link TenantUtils#execute} finally 恢复调用线程原上下文）；checked 异常经桥接抛出。 */
+    /** 在事件租户上下文内投递（{@link TenantUtils#execute} finally 恢复调用线程原上下文）；
+     * Sink 投递包裹在独立投递短事务内（BPM-004 §4：Sink.deliver=调用方事务，派发器统一提供编程式包裹，
+     * Sink 异常即投递事务回滚）；checked 异常经桥接抛出。 */
     private void deliverInTenantContext(OutboxEventRecord event, OutboxEventSink sink) throws Exception {
         Exception[] holder = new Exception[1];
         TenantUtils.execute(event.getTenantId(), () -> {
             try {
-                sink.deliver(event);
+                Exception[] deliverFailure = new Exception[1];
+                deliverTemplate.execute(status -> {
+                    try {
+                        sink.deliver(event);
+                    } catch (Exception e) {
+                        deliverFailure[0] = e;
+                    }
+                    return null;
+                });
+                if (deliverFailure[0] != null) {
+                    throw deliverFailure[0];
+                }
             } catch (Exception e) {
                 holder[0] = e;
             }

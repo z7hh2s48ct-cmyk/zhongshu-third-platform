@@ -20,10 +20,15 @@ import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
 import cn.zszj.module.system.enums.organization.OrganizationTypeEnum;
 import cn.zszj.module.system.framework.audit.core.JdbcAuditPort;
 import cn.zszj.module.system.service.membership.MembershipService;
+import cn.zszj.module.system.service.notify.dispatch.NotifyCommand;
+import cn.zszj.module.system.service.notify.dispatch.NotifyDispatcher;
+import cn.zszj.module.system.service.notify.todo.NotifyTodoService;
 import cn.zszj.module.system.service.organization.OrganizationService;
 import cn.zszj.module.system.service.permission.PermissionService;
 import cn.zszj.module.system.service.permission.RoleService;
 import cn.zszj.module.system.service.user.AdminUserService;
+import cn.zszj.module.infra.framework.outbox.ReliableEventPort;
+import cn.zszj.module.firstchain.service.wiring.FirstchainNotifyWiringService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,7 +68,8 @@ import static org.mockito.Mockito.when;
  *
  * @author ZS-FC-001
  */
-@Import({FirstchainOpeningService.class, FirstchainDefaultRoleRegistry.class, FirstChainApplicationService.class,
+@Import({FirstchainOpeningService.class, FirstchainDefaultRoleRegistry.class, FirstchainNotifyWiringService.class,
+        FirstChainApplicationService.class,
         FirstChainProcessBindingService.class, FirstChainStateTransitionExecutor.class, JdbcAuditPort.class,
         FirstchainOpeningServiceTest.StubProcessPort.class})
 class FirstchainOpeningServiceTest extends BaseDbUnitTest {
@@ -110,6 +116,15 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
 
     @MockitoBean
     private PermissionService permissionService;
+
+    @MockitoBean
+    private NotifyTodoService notifyTodoService;
+
+    @MockitoBean
+    private NotifyDispatcher notifyDispatcher;
+
+    @MockitoBean
+    private ReliableEventPort reliableEventPort;
 
     private JdbcTemplate jdbcTemplate;
 
@@ -181,6 +196,12 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         verify(permissionService, times(2)).assignRoleMenu(any(), anySet());
         // 开通审计 SUCCESS（bizId=申请编号，可回查）
         assertThat(queryAuditCount("OBJECT_CREATED", "OPEN", "APP-O1", "SUCCESS")).isEqualTo(1);
+        // 接线（ZS-FC-003）：审批完成 → 待办流转事件预写 + 通过结果通知（提交人+新负责人）
+        verify(reliableEventPort, times(1)).append(any());
+        org.mockito.ArgumentCaptor<NotifyCommand> notifyCaptor =
+                org.mockito.ArgumentCaptor.forClass(NotifyCommand.class);
+        verify(notifyDispatcher, times(1)).dispatch(notifyCaptor.capture());
+        assertThat(notifyCaptor.getValue().getTemplateCode()).isEqualTo("firstchain_application_approved");
     }
 
     @Test
@@ -205,6 +226,9 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         verify(adminUserService, times(1)).createUser(any());
         verify(membershipService, times(1)).createMembership(any(), any());
         verify(roleService, times(2)).createRole(any(), any());
+        // 重复审批不重复接线（不重发通知、不重复预写待办流转事件）
+        verify(reliableEventPort, times(1)).append(any());
+        verify(notifyDispatcher, times(1)).dispatch(any());
         assertThat(queryAuditCount("OBJECT_CREATED", "OPEN", "APP-DUP", "SUCCESS")).isEqualTo(1);
     }
 

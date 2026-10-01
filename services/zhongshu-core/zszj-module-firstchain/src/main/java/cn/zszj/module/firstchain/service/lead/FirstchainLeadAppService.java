@@ -20,6 +20,7 @@ import cn.zszj.module.firstchain.controller.admin.lead.vo.LeadRespVO;
 import cn.zszj.module.firstchain.framework.FirstchainLeadAuthorizationProvider;
 import cn.zszj.module.firstchain.service.FirstchainLeadMetricsService;
 import cn.zszj.module.firstchain.service.FirstchainLeadService;
+import cn.zszj.module.firstchain.service.wiring.FirstchainNotifyWiringService;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
 import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
@@ -29,6 +30,7 @@ import cn.zszj.module.system.service.organization.OrganizationService;
 import cn.zszj.framework.common.exception.ServiceException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.Resource;
 import java.time.LocalDate;
@@ -112,6 +114,9 @@ public class FirstchainLeadAppService {
     @Resource
     private ObjectAuthorizationService objectAuthorizationService;
 
+    @Resource
+    private FirstchainNotifyWiringService notifyWiringService;
+
     // ========== PILOT-REQ-005：平台下发 ==========
 
     /**
@@ -126,9 +131,13 @@ public class FirstchainLeadAppService {
         ServiceException lastConflict = null;
         for (int attempt = 0; attempt < KEY_MAX_RETRY; attempt++) {
             try {
-                return leadService.distribute(new FirstchainLeadService.DistributeCmd(generateKey(LEAD_KEY_PREFIX),
+                Long leadId = leadService.distribute(new FirstchainLeadService.DistributeCmd(
+                        generateKey(LEAD_KEY_PREFIX),
                         reqVO.getCustomerName(), reqVO.getCustomerPhone(), reqVO.getCustomerWechat(),
                         reqVO.getCustomerAddress(), reqVO.getSource(), reqVO.getOrgId(), currentActorId()));
+                // 接线（ZS-FC-003，同事务）：下发通知致归属组织负责人
+                notifyWiringService.onLeadDistributed(leadService.getLead(leadId), currentActorId());
+                return leadId;
             } catch (ServiceException conflict) {
                 if (!LEAD_KEY_CONFLICT.getCode().equals(conflict.getCode())) {
                     throw conflict;
@@ -144,27 +153,35 @@ public class FirstchainLeadAppService {
 
     /**
      * 负责人分配线索至本组织员工（对象级：操作人=线索归属组织负责人，D-07 M6）。
+     * 接线（ZS-FC-003，同事务）：分配通知致被分配员工。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void assignLead(LeadAssignReqVO reqVO) {
         requireTenantId();
         LeadCallerView caller = requireCallerView();
         Map<String, Object> lead = leadService.getLead(reqVO.getId());
         requireLeaderOfOrg(caller, leadOrgId(lead));
         leadService.assign(reqVO.getId(), reqVO.getAssigneeUserId(), reqVO.getExpectedVersion(), currentActorId());
+        notifyWiringService.onLeadAssigned(lead, reqVO.getAssigneeUserId(), currentActorId());
     }
 
     /**
      * 员工领取线索（领取人服务端绑定登录用户——请求不可声明领取人，PILOT-REQ-006「只能领取分配给自己的」）。
+     * 接线（ZS-FC-003，同事务）：领取通知致归属组织负责人。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void claimLead(LeadClaimReqVO reqVO) {
         requireTenantId();
         LeadCallerView caller = requireCallerView();
         leadService.claim(reqVO.getId(), caller.userId(), reqVO.getExpectedVersion(), currentActorId());
+        notifyWiringService.onLeadClaimed(leadService.getLead(reqVO.getId()), currentActorId());
     }
 
     /**
      * 负责人改派（对象级同分配；停用员工线索保留原分配不自动归还，由负责人显式改派，D-07 M9）。
+     * 接线（ZS-FC-003，同事务）：改派通知致新被分配员工。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void reassignLead(LeadReassignReqVO reqVO) {
         requireTenantId();
         LeadCallerView caller = requireCallerView();
@@ -172,6 +189,7 @@ public class FirstchainLeadAppService {
         requireLeaderOfOrg(caller, leadOrgId(lead));
         leadService.reassign(reqVO.getId(), reqVO.getNewAssigneeUserId(), reqVO.getExpectedVersion(),
                 currentActorId());
+        notifyWiringService.onLeadAssigned(lead, reqVO.getNewAssigneeUserId(), currentActorId());
     }
 
     // ========== PILOT-REQ-007：跟进 ==========
@@ -194,21 +212,27 @@ public class FirstchainLeadAppService {
     /**
      * 转商机（对象级：操作人=被分配员工本人，D-07 M7「员工可发起」；商机编号服务端生成——
      * 每线索单商机由 uk(lead_id) 兜底，重复转化不重试直接显式冲突）。
+     * 接线（ZS-FC-003，同事务）：结束通知（转商机）致归属组织负责人。
      *
      * @return 商机行 ID
      */
+    @Transactional(rollbackFor = Exception.class)
     public Long convertLead(LeadConvertReqVO reqVO) {
         requireTenantId();
         LeadCallerView caller = requireCallerView();
         Map<String, Object> lead = leadService.getLead(reqVO.getLeadId());
         requireConvertAssignee(caller, lead);
-        return leadService.convertToOpportunity(reqVO.getLeadId(), generateKey(OPP_KEY_PREFIX),
+        Long opportunityId = leadService.convertToOpportunity(reqVO.getLeadId(), generateKey(OPP_KEY_PREFIX),
                 reqVO.getExpectedVersion(), currentActorId());
+        notifyWiringService.onLeadClosed(lead, "转商机", currentActorId());
+        return opportunityId;
     }
 
     /**
      * 无效关闭（对象级：被分配员工发起或负责人代操作，D-07 M7；一期不设审批环节）。
+     * 接线（ZS-FC-003，同事务）：结束通知（无效关闭）致归属组织负责人。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void invalidateLead(LeadInvalidateReqVO reqVO) {
         requireTenantId();
         LeadCallerView caller = requireCallerView();
@@ -218,6 +242,7 @@ public class FirstchainLeadAppService {
         }
         leadService.invalidate(reqVO.getLeadId(), reqVO.getReasonName(), reqVO.getReasonDetail(),
                 reqVO.getExpectedVersion(), currentActorId());
+        notifyWiringService.onLeadClosed(lead, "无效关闭", currentActorId());
     }
 
     // ========== PILOT-REQ-009：三视角查询（范围服务端解析 + D-12 出口裁剪） ==========

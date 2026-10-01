@@ -23,6 +23,7 @@ import cn.zszj.module.firstchain.service.FirstchainLeadMetricsService;
 import cn.zszj.module.firstchain.service.FirstchainLeadService;
 import cn.zszj.module.firstchain.service.FirstchainLeadService.DistributeCmd;
 import cn.zszj.module.firstchain.service.FirstchainLeadService.FollowupCmd;
+import cn.zszj.module.firstchain.service.wiring.FirstchainNotifyWiringService;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
 import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
@@ -104,6 +105,8 @@ class FirstchainLeadAppServiceTest {
 
     private FieldLevelScopeResolver fieldLevelScopeResolver;
 
+    private FirstchainNotifyWiringService notifyWiringService;
+
     private FirstchainLeadAppService appService;
 
     @BeforeEach
@@ -116,6 +119,7 @@ class FirstchainLeadAppServiceTest {
         SecurityFrameworkService securityFrameworkService = mock(SecurityFrameworkService.class);
         OrgDataPermissionChecker orgDataPermissionChecker = mock(OrgDataPermissionChecker.class);
         fieldLevelScopeResolver = mock(FieldLevelScopeResolver.class);
+        notifyWiringService = mock(FirstchainNotifyWiringService.class);
         ObjectAuthorizationService objectAuthorizationService = new ObjectAuthorizationService(
                 securityFrameworkService, orgDataPermissionChecker, fieldLevelScopeResolver,
                 List.of(new FirstchainLeadAuthorizationProvider()));
@@ -125,6 +129,7 @@ class FirstchainLeadAppServiceTest {
         ReflectionTestUtils.setField(appService, "membershipService", membershipService);
         ReflectionTestUtils.setField(appService, "organizationService", organizationService);
         ReflectionTestUtils.setField(appService, "objectAuthorizationService", objectAuthorizationService);
+        ReflectionTestUtils.setField(appService, "notifyWiringService", notifyWiringService);
         // 登录上下文与默认视角：负责人（各用例按需改绑）
         loginAs(LEADER_USER_ID);
         stubMembership(LEADER_USER_ID, FRANCHISEE_ORG_ID);
@@ -190,6 +195,9 @@ class FirstchainLeadAppServiceTest {
         appService.assignLead(reqVO);
 
         verify(leadService).assign(LEAD_ID, EMPLOYEE_USER_ID, 0L, String.valueOf(LEADER_USER_ID));
+        // 接线（ZS-FC-003）：分配通知致被分配员工（同事务语义由 @Transactional 边界承载）
+        verify(notifyWiringService).onLeadAssigned(leadRow(FRANCHISEE_ORG_ID, null), EMPLOYEE_USER_ID,
+                String.valueOf(LEADER_USER_ID));
     }
 
     @Test
