@@ -2,6 +2,8 @@ package cn.zszj.module.infra.api.file;
 
 import jakarta.validation.constraints.NotEmpty;
 
+import java.util.List;
+
 /**
  * 文件 API 接口
  *
@@ -51,5 +53,15 @@ public interface FileApi {
      */
     String presignGetUrl(@NotEmpty(message = "URL 不能为空") String url,
                          Integer expirationSeconds);
+
+    /**
+     * 校验业务模块即将挂接的私有附件引用（接入合同 §1.10：业务模块只存 fileId，写入前须经此校验）。
+     *
+     * <p>每个文件须存在于当前租户、{@code scope=PRIVATE}、非删除中、非导出件，且当前登录主体对其具备读取资格；
+     * 任一不满足整批拒绝并抛 {@code FILE_REFERENCE_INVALID}（不泄露存在性）。空集合/null 直接通过。
+     *
+     * @param fileIds 待引用的文件编号
+     */
+    void validatePrivateFileReferences(List<Long> fileIds);
 
 }

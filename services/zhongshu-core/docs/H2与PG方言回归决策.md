@@ -19,7 +19,7 @@
 
 | 差异点 | H2（MySQL 模式）行为 | PG17 行为 | 守护位置 |
 |---|---|---|---|
-| 逻辑删除列 | `deleted = 0`（int）语义成立 | `deleted` 为 boolean，`deleted = 0` 不成立 | DB-007 套件 |
+| 逻辑删除列 | `deleted = 0` 对 `bit/boolean` 列成立（H2 隐式转换） | 基线表 `deleted` 为 int2，`= 0` 成立；**boolean 列（MSG 域、首链域）上 `deleted = 0` 不成立**（`boolean = integer`），MP 注入方法须 DO 字段级覆写 `@TableLogic(value = "FALSE", delval = "TRUE")` | DB-007 套件（int2 基线）；`verify-flyway-migrations` 第 6 项 + DO 字面量单测 + G15 首链申请域 get/page（boolean 表） |
 | 分批删除 | `DELETE ... LIMIT` 可用 | 语法不支持，须「主键集有界删除」 | DB-011~015 套件 |
 | 行锁等待/超时 | `LOCK_TIMEOUT` 默认 1000ms | 默认无限等待（`lock_timeout` 未设时） | DB-008 套件（C4 行锁超时）；OAuth2 刷新路径端到端并发复验归 ZS-SYS-001.A |
 | 序列/自增 | 自增列语义 | 序列（`nextval`）+ 续号 | DB-006 套件 |

@@ -1,7 +1,7 @@
 /**
  * ZS-OPS-001.D：B06 双端技术联调门禁（G15）。
  *
- * 自举夹具 → 跑 CLIENT-005.B E2E 套件（登录/导航/文件/待办四域 18 用例，真实接口/PG）→ 清理。
+ * 自举夹具 → 跑 CLIENT-005.B E2E 套件（登录/导航/文件/待办 + 首链申请域五域 21 用例，真实接口/PG）→ 清理。
  * 「界面操作和接口一致」由 SYS-001.B 页面走查报告（scripts/sys001/web-walkthrough-report.md）
  * 与本套件共用同一真实服务端边界承载；「跳过必测场景不得放行」由本门禁非零退出语义承载。
  *
@@ -101,4 +101,4 @@ try {
 }
 
 if (e2eCode !== 0) fail(e2eCode, '[b06-gate] E2E 套件存在 FAIL——B06 联调门禁不放行');
-console.log('[b06-gate] G15 双端技术联调门禁 PASS（18 用例）');
+console.log('[b06-gate] G15 双端技术联调门禁 PASS（21 用例）');

@@ -19,6 +19,7 @@ import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationWith
 import cn.zszj.module.firstchain.dal.dataobject.application.ApplicationDO;
 import cn.zszj.module.firstchain.dal.mysql.application.FirstchainApplicationMapper;
 import cn.zszj.module.firstchain.service.wiring.FirstchainNotifyWiringService;
+import cn.zszj.module.infra.api.file.FileApi;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -75,14 +78,25 @@ public class FirstchainApplicationService {
     @Resource
     private FirstchainApplicationMapper applicationMapper;
 
+    @Resource
+    private FileApi fileApi;
+
     /**
      * 创建申请（PILOT-REQ-001：草稿基线 DRAFT；申请编号服务端生成，租户内唯一）。
+     *
+     * <p>资质附件只存 fileId 引用（接入合同 §1.10），写入前经 {@link FileApi#validatePrivateFileReferences}
+     * 校验——存在于当前租户、{@code scope=PRIVATE}、非导出件/删除中，且提交人对其具备读取资格；任一不满足整单拒绝，
+     * 申请行不落库（先校验后落库，非法引用不入库）。重复编号去重保序。读取侧仍由文件域授权与票据交付把关。
      *
      * @return 申请行 ID
      */
     public Long createApplication(ApplicationCreateReqVO createReqVO) {
         Long tenantId = requireTenantId();
         String actorId = currentActorId();
+        List<Long> attachmentFileIds = distinctFileIds(createReqVO.getAttachmentFileIds());
+        if (!attachmentFileIds.isEmpty()) {
+            fileApi.validatePrivateFileReferences(attachmentFileIds);
+        }
         // M1：申请编号服务端生成；bpm 域 uk(tenant, app_key) 显式分类撞号 → 有限次重试后仍失败即抛
         ServiceException lastConflict = null;
         for (int attempt = 0; attempt < APP_KEY_MAX_RETRY; attempt++) {
@@ -92,7 +106,7 @@ public class FirstchainApplicationService {
                         .applicantName(createReqVO.getApplicantName())
                         .contactName(createReqVO.getContactName())
                         .contactPhone(createReqVO.getContactPhone())
-                        .attachmentFileIds(serializeFileIds(createReqVO.getAttachmentFileIds()))
+                        .attachmentFileIds(serializeFileIds(attachmentFileIds))
                         .actorId(actorId)
                         .build());
             } catch (ServiceException conflict) {
@@ -214,6 +228,11 @@ public class FirstchainApplicationService {
             log.warn("[parseFileIds][资质附件列值非 JSON 数组，出参降级为 null：value={}]", attachmentFileIds);
             return null;
         }
+    }
+
+    /** 附件编号去重保序（null 视为无附件；null 元素原样保留，交由文件域校验拒绝，不在此静默丢弃）。 */
+    private static List<Long> distinctFileIds(List<Long> fileIds) {
+        return fileIds == null ? List.of() : new ArrayList<>(new LinkedHashSet<>(fileIds));
     }
 
     private static String serializeFileIds(List<Long> fileIds) {

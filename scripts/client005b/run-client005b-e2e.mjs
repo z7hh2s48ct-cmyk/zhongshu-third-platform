@@ -322,6 +322,49 @@ await guard('T6', '落点反向：他人消息 get-landing 被拒（MSG-003.A，
     `code=${r.json?.code}（期望 ${CODE_LANDING_NOT_FOUND}/${CODE_LANDING_ACCESS_DENIED}；500/429 视为缺陷）`);
 });
 
+// ========== 首链申请域（真实 PG：MP 逻辑删除读路径 + 资质附件写入侧校验） ==========
+// 回归锚点：bpm_first_chain_application.deleted 为 boolean，全局 @TableLogic 为 0/1 字面量时，MP 的 selectById/selectPage
+// 在 PG 拼 `deleted = 0` → 500（H2 与手写 deleted = FALSE 路径均不暴露）；DO 字段级覆写后 get/page 须可读。
+// 附件：创建先校验 fileId（存在/租户/私有/非导出件/引用方可读，统一 FILE_REFERENCE_INVALID=1_001_003_043），失败整单不落库。
+const CODE_FILE_REFERENCE_INVALID = 1001003043; // 1_001_003_043
+const fcTotal = async () => Number((await api('GET', '/admin-api/firstchain/application/page?pageNo=1&pageSize=1', { token: admin.accessToken })).json?.data?.total);
+let fcAppId = null;
+let fcFileId = null;
+await guard('FC1', '首链申请创建：合法私有附件引用成功（附件写入侧校验正向）', async () => {
+  if (!uploadedUrl) { record('FC1', '首链申请创建：合法私有附件引用成功（附件写入侧校验正向）', false, '前置 F2 未产出 URL'); return; }
+  const files = await api('GET', '/admin-api/infra/file/page?pageNo=1&pageSize=100', { token: admin.accessToken });
+  fcFileId = (files.json?.data?.list ?? []).find((f) => f.url === uploadedUrl)?.id ?? null;
+  if (!fcFileId) { record('FC1', '首链申请创建：合法私有附件引用成功（附件写入侧校验正向）', false, '未能由 URL 回查 F2 文件编号'); return; }
+  const r = await api('POST', '/admin-api/firstchain/application/create', {
+    token: admin.accessToken, body: { applicantName: `联验首链申请-${Date.now()}`, contactName: '联验', attachmentFileIds: [fcFileId, fcFileId] },
+  });
+  fcAppId = r.json?.code === 0 ? r.json.data : null;
+  record('FC1', '首链申请创建：合法私有附件引用成功（附件写入侧校验正向）', !!fcAppId, `code=${r.json?.code} id=${fcAppId} fileId=${fcFileId}（重复编号去重）`);
+});
+
+await guard('FC2', '首链申请域 get/page 可读（MP 逻辑删除路径，PG boolean deleted 回归）', async () => {
+  if (!fcAppId) { record('FC2', '首链申请域 get/page 可读（MP 逻辑删除路径，PG boolean deleted 回归）', false, '前置 FC1 未创建'); return; }
+  const got = await api('GET', `/admin-api/firstchain/application/get?id=${fcAppId}`, { token: admin.accessToken });
+  const page = await api('GET', '/admin-api/firstchain/application/page?pageNo=1&pageSize=20', { token: admin.accessToken });
+  const attach = (got.json?.data?.attachmentFileIds ?? []).map(String);
+  const inPage = (page.json?.data?.list ?? []).some((a) => String(a.id) === String(fcAppId));
+  record('FC2', '首链申请域 get/page 可读（MP 逻辑删除路径，PG boolean deleted 回归）',
+    got.json?.code === 0 && page.json?.code === 0 && inPage && attach.length === 1 && attach[0] === String(fcFileId),
+    `get=${got.json?.code} page=${page.json?.code} 命中=${inPage} 附件=${JSON.stringify(got.json?.data?.attachmentFileIds)}（500 即 boolean = integer 缺陷复现）`);
+});
+
+await guard('FC3', '首链申请创建反向：不存在的附件编号整单拒绝（1_001_003_043）且不落库', async () => {
+  if (!fcFileId) { record('FC3', '首链申请创建反向：不存在的附件编号整单拒绝（1_001_003_043）且不落库', false, '前置 FC1 未取得文件编号'); return; }
+  const before = await fcTotal();
+  const bad = await api('POST', '/admin-api/firstchain/application/create', {
+    token: admin.accessToken, body: { applicantName: `联验非法附件-${Date.now()}`, attachmentFileIds: [fcFileId, '9223372036854770000'] },
+  });
+  const after = await fcTotal();
+  record('FC3', '首链申请创建反向：不存在的附件编号整单拒绝（1_001_003_043）且不落库',
+    bad.json?.code === CODE_FILE_REFERENCE_INVALID && after === before,
+    `code=${bad.json?.code}（期望 ${CODE_FILE_REFERENCE_INVALID}；500 视为缺陷）total ${before}->${after}`);
+});
+
 // ---------- 环境还原：恢复文件 master 原状（r1 P2-3 / r2 P3：code 校验+读回确认；异常同步 restoreOk 计入退出码） ----------
 let restoreOk = true;
 let restoreNote = '未执行';

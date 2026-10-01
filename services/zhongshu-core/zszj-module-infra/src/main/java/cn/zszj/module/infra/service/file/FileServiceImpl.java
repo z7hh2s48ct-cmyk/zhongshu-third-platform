@@ -46,12 +46,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
 import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
 import static cn.zszj.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_NOT_EXISTS;
+import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_REFERENCE_INVALID;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_PRESIGN_NOT_SUPPORTED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELETE_REFERENCED;
 import static cn.zszj.module.infra.enums.ErrorCodeConstants.FILE_DELETE_IN_PROGRESS;
@@ -337,6 +339,39 @@ public class FileServiceImpl implements FileService {
     @Override
     public FileDO getFile(Long id) {
         return validateFileExists(id);
+    }
+
+    /**
+     * ZS-FC-001：业务模块私有附件引用写入侧校验（接入合同 §1.10：业务模块只存 fileId 引用，读取侧另有 FILE-001.A/B 与
+     * FILE-004.A 把关；本方法补齐写入侧——不得挂接不存在、他租户/他组织、公开、导出件、删除中或引用方读不了的文件）。
+     *
+     * <p>读取资格直接复用 {@link #validateFileReadable}（所有者 / infra:file:query 同租户管理员 + org 轴对象门 +
+     * 获批 visit 收敛），不另造授权口径；失败一律同码 {@code FILE_REFERENCE_INVALID}（不存在与越权不可区分，
+     * 不泄露他租户/他组织文件存在性）。整批 fail-closed：任一非法即抛，调用方不得部分落库。
+     */
+    @Override
+    public void validatePrivateFileReferences(List<Long> fileIds) {
+        if (CollUtil.isEmpty(fileIds)) {
+            return; // 无引用：不要求登录上下文
+        }
+        LoginUser loginUser = SecurityFrameworkUtils.getLoginUser();
+        for (Long fileId : new LinkedHashSet<>(fileIds)) {
+            if (loginUser == null || fileId == null) {
+                throw exception(FILE_REFERENCE_INVALID, fileId); // 无主体/空元素：fail-closed
+            }
+            FileDO file = fileMapper.selectById(fileId); // 租户插件按当前租户过滤：他租户文件与不存在同为 null
+            if (file == null
+                    || !FileScopeEnum.PRIVATE.getScope().equals(file.getScope()) // 公开文件匿名可读，违背私有附件语义
+                    || FileDO.STATUS_DELETING.equals(file.getStatus())            // 删除中间态：引用即悬空
+                    || FileDO.PURPOSE_EXPORT.equals(file.getPurpose())) {         // 导出件有保留期自动清理
+                throw exception(FILE_REFERENCE_INVALID, fileId);
+            }
+            try {
+                validateFileReadable(file, loginUser);
+            } catch (AccessDeniedException ex) {
+                throw exception(FILE_REFERENCE_INVALID, fileId);
+            }
+        }
     }
 
     @Override

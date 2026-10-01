@@ -85,6 +85,17 @@ public interface FileService {
                           Long organizationId, LocalDateTime retentionExpireTime);
 
     /**
+     * 校验业务模块即将挂接的私有附件引用（ZS-FC-001 写入侧；接入合同 §1.10「业务模块只存 fileId 引用」）。
+     *
+     * <p>每个引用须：存在于当前租户、{@code scope=PRIVATE}、非 DELETING、非导出件，且<b>当前登录主体对其具备读取资格</b>
+     * （与 {@link #validateFileReadable} 同一裁决）。任一不满足整批拒绝，一律抛 {@code FILE_REFERENCE_INVALID}
+     * （不存在与越权不可区分，不泄露他租户/他组织文件存在性）；无登录主体按拒绝处理。空集合/null 无引用，直接通过。
+     *
+     * @param fileIds 待引用的文件编号（允许重复，按去重后校验）
+     */
+    void validatePrivateFileReferences(List<Long> fileIds);
+
+    /**
      * 删除文件（ZS-FILE-005.A：引用保护 + DELETING 可恢复中间态）
      *
      * @param id 编号

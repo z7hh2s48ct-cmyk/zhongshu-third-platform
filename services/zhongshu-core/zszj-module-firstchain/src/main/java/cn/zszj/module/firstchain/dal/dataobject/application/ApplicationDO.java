@@ -68,4 +68,14 @@ public class ApplicationDO extends TenantBaseDO {
      */
     private Long version;
 
+    /**
+     * 逻辑删除（覆写字面量为 FALSE/TRUE）——bpm_first_chain_application.deleted 为 boolean（V20260928.001，对齐 MSG 域惯例；
+     * bpm 域手写 JDBC 一律 {@code deleted = FALSE}），而全局 {@code @TableLogic} 为 0/1 数值字面量：MyBatis-Plus 的
+     * selectById/selectPage 在 PG 拼 {@code deleted = 0}，报 {@code operator does not exist: boolean = integer}，
+     * 申请域 get/page 真实 PG 返回 500（H2 bit 接受 0 故此前单测与 PG 运行期套件均未暴露）。字段级覆写优先于全局配置，
+     * 与 MSG-004 {@code NotifyChannelSendDO} 先例一致，PG/H2 双方言可移植；无需迁移、不触碰既有手写 SQL。
+     */
+    @com.baomidou.mybatisplus.annotation.TableLogic(value = "FALSE", delval = "TRUE")
+    private Boolean deleted;
+
 }

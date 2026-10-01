@@ -79,7 +79,9 @@ public interface ErrorCodeConstants {
     ErrorCode FILE_EXPORT_RETENTION_PURPOSE_NOT_EXPORT = new ErrorCode(1_001_003_040, "非导出件（用途门），不在导出件保留期清理通道范围");
     ErrorCode FILE_EXPORT_RETENTION_STATUS_NOT_PUBLISHED = new ErrorCode(1_001_003_041, "记录不处于 PUBLISHED 状态（中间态保护，进行中删除不由本通道介入）");
     ErrorCode FILE_EXPORT_RETENTION_NOT_EXPIRED = new ErrorCode(1_001_003_042, "导出件保留期未到，跳过（边界保护）");
-    ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED = new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
+    // ZS-FC-001：业务模块引用私有附件的写入侧校验（不存在/他租户/他组织/公开/导出件/删除中/无读取资格一律同码，不泄露存在性）
+    ErrorCode FILE_REFERENCE_INVALID = new ErrorCode(1_001_003_043, "附件文件（{}）不存在或不可作为私有附件引用");
+    ErrorCode FILE_PUBLIC_TYPE_NOT_ALLOWED =new ErrorCode(1_001_003_009, "类型（{}）不在公开素材白名单内，不能转为 PUBLIC");
     ErrorCode FILE_SCOPE_INVALID = new ErrorCode(1_001_003_005, "文件可见范围（{}）非法，仅支持 PUBLIC/PRIVATE"); // codex r0 P3：改用未占用码，原 1_001_003_002 与 FILE_IS_EMPTY 冲突
     ErrorCode FILE_IS_EMPTY = new ErrorCode(1_001_003_002, "文件为空");
     ErrorCode FILE_PATH_INVALID = new ErrorCode(1_001_003_003, "文件路径不正确");

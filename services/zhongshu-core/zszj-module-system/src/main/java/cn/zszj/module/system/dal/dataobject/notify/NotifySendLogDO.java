@@ -87,4 +87,14 @@ public class NotifySendLogDO extends BaseDO {
     /** 技术租户（取自 TenantContextHolder） */
     private Long tenantId;
 
+    /**
+     * 逻辑删除（覆写字面量为 FALSE/TRUE）——全局 {@code @TableLogic} 为 0/1 数值字面量（application.yaml
+     * logic-delete-value），而本表 deleted 列为 boolean（V20260915.003/.004 MSG 域惯例），MyBatis-Plus 注入方法
+     * （selectById 等）在 PG 拼 {@code deleted = 0} 将报 {@code boolean = integer}（H2 bit 接受 0 故单测不暴露）；
+     * 字段级覆写优先于全局配置，PG/H2 双方言可移植。收口 ZS-MSG-004 评审 r2 P2 登记的 MSG 域系统性问题
+     * （{@code NotifyChannelSendDO} 已先行自愈，本表同款）。
+     */
+    @com.baomidou.mybatisplus.annotation.TableLogic(value = "FALSE", delval = "TRUE")
+    private Boolean deleted;
+
 }
