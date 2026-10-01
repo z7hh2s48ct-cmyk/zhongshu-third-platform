@@ -414,18 +414,23 @@ public class FirstchainLeadService {
     }
 
     /**
-     * 分页查询（平台侧按归属组织 + 状态过滤；org 轴静默过滤见 {@code OrgDataPermissionRule} 注册）。
+     * 分页查询（范围参数由调用方按视角收敛：orgId 钉负责人本组织、assigneeUserId 钉员工本人、
+     * 双空=平台全域；org 轴静默过滤见 {@code OrgDataPermissionRule} 注册，出参裁剪归门面层）。
      */
-    public PageResult<Map<String, Object>> page(Long orgId, String status, long pageNo, long pageSize) {
+    public PageResult<Map<String, Object>> page(Long orgId, Long assigneeUserId, String status,
+                                                long pageNo, long pageSize) {
         Long tenantId = requireTenantId();
         Long total = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM bpm_first_chain_lead WHERE tenant_id = ? AND deleted = FALSE "
-                        + "AND (? IS NULL OR org_id = ?) AND (? IS NULL OR status = ?)",
-                Long.class, tenantId, orgId, orgId, status, status);
+                        + "AND (? IS NULL OR org_id = ?) AND (? IS NULL OR assignee_user_id = ?) "
+                        + "AND (? IS NULL OR status = ?)",
+                Long.class, tenantId, orgId, orgId, assigneeUserId, assigneeUserId, status, status);
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT * FROM bpm_first_chain_lead WHERE tenant_id = ? AND deleted = FALSE "
-                        + "AND (? IS NULL OR org_id = ?) AND (? IS NULL OR status = ?) ORDER BY id DESC LIMIT ? OFFSET ?",
-                tenantId, orgId, orgId, status, status, pageSize, (pageNo - 1) * pageSize);
+                        + "AND (? IS NULL OR org_id = ?) AND (? IS NULL OR assignee_user_id = ?) "
+                        + "AND (? IS NULL OR status = ?) ORDER BY id DESC LIMIT ? OFFSET ?",
+                tenantId, orgId, orgId, assigneeUserId, assigneeUserId, status, status,
+                pageSize, (pageNo - 1) * pageSize);
         return new PageResult<>(rows, total == null ? 0L : total);
     }
 

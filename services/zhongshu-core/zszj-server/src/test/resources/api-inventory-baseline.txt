@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：440
+# 端点总数：450
 DELETE|/admin-api/bpm/category/delete|ADMIN|PERMISSION|bpm:category:delete|bpm|BpmCategoryController
 DELETE|/admin-api/bpm/form/delete|ADMIN|PERMISSION|bpm:form:delete|bpm|BpmFormController
 DELETE|/admin-api/bpm/model/clean|ADMIN|PERMISSION|bpm:model:clean|bpm|BpmModelController
@@ -116,6 +116,9 @@ GET|/admin-api/bpm/user-group/page|ADMIN|PERMISSION|bpm:user-group:query|bpm|Bpm
 GET|/admin-api/bpm/user-group/simple-list|ADMIN|AUTHENTICATED|-|bpm|BpmUserGroupController
 GET|/admin-api/firstchain/application/get|ADMIN|PERMISSION|firstchain:application:query|firstchain|FirstchainApplicationController
 GET|/admin-api/firstchain/application/page|ADMIN|PERMISSION|firstchain:application:query|firstchain|FirstchainApplicationController
+GET|/admin-api/firstchain/lead/get|ADMIN|PERMISSION|firstchain:lead:query|firstchain|FirstchainLeadController
+GET|/admin-api/firstchain/lead/metrics|ADMIN|PERMISSION|firstchain:lead:query|firstchain|FirstchainLeadController
+GET|/admin-api/firstchain/lead/page|ADMIN|PERMISSION|firstchain:lead:query|firstchain|FirstchainLeadController
 GET|/admin-api/infra/api-access-log/export-excel|ADMIN|PERMISSION|infra:api-access-log:export|infra|ApiAccessLogController
 GET|/admin-api/infra/api-access-log/get|ADMIN|PERMISSION|infra:api-access-log:query|infra|ApiAccessLogController
 GET|/admin-api/infra/api-access-log/page|ADMIN|PERMISSION|infra:api-access-log:query|infra|ApiAccessLogController
@@ -309,6 +312,13 @@ POST|/admin-api/firstchain/application/create|ADMIN|PERMISSION|firstchain:applic
 POST|/admin-api/firstchain/application/reject|ADMIN|PERMISSION|firstchain:application:reject|firstchain|FirstchainApplicationController
 POST|/admin-api/firstchain/application/submit|ADMIN|PERMISSION|firstchain:application:submit|firstchain|FirstchainApplicationController
 POST|/admin-api/firstchain/application/withdraw|ADMIN|PERMISSION|firstchain:application:withdraw|firstchain|FirstchainApplicationController
+POST|/admin-api/firstchain/lead/assign|ADMIN|PERMISSION|firstchain:lead:assign|firstchain|FirstchainLeadController
+POST|/admin-api/firstchain/lead/claim|ADMIN|PERMISSION|firstchain:lead:claim|firstchain|FirstchainLeadController
+POST|/admin-api/firstchain/lead/convert|ADMIN|PERMISSION|firstchain:lead:convert|firstchain|FirstchainLeadController
+POST|/admin-api/firstchain/lead/distribute|ADMIN|PERMISSION|firstchain:lead:distribute|firstchain|FirstchainLeadController
+POST|/admin-api/firstchain/lead/followup|ADMIN|PERMISSION|firstchain:lead:followup|firstchain|FirstchainLeadController
+POST|/admin-api/firstchain/lead/invalidate|ADMIN|PERMISSION|firstchain:lead:invalidate|firstchain|FirstchainLeadController
+POST|/admin-api/firstchain/lead/reassign|ADMIN|PERMISSION|firstchain:lead:reassign|firstchain|FirstchainLeadController
 POST|/admin-api/infra/codegen/create-list|ADMIN|PERMISSION|infra:codegen:create|infra|CodegenController
 POST|/admin-api/infra/config/create|ADMIN|PERMISSION|infra:config:create|infra|ConfigController
 POST|/admin-api/infra/data-source-config/create|ADMIN|PERMISSION|infra:data-source-config:create|infra|DataSourceConfigController

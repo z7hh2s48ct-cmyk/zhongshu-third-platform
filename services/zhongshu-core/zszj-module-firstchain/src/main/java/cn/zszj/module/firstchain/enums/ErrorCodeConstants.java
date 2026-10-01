@@ -54,6 +54,19 @@ public interface ErrorCodeConstants {
     ErrorCode LEAD_CLAIM_NOT_ASSIGNEE = new ErrorCode(1_070_001_008, "员工只能领取分配给自己的线索");
     ErrorCode LEAD_REASSIGN_TARGET_NOT_IN_ORG = new ErrorCode(1_070_001_009, "改派目标员工不属于该线索归属组织");
 
+    ErrorCode LEAD_ACTOR_QUALIFICATION_DENIED = new ErrorCode(1_070_001_010,
+            "线索操作人无有效组织任职（须平台运营或加盟商成员，M2 三角色对象级资格）");
+
+    ErrorCode LEAD_ACTOR_NOT_LEADER = new ErrorCode(1_070_001_011, "仅线索归属组织的负责人可执行该操作（D-07 M6）");
+
+    ErrorCode LEAD_CONVERT_NOT_ASSIGNEE = new ErrorCode(1_070_001_012, "仅线索被分配员工可发起转商机（D-07 M7）");
+
+    ErrorCode LEAD_VISIBLE_DENIED = new ErrorCode(1_070_001_013,
+            "无权查看该线索（PILOT-REQ-009：员工看本人、负责人看本组织、平台人员看授权范围）");
+
+    ErrorCode LEAD_DISTRIBUTE_NOT_PLATFORM = new ErrorCode(1_070_001_014,
+            "仅平台运营可下发线索（PILOT-REQ-005：归属由服务端写入）");
+
     // ========== 1_070_002_xxx 跟进 ==========
     ErrorCode FOLLOWUP_NOT_ALLOWED_FOR_ACTOR = new ErrorCode(1_070_002_000, "仅分配员工本人可提交跟进记录");
     ErrorCode FOLLOWUP_LEAD_TERMINAL = new ErrorCode(1_070_002_001, "线索已结束（{}），不能再提交跟进记录");
