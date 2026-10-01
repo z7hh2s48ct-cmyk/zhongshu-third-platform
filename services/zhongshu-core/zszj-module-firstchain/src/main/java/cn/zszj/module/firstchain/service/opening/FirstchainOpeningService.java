@@ -13,7 +13,7 @@ import cn.zszj.module.bpm.firstchain.FirstChainApplicationService;
 import cn.zszj.module.bpm.firstchain.FirstChainObjectType;
 import cn.zszj.module.bpm.firstchain.FirstChainProcessBindingService;
 import cn.zszj.module.bpm.firstchain.FranchiseeApplicationStatus;
-import cn.zszj.module.system.controller.admin.permission.vo.role.RoleSaveReqVO;
+import cn.zszj.module.firstchain.framework.FirstchainMenus;
 import cn.zszj.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.zszj.module.system.dal.dataobject.membership.MembershipDO;
 import cn.zszj.module.system.dal.dataobject.organization.OrganizationDO;
@@ -21,8 +21,6 @@ import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
 import cn.zszj.module.system.enums.organization.OrganizationTypeEnum;
 import cn.zszj.module.system.service.membership.MembershipService;
 import cn.zszj.module.system.service.organization.OrganizationService;
-import cn.zszj.module.system.service.permission.PermissionService;
-import cn.zszj.module.system.service.permission.RoleService;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
@@ -68,10 +66,10 @@ import static cn.zszj.module.firstchain.enums.ErrorCodeConstants.FIRSTCHAIN_TENA
  *
  * <p><b>开通内容（M4-A + M5-A）</b>：FRANCHISEE 组织（{@link OrganizationTypeEnum#FRANCHISEE}，
  * 编码=申请编号，负责人 leaderUserId 回填）+ 负责人账号（用户名 trim+小写派生自申请编号，初始密码随机
- * 生成——密码明文禁落审计，初始密码下发/强制首改按 M5 登记为后续 wave）+ 负责人任职（Membership 携
- * 一套默认授权；员工只进目标组织）+ 租户级默认角色（create-or-reuse，编码
- * {@link #ROLE_CODE_LEADER}/{@link #ROLE_CODE_MEMBER}）+ 默认角色绑菜单（<b>本 wave 空集登记</b>：
- * 菜单增量迁移归后续 wave，接入合同 §1.1 第⑤步随启用回补）。
+ * 生成——密码明文禁落审计，经开通结果<b>一次性下发</b>给审批操作人，强制首改按 M5 后置登记）+
+ * 负责人任职（Membership 搥一套默认授权；员工只进目标组织）+ 租户级默认角色（create-or-reuse，编码
+ * {@link #ROLE_CODE_LEADER}/{@link #ROLE_CODE_MEMBER}，经 {@link FirstchainDefaultRoleRegistry}）+
+ * 默认角色绑菜单（{@code FirstchainMenus} 编号合同菜单面，迁移 V20261001.001 种子——接入合同 §1.1 第⑤步）。
  *
  * <p><b>REJECTED 路径</b>：意见必填（缺失即拒）；不建任何主体（无组织/账号/角色/任职）；
  * reject_reason 与 REJECT 审计由 bpm 域落。
@@ -117,13 +115,10 @@ public class FirstchainOpeningService {
     private MembershipService membershipService;
 
     @Resource
-    private RoleService roleService;
-
-    @Resource
     private AdminUserService adminUserService;
 
     @Resource
-    private PermissionService permissionService;
+    private FirstchainDefaultRoleRegistry defaultRoleRegistry;
 
     @Resource
     private DataSource dataSource;
@@ -143,10 +138,15 @@ public class FirstchainOpeningService {
      * NOT_EXISTS）；④状态预分类（重复处理兜底幂等 / 终态冲突 fail-closed）；⑤审批回调（幂等门在 bpm 域
      * 内聚）；⑥幂等开通（app_key 查既有组织兜底，缺失才建主体）。
      *
-     * @return 已开通（或既有）的加盟商组织编号——重复处理返回既有结果（M4-A）
+     * <p>初始密码下发（M5-A wave，D-07 M5「初始密码下发、强制首改后置登记」）：仅<b>本次实际创建负责人
+     * 账号</b>时经返回值一次性下发给审批操作人（平台运营转交加盟商负责人；明文禁落审计/日志/持久层）；
+     * 重复处理返回既有组织时 {@code initialPassword=null}（密码仅在下发生成时可见，重发需走重置通道）。
+     * 强制首改仍为后置登记（随 LOGIN 域首改合同排期）。
+     *
+     * @return 开通结果：加盟商组织编号 + 本次新建负责人的一次性初始密码（重复处理为 null）
      */
     @Transactional(rollbackFor = Exception.class)
-    public Long approveAndOpen(ApproveCmd cmd) {
+    public OpeningResult approveAndOpen(ApproveCmd cmd) {
         Long tenantId = requireTenantId();
         // ① M2 对象级资格：审批人=任意 PLATFORM 有效任职（@PreAuthorize 之外的服务层二次校验）
         assertApproverQualification(cmd.operatorUserId(), "APPROVE");
@@ -159,9 +159,10 @@ public class FirstchainOpeningService {
         OrganizationDO opened = findOpenedOrganization(tenantId, appKey);
         if (FranchiseeApplicationStatus.APPROVED.name().equals(status)) {
             if (opened != null) {
-                // 重复审批（重复回调/重复处理）：返回既有结果，不产生第二个组织/负责人/一套授权
+                // 重复审批（重复回调/重复处理）：返回既有结果，不产生第二个组织/负责人/一套授权；
+                // 不重发密码（初始密码仅下发生成时一次，重发走重置通道）
                 log.info("[approveAndOpen][重复开通请求被吸收：appKey={}，返回既有组织({})]", appKey, opened.getId());
-                return opened.getId();
+                return new OpeningResult(opened.getId(), null);
             }
             // APPROVED 而组织缺失（幂等门已终结的修复窗口，如未来 M4-B 异步解耦的投递间隙）：
             // 审批回调将被幂等门吸收（COMPLETED 同结果），随后走开通自愈——不抛错不重建审批
@@ -186,11 +187,19 @@ public class FirstchainOpeningService {
                     (String) binding.get("process_instance_id"), true, cmd.reason(), cmd.actorId());
         }
         // ⑤ 幂等开通（M4-A）：app_key 查既有组织兜底（见类注释），缺失才建主体
-        Long organizationId = opened != null ? opened.getId()
-                : openFranchisee(tenantId, appKey, application, cmd.operatorUserId());
+        Long organizationId;
+        String initialPassword;
+        if (opened != null) {
+            organizationId = opened.getId();
+            initialPassword = null;
+        } else {
+            FranchiseeOpening opening = openFranchisee(tenantId, appKey, application, cmd.operatorUserId());
+            organizationId = opening.organizationId();
+            initialPassword = opening.leaderAccount().initialPassword();
+        }
         // ⑥ 开通审计 SUCCESS（随本事务：整体回滚则不留，fail-closed）
         recordOpeningAudit(tenantId, appKey, cmd.actorId(), cmd.reason(), organizationId);
-        return organizationId;
+        return new OpeningResult(organizationId, initialPassword);
     }
 
     /**
@@ -241,18 +250,22 @@ public class FirstchainOpeningService {
     // ========== 内部：开通主体（M4-A/M5-A） ==========
 
     /**
-     * 开通加盟商主体：一套默认授权（租户级模板）→ 负责人账号 → FRANCHISEE 组织 → 负责人任职 → 菜单绑定。
+     * 开通加盟商主体：一套默认授权（租户级模板 + 默认菜单面）→ 负责人账号 → FRANCHISEE 组织 → 负责人任职。
      *
      * <p>顺序依据：任职引用组织与角色须先就位；组织 leaderUserId 引用负责人账号。全部动作加入
      * 本服务事务（system 服务 @Transactional REQUIRED 同源），任一失败整体回滚（M4-A fail-closed）。
      */
-    private Long openFranchisee(Long tenantId, String appKey, Map<String, Object> application,
-                                Long operatorUserId) {
-        // 1. 一套默认授权：租户级模板 create-or-reuse（角色定义「能做什么」，组织归属经任职承载）
-        DefaultRole leaderRole = ensureDefaultRole(tenantId, ROLE_CODE_LEADER, ROLE_NAME_LEADER, 1);
-        DefaultRole memberRole = ensureDefaultRole(tenantId, ROLE_CODE_MEMBER, ROLE_NAME_MEMBER, 2);
-        // 2. 负责人账号（M5-A：用户名 trim+小写派生自申请编号，租户内唯一；初始密码随机不下发审计）
-        Long leaderUserId = createLeaderUser(application, appKey);
+    private FranchiseeOpening openFranchisee(Long tenantId, String appKey, Map<String, Object> application,
+                                             Long operatorUserId) {
+        // 1. 一套默认授权：租户级模板 create-or-reuse（角色定义「能做什么」，组织归属经任职承载）；
+        //    默认菜单面循 FirstchainMenus 编号合同（空集登记期结束，§1.1 第⑤步落位）
+        Long leaderRoleId = defaultRoleRegistry.ensureRoleWithMenus(tenantId, ROLE_CODE_LEADER, ROLE_NAME_LEADER,
+                1, FirstchainMenus.LEADER_ROLE_MENUS);
+        Long memberRoleId = defaultRoleRegistry.ensureRoleWithMenus(tenantId, ROLE_CODE_MEMBER, ROLE_NAME_MEMBER,
+                2, FirstchainMenus.MEMBER_ROLE_MENUS);
+        // 2. 负责人账号（M5-A：用户名 trim+小写派生自申请编号，租户内唯一；初始密码随机生成并随开通结果
+        //    一次性下发，明文禁落审计）
+        LeaderAccount leaderAccount = createLeaderUser(application, appKey);
         // 3. FRANCHISEE 组织（编码=申请编号=开通幂等键；负责人回填 leaderUserId）
         OrganizationDO organization = new OrganizationDO();
         organization.setName((String) application.get("applicant_name"));
@@ -261,7 +274,7 @@ public class FirstchainOpeningService {
         organization.setParentId(OrganizationDO.PARENT_ID_ROOT);
         organization.setSort(0);
         organization.setStatus(CommonStatusEnum.ENABLE.getStatus());
-        organization.setLeaderUserId(leaderUserId);
+        organization.setLeaderUserId(leaderAccount.userId());
         organization.setRemark("首链申请开通自动创建（app_key=" + appKey + "）");
         Long organizationId;
         try {
@@ -273,65 +286,32 @@ public class FirstchainOpeningService {
         }
         // 4. 负责人任职（员工只进目标组织；角色=一套默认授权；首任职自动承接默认任职=服务端上下文来源）
         MembershipDO membership = new MembershipDO();
-        membership.setUserId(leaderUserId);
+        membership.setUserId(leaderAccount.userId());
         membership.setOrganizationId(organizationId);
-        membership.setRoleIds(Set.of(leaderRole.id(), memberRole.id()));
+        membership.setRoleIds(Set.of(leaderRoleId, memberRoleId));
         membershipService.createMembership(membership, operatorUserId);
-        // 5. 默认授权绑菜单——本 wave 空集登记（菜单增量迁移归后续 wave，接入合同 §1.1 第⑤步随启用回补）；
-        //    仅对本次新建角色执行（复用既有模板角色不重绑，防清空既有菜单授权）
-        if (leaderRole.newlyCreated()) {
-            permissionService.assignRoleMenu(leaderRole.id(), Set.of());
-        }
-        if (memberRole.newlyCreated()) {
-            permissionService.assignRoleMenu(memberRole.id(), Set.of());
-        }
         log.info("[openFranchisee][加盟商开通完成：appKey={} organizationId={} leaderUserId={} roles={}/{}]",
-                appKey, organizationId, leaderUserId, ROLE_CODE_LEADER, ROLE_CODE_MEMBER);
-        return organizationId;
+                appKey, organizationId, leaderAccount.userId(), ROLE_CODE_LEADER, ROLE_CODE_MEMBER);
+        return new FranchiseeOpening(organizationId, leaderAccount);
     }
 
     /**
-     * 默认角色 create-or-reuse（租户内模板，编码唯一）：先查（JdbcTemplate 显式租户 + deleted=FALSE），
-     * 缺失才经 {@code RoleService#createRole} 创建（type=null → CUSTOM 自定义角色）。
-     *
-     * <p>并发窗口：进程内 synchronized + 锁后复查串行化低频开通路径；跨实例残余竞态为重复模板角色，
-     * 无权限语义危害（角色编码取用方以「查到即用」为准）——登记为已知限制，多实例互斥随运维扩容决策后置。
-     */
-    private DefaultRole ensureDefaultRole(Long tenantId, String code, String name, int sort) {
-        Long existing = queryRoleIdByCode(tenantId, code);
-        if (existing != null) {
-            return new DefaultRole(existing, false);
-        }
-        synchronized (this) {
-            existing = queryRoleIdByCode(tenantId, code);
-            if (existing != null) {
-                return new DefaultRole(existing, false);
-            }
-            RoleSaveReqVO saveReqVO = new RoleSaveReqVO();
-            saveReqVO.setName(name);
-            saveReqVO.setCode(code);
-            saveReqVO.setSort(sort);
-            saveReqVO.setStatus(CommonStatusEnum.ENABLE.getStatus());
-            saveReqVO.setRemark("首链开通默认授权模板（ZS-FC-001）");
-            return new DefaultRole(roleService.createRole(saveReqVO, null), true);
-        }
-    }
-
-    /**
-     * 创建负责人账号（M5-A：用户名 trim+小写；初始密码随机生成）。
+     * 创建负责人账号（M5-A：用户名 trim+小写；初始密码随机生成并随 {@link LeaderAccount} 一次性下发）。
      *
      * <p>账号手机号<b>不</b>入：联系人电话为申请域自由文本列（M8 F2 建议），与登录身份解耦——
      * 既有申请的手机号可能重复/固话，直接入账号会撞 system_users 手机号唯一约束致开通误伤；
-     * 账号资料完善（手机号/初始密码下发/强制首改）随 M5 后续 wave 登记。
+     * 账号资料完善（手机号）随后续 wave 登记。
      */
-    private Long createLeaderUser(Map<String, Object> application, String appKey) {
+    private LeaderAccount createLeaderUser(Map<String, Object> application, String appKey) {
         UserSaveReqVO user = new UserSaveReqVO();
         user.setUsername(deriveUsername(appKey));
         String contactName = (String) application.get("contact_name");
         user.setNickname(StrUtil.isBlank(contactName) ? (String) application.get("applicant_name") : contactName);
-        // M5-A：初始密码随机生成（16 位）；密码明文禁落审计（审计明细脱敏合同），下发通道后置登记
-        user.setPassword(RandomUtil.randomString(16));
-        return adminUserService.createUser(user);
+        // M5-A：初始密码随机生成（16 位），经开通结果一次性下发给审批操作人；密码明文禁落审计（审计明细脱敏合同）
+        String initialPassword = RandomUtil.randomString(16);
+        user.setPassword(initialPassword);
+        Long userId = adminUserService.createUser(user);
+        return new LeaderAccount(userId, initialPassword);
     }
 
     /**
@@ -471,9 +451,23 @@ public class FirstchainOpeningService {
     }
 
     /**
-     * 默认角色取用结果：id + 是否本次新建（菜单绑定只对新建角色执行，防复用角色被清空既有菜单）。
+     * 开通结果（M5-A 初始密码下发载体）：organizationId=已开通（或既有）加盟商组织；
+     * initialPassword=本次新建负责人账号的一次性初始密码（重复处理/既有组织路径为 null——
+     * 密码仅在下发生成时可见，重发走重置通道；明文禁落审计/日志）。
      */
-    private record DefaultRole(Long id, boolean newlyCreated) {
+    public record OpeningResult(Long organizationId, String initialPassword) {
+    }
+
+    /**
+     * 开通过程产物：新建负责人账号（userId + 一次性初始密码），供开通结果组装。
+     */
+    private record LeaderAccount(Long userId, String initialPassword) {
+    }
+
+    /**
+     * 开通过程产物：组织编号 + 负责人账号。
+     */
+    private record FranchiseeOpening(Long organizationId, LeaderAccount leaderAccount) {
     }
 
 }

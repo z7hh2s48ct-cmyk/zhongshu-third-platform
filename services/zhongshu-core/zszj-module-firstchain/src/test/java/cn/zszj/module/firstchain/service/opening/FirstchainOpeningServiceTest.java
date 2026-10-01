@@ -63,7 +63,7 @@ import static org.mockito.Mockito.when;
  *
  * @author ZS-FC-001
  */
-@Import({FirstchainOpeningService.class, FirstChainApplicationService.class,
+@Import({FirstchainOpeningService.class, FirstchainDefaultRoleRegistry.class, FirstChainApplicationService.class,
         FirstChainProcessBindingService.class, FirstChainStateTransitionExecutor.class, JdbcAuditPort.class,
         FirstchainOpeningServiceTest.StubProcessPort.class})
 class FirstchainOpeningServiceTest extends BaseDbUnitTest {
@@ -148,14 +148,15 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         mockMembershipCreation();
         mockRoleCreation();
 
-        Long orgId = openingService.approveAndOpen(approveCmd("APP-O1", "资质齐备，同意开通"));
+        FirstchainOpeningService.OpeningResult opening =
+                openingService.approveAndOpen(approveCmd("APP-O1", "资质齐备，同意开通"));
 
         // 审批生效：领域 APPROVED、绑定 COMPLETED（bpm 幂等门真实路径）
         Map<String, Object> row = queryApplication(id);
         assertThat(row.get("status")).isEqualTo(FranchiseeApplicationStatus.APPROVED.name());
         assertThat(((Number) row.get("version")).longValue()).isEqualTo(2L);
         // 开通主体：FRANCHISEE 组织（编码=申请编号=幂等键）+ 负责人（leaderUserId 回填）
-        assertThat(orgId).isEqualTo(OPENED_ORG_ID);
+        assertThat(opening.organizationId()).isEqualTo(OPENED_ORG_ID);
         OrganizationDO organization = capturedOrganization.get();
         assertThat(organization.getType()).isEqualTo(OrganizationTypeEnum.FRANCHISEE.getType());
         assertThat(organization.getCode()).isEqualTo("APP-O1");
@@ -168,12 +169,14 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         assertThat(leaderUser.getUsername()).isEqualTo("fcappo1");
         assertThat(leaderUser.getNickname()).isEqualTo("联系人-APP-O1");
         assertThat(leaderUser.getPassword()).hasSize(16);
+        // M5-A 初始密码一次性下发：开通结果携带的初始密码与建账密码同源（明文不落审计面）
+        assertThat(opening.initialPassword()).isEqualTo(leaderUser.getPassword());
         // 负责人任职：绑定目标组织 + 一套默认授权（员工只进目标组织）
         MembershipDO membership = capturedMembership.get();
         assertThat(membership.getUserId()).isEqualTo(LEADER_USER_ID);
         assertThat(membership.getOrganizationId()).isEqualTo(OPENED_ORG_ID);
         assertThat(membership.getRoleIds()).containsExactlyInAnyOrder(ROLE_LEADER_ID, ROLE_MEMBER_ID);
-        // 默认角色 create ×2 + 菜单绑定（本 wave 空集登记）×2
+        // 默认角色 create ×2 + 默认菜单面绑定 ×2（FirstchainMenus 编号合同，空绑定即补绑）
         verify(roleService, times(2)).createRole(any(), any());
         verify(permissionService, times(2)).assignRoleMenu(any(), anySet());
         // 开通审计 SUCCESS（bizId=申请编号，可回查）
@@ -189,11 +192,15 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         mockMembershipCreation();
         mockRoleCreation();
 
-        Long firstOrgId = openingService.approveAndOpen(approveCmd("APP-DUP", null));
-        Long secondOrgId = openingService.approveAndOpen(approveCmd("APP-DUP", null));
+        FirstchainOpeningService.OpeningResult first =
+                openingService.approveAndOpen(approveCmd("APP-DUP", null));
+        FirstchainOpeningService.OpeningResult second =
+                openingService.approveAndOpen(approveCmd("APP-DUP", null));
 
-        // 重复处理返回既有结果（M4-A），不产生第二个组织/负责人/一套授权
-        assertThat(secondOrgId).isEqualTo(firstOrgId);
+        // 重复处理返回既有结果（M4-A），不产生第二个组织/负责人/一套授权；不重发初始密码
+        assertThat(second.organizationId()).isEqualTo(first.organizationId());
+        assertThat(first.initialPassword()).isNotNull();
+        assertThat(second.initialPassword()).isNull();
         verify(organizationService, times(1)).createOrganization(any());
         verify(adminUserService, times(1)).createUser(any());
         verify(membershipService, times(1)).createMembership(any(), any());

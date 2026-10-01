@@ -1,6 +1,6 @@
 # ZS-SEC-002 接口清单基线（自动生成，勿手改；变更须经评审后以 -Dapi.inventory.update=true 重新生成）
 # 列：HTTP方法|完整路径|主体类型|授权类别(ANONYMOUS/PERMISSION/AUTHENTICATED)|权限标识|模块|Controller
-# 端点总数：450
+# 端点总数：451
 DELETE|/admin-api/bpm/category/delete|ADMIN|PERMISSION|bpm:category:delete|bpm|BpmCategoryController
 DELETE|/admin-api/bpm/form/delete|ADMIN|PERMISSION|bpm:form:delete|bpm|BpmFormController
 DELETE|/admin-api/bpm/model/clean|ADMIN|PERMISSION|bpm:model:clean|bpm|BpmModelController
@@ -312,6 +312,7 @@ POST|/admin-api/firstchain/application/create|ADMIN|PERMISSION|firstchain:applic
 POST|/admin-api/firstchain/application/reject|ADMIN|PERMISSION|firstchain:application:reject|firstchain|FirstchainApplicationController
 POST|/admin-api/firstchain/application/submit|ADMIN|PERMISSION|firstchain:application:submit|firstchain|FirstchainApplicationController
 POST|/admin-api/firstchain/application/withdraw|ADMIN|PERMISSION|firstchain:application:withdraw|firstchain|FirstchainApplicationController
+POST|/admin-api/firstchain/employee/create|ADMIN|PERMISSION|firstchain:employee:create|firstchain|FirstchainEmployeeController
 POST|/admin-api/firstchain/lead/assign|ADMIN|PERMISSION|firstchain:lead:assign|firstchain|FirstchainLeadController
 POST|/admin-api/firstchain/lead/claim|ADMIN|PERMISSION|firstchain:lead:claim|firstchain|FirstchainLeadController
 POST|/admin-api/firstchain/lead/convert|ADMIN|PERMISSION|firstchain:lead:convert|firstchain|FirstchainLeadController

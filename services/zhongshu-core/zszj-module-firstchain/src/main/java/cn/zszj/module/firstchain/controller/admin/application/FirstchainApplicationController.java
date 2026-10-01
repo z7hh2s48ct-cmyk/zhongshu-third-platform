@@ -5,6 +5,7 @@ import cn.zszj.framework.common.pojo.PageResult;
 import cn.zszj.framework.security.core.util.SecurityFrameworkUtils;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationApproveReqVO;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationCreateReqVO;
+import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationOpeningRespVO;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationPageReqVO;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationRejectReqVO;
 import cn.zszj.module.firstchain.controller.admin.application.vo.ApplicationRespVO;
@@ -65,15 +66,19 @@ public class FirstchainApplicationController {
     }
 
     @PostMapping("/approve")
-    @Operation(summary = "审批通过并幂等开通（PILOT-REQ-002/003）")
+    @Operation(summary = "审批通过并幂等开通（PILOT-REQ-002/003；返回一次性初始密码供转交负责人）")
     @PreAuthorize("@ss.hasPermission('firstchain:application:approve')")
-    public CommonResult<Long> approveApplication(@Valid @RequestBody ApplicationApproveReqVO approveReqVO) {
-        return success(openingService.approveAndOpen(FirstchainOpeningService.ApproveCmd.builder()
+    public CommonResult<ApplicationOpeningRespVO> approveApplication(@Valid @RequestBody ApplicationApproveReqVO approveReqVO) {
+        FirstchainOpeningService.OpeningResult opening = openingService.approveAndOpen(FirstchainOpeningService.ApproveCmd.builder()
                 .appKey(approveReqVO.getAppKey())
                 .reason(approveReqVO.getReason())
                 .actorId(currentActorId())
                 .operatorUserId(SecurityFrameworkUtils.getLoginUserId())
-                .build()));
+                .build());
+        ApplicationOpeningRespVO respVO = new ApplicationOpeningRespVO();
+        respVO.setOrganizationId(opening.organizationId());
+        respVO.setInitialPassword(opening.initialPassword());
+        return success(respVO);
     }
 
     @PostMapping("/reject")

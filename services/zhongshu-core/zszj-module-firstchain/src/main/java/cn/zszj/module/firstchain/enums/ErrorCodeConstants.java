@@ -41,6 +41,9 @@ public interface ErrorCodeConstants {
     ErrorCode FIRSTCHAIN_APPROVE_QUALIFICATION_DENIED = new ErrorCode(1_021_000_007,
             "审批资格不足：操作人无 PLATFORM 有效任职（M2：审批人=任意 PLATFORM 有效任职）");
 
+    ErrorCode FIRSTCHAIN_EMPLOYEE_ACTOR_NOT_LEADER = new ErrorCode(1_021_000_008,
+            "仅加盟商负责人可创建员工账号（D-07 M5-A：负责人直接创建）");
+
 
     // ========== 1_070_001_xxx 线索 ==========
     ErrorCode LEAD_NOT_EXISTS = new ErrorCode(1_070_001_000, "线索不存在");
