@@ -469,10 +469,10 @@ const report = {
       attribution: '修复归口 ZS-CFG-003.B（GAP-3 控制器修复提交）；ZS-DB-001 依赖升级不再为本项所需（仅余 GAP-1 根因修复诉求）；SYS-ROLE-N1 已摘出 REGISTERED_GAPS 转正式安全断言。',
     },
     {
-      id: 'GAP-4 菜单深层环校验缺失（父菜单可挂到自己子菜单下）',
-      severity: '功能缺口：menu 侧缺 DEPT_PARENT_IS_CHILD 同语义的环校验（仅拦自父）',
-      phenomenon: 'updateMenu 将目录的 parentId 指向其子菜单（形成环）返回 code=0 且落库（真实 PG 运行证据），仅 parentId==id 被拦（MENU_PARENT_ERROR）。§15.1 菜单行反向验收「非法父子」含 DEPT_PARENT_IS_CHILD 同语义。',
-      attribution: '归口 ZS-CFG-003.A/B（§15.1 菜单行配套修改任务）；本套件 SYS-MENU-N1 以受控的自父用例断言既有语义，深层环作为缺口登记。',
+      id: 'GAP-4 菜单深层环校验缺失（已修复——validateParentMenu 祖先链环校验，SYS-MENU-N5 转正式断言）',
+      severity: '已修复：updateMenu 将目录 parentId 指向其子菜单（成环）现受控拒绝（MENU_PARENT_ERROR 1002001002）且数据不受污染',
+      phenomenon: '修复前 updateMenu 将目录的 parentId 指向其子菜单（形成环）返回 code=0 且落库（真实 PG 运行证据），仅 parentId==id 被拦；菜单树/缓存按 parentId 上溯的遍历在环下不受控。',
+      attribution: '修复归口 ZS-CFG-003 后续收紧（2026-10-02，reviews/README 待处置小卡承接）：validateParentMenu 增祖先链环校验（沿新父链上溯，命中当前菜单或父链自环均拒绝，visited 集合防脏数据死循环）；H2 MenuServiceImplTest +3（深层环/既有环链/合法深链放行）；本套件 SYS-MENU-N5 转正式断言（真实 PG 受控拒绝 + parent_id 未变直证）。',
     },
     {
       id: 'GAP-5 V1 基线个别序列 START 与种子行 off-by-one',

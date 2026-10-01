@@ -214,6 +214,9 @@ public class MenuServiceImpl implements MenuService {
      * 1. 不能设置自己为父菜单
      * 2. 父菜单不存在
      * 3. 父菜单必须是 {@link MenuTypeEnum#MENU} 菜单类型
+     * 4. 祖先链环校验（GAP-4 闭合，对齐 {@code DeptServiceImpl#validateParentDept} 同语义）：
+     *    沿新父链上溯，若命中当前菜单（成环）或父链自身已成环（脏数据），均拒绝——
+     *    否则菜单树/缓存按 parentId 上溯的遍历在真实 PG 上不受控（SYS-001.A 登记）
      *
      * @param parentId 父菜单编号
      * @param childId  当前菜单编号
@@ -236,6 +239,28 @@ public class MenuServiceImpl implements MenuService {
         if (!MenuTypeEnum.DIR.getType().equals(menu.getType())
                 && !MenuTypeEnum.MENU.getType().equals(menu.getType())) {
             throw exception(MENU_PARENT_NOT_DIR_OR_MENU);
+        }
+        // 4. 祖先链环校验：新增（childId 为空）无环风险，仅更新路径检查
+        if (childId == null) {
+            return;
+        }
+        Set<Long> visited = new HashSet<>();
+        visited.add(parentId);
+        MenuDO ancestor = menu;
+        while (ancestor != null) {
+            Long ancestorParent = ancestor.getParentId();
+            if (ancestorParent == null || ID_ROOT.equals(ancestorParent)) {
+                return; // 上溯到根：新父链无环
+            }
+            if (!visited.add(ancestorParent)) {
+                // 新父链自身已成环（脏数据）：挂入只会扩大不可达环，一并拒绝
+                throw exception(MENU_PARENT_ERROR);
+            }
+            if (ancestorParent.equals(childId)) {
+                // 当前菜单在新父链的祖先链上：挂入即成环
+                throw exception(MENU_PARENT_ERROR);
+            }
+            ancestor = menuMapper.selectById(ancestorParent);
         }
     }
 

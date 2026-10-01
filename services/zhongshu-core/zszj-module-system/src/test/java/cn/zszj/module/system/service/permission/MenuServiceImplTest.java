@@ -255,6 +255,50 @@ public class MenuServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testValidateParentMenu_deepCycle_rejected() {
+        // GAP-4：A(根) → B(A) → C(B)，把 A 的父菜单改挂 C（A→C→B→A 成环）→ 受控拒绝
+        MenuDO a = buildMenuDO(MenuTypeEnum.DIR, "cyc-a", 0L);
+        menuMapper.insert(a);
+        MenuDO b = buildMenuDO(MenuTypeEnum.DIR, "cyc-b", a.getId());
+        menuMapper.insert(b);
+        MenuDO c = buildMenuDO(MenuTypeEnum.DIR, "cyc-c", b.getId());
+        menuMapper.insert(c);
+
+        assertServiceException(() -> menuService.validateParentMenu(c.getId(), a.getId()),
+                MENU_PARENT_ERROR);
+    }
+
+    @Test
+    public void testValidateParentMenu_preExistingCycleChain_rejected() {
+        // 脏数据：A↔B 互为父子（历史环），把任何菜单挂到该父链上 → 拒绝（父链自环不扩大）
+        MenuDO a = buildMenuDO(MenuTypeEnum.DIR, "dirty-a", 0L);
+        menuMapper.insert(a);
+        MenuDO b = buildMenuDO(MenuTypeEnum.DIR, "dirty-b", a.getId());
+        menuMapper.insert(b);
+        // 直接改库制造既有环（绕过校验模拟历史脏数据）
+        a.setParentId(b.getId());
+        menuMapper.updateById(a);
+
+        assertServiceException(() -> menuService.validateParentMenu(a.getId(), 9999L),
+                MENU_PARENT_ERROR);
+    }
+
+    @Test
+    public void testValidateParentMenu_validDeepChain_passes() {
+        // 合法深链：A(根) → B(A) → C(B)，D 挂到 C 下不经过自身链 → 放行
+        MenuDO a = buildMenuDO(MenuTypeEnum.DIR, "deep-a", 0L);
+        menuMapper.insert(a);
+        MenuDO b = buildMenuDO(MenuTypeEnum.DIR, "deep-b", a.getId());
+        menuMapper.insert(b);
+        MenuDO c = buildMenuDO(MenuTypeEnum.DIR, "deep-c", b.getId());
+        menuMapper.insert(c);
+        MenuDO d = buildMenuDO(MenuTypeEnum.MENU, "deep-d", 0L);
+        menuMapper.insert(d);
+
+        menuService.validateParentMenu(c.getId(), d.getId()); // 无异常即放行
+    }
+
+    @Test
     public void testValidateParentMenu_parentNotExist() {
         // 调用，并断言异常
         assertServiceException(() -> menuService.validateParentMenu(randomLongId(), null),

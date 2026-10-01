@@ -51,7 +51,33 @@ export async function run(ctx) {
     rSelfParent.body?.code === 1002001002
     && pgQuery(`SELECT parent_id FROM system_menu WHERE id=${dirId} AND deleted=0`) === '0',
     `update(dir.parent=自己) code=${rSelfParent.body?.code}（期望 MENU_PARENT_ERROR），PG parent_id 未变（=0）`);
-  // 深层环（dir.parent=子 menu）在真实 PG 上不受控，作为 GAP-4 登记于报告（归口 ZS-CFG-003.A/B）
+  // ---------- SYS-MENU-N5：深层环受控拒绝（GAP-4 闭合，2026-10-02：validateParentMenu 祖先链环校验） ----------
+  // 场景：A(根) → B(A)，把 A 的父菜单改挂 B（A→B→A 成环）→ MENU_PARENT_ERROR 受控拒绝且数据不受污染
+  const rCycA = await request('POST', '/admin-api/system/menu/create', {
+    token: t1.token, tenantId: t1.tenantId,
+    body: { parentId: 0, name: `环校验A${tag}`, type: 1, path: `/cycA${tag}`, status: 0, visible: true, sort: 97 },
+  });
+  const cycAId = rCycA.body?.data;
+  const rCycB = await request('POST', '/admin-api/system/menu/create', {
+    token: t1.token, tenantId: t1.tenantId,
+    body: { parentId: cycAId, name: `环校验B${tag}`, type: 1, path: `/cycB${tag}`, status: 0, visible: true, sort: 97 },
+  });
+  const cycBId = rCycB.body?.data;
+  const rCycle = await request('PUT', '/admin-api/system/menu/update', {
+    token: t1.token, tenantId: t1.tenantId,
+    body: { id: cycAId, parentId: cycBId, name: `环校验A${tag}`, type: 1, path: `/cycA${tag}`, status: 0, visible: true, sort: 97 }, // A.parent=B → 成环
+  });
+  record('SYS-MENU-N5 深层环受控拒绝（1002001002，GAP-4 闭合）',
+    rCycle.body?.code === 1002001002
+    && pgQuery(`SELECT parent_id FROM system_menu WHERE id=${cycAId} AND deleted=0`) === '0',
+    `update(A.parent=子B) code=${rCycle.body?.code}（期望 MENU_PARENT_ERROR），PG parent_id 未变（=0，树遍历不受控症状消除）`);
+  // 清理探针（先删子后删父；失败仅记录不判 FAIL，保持基线可复跑）
+  const rDelCycB = await request('DELETE', `/admin-api/system/menu/delete?id=${cycBId}`, { token: t1.token, tenantId: t1.tenantId });
+  const rDelCycA = await request('DELETE', `/admin-api/system/menu/delete?id=${cycAId}`, { token: t1.token, tenantId: t1.tenantId });
+  if (rDelCycA.body?.code !== 0 || rDelCycB.body?.code !== 0) {
+    record('SYS-MENU-N5A 环校验探针清理', false, `delete code B=${rDelCycB.body?.code}/A=${rDelCycA.body?.code}`);
+  }
+
 
   // ---------- SYS-MENU-N2：有引用删除受控（删除含子级的目录） ----------
   const rDelBusy = await request('DELETE', `/admin-api/system/menu/delete?id=${dirId}`, { token: t1.token, tenantId: t1.tenantId });
