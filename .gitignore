@@ -48,3 +48,6 @@ tools/
 # 一次性 patch_*.py、review-* 隔离副本、任务运行时报告与 3D 模型资产等
 # 均属于本地工作产物，不入库；权威评审处置文档归档路径为 docs/reviews/。
 outputs/
+
+# codex 评审提示词临时文件（仓库根 .codex-prompt-*.txt）：评审过程件，权威处置文档归档于 docs/reviews/，不入库。
+.codex-prompt-*.txt
