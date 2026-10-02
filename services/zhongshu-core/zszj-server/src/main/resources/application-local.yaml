@@ -50,7 +50,7 @@ spring:
       primary: master
       datasource:
         master:
-          url: ${ZSZJ_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/ruoyi-vue-pro} # 目标库名以 ZS-DB-002 环境核验为准
+          url: ${ZSZJ_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/zhongshu} # 目标库名以 ZS-DB-002 环境核验为准
           username: ${ZSZJ_DATASOURCE_USERNAME:postgres}
           password: "${ZSZJ_DATASOURCE_PASSWORD:}" # 按环境注入
   # Redis 配置。Redisson 默认的配置足够使用，一般不需要进行调优

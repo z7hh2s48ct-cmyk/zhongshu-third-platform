@@ -371,9 +371,8 @@ zszj:
     description: 提供管理后台、用户 App 的所有功能
     version: ${zszj.info.version}
     url: ${zszj.web.admin-ui.url}
-    email: xingyu4j@vip.qq.com
-    license: MIT
-    license-url: https://gitee.com/zhijiantianya/ruoyi-vue-pro/blob/master/LICENSE
+    license: 众墅之家 AI 赋能平台（第三方组件署名见上方链接）
+    license-url: https://github.com/z7hh2s48ct-cmyk/zhongshu-third-platform/blob/main/THIRD_PARTY_NOTICES.md # 第三方组件署名（开源来源台账）
   codegen:
     base-package: ${zszj.info.base-package}
     db-schemas: ${spring.datasource.dynamic.datasource.master.name}

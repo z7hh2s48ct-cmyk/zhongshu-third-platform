@@ -9,20 +9,14 @@ import java.util.TimeZone;
 /**
  * 项目的启动类
  *
- * 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
- * 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
- * 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
  *
- * @author 芋道源码
+ * @author 众墅之家（基于开源底座改造，来源署名见 THIRD_PARTY_NOTICES.md）
  */
 @SuppressWarnings("SpringComponentScan") // 忽略 IDEA 无法识别 ${zszj.info.base-package}
 @SpringBootApplication(scanBasePackages = {"${zszj.info.base-package}.server", "${zszj.info.base-package}.module"})
 public class ZszjServerApplication {
 
     public static void main(String[] args) {
-        // 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
-        // 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
-        // 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
 
         // ZS-SEC-009：固定应用默认时区为 GMT+8（接口边界时间合同的部署级基线），使全项目
         // LocalDateTime.now() 生产端与固定时区序列化对齐，不受宿主 JVM/容器时区影响
@@ -34,9 +28,6 @@ public class ZszjServerApplication {
 //                .applicationStartup(new BufferingApplicationStartup(20480))
 //                .run(args);
 
-        // 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
-        // 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
-        // 如果你碰到启动的问题，请认真阅读 https://doc.iocoder.cn/quick-start/ 文章
     }
 
 }

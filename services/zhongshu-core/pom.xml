@@ -31,13 +31,12 @@
 <!--        <module>zszj-module-fms</module>-->
 <!--        <module>zszj-module-pms</module>-->
 <!--        <module>zszj-module-im</module>-->
-<!-- 请参考 https://doc.iocoder.cn/ai/build/ 文档，完成 AI 模块的启动！！！ -->
+<!-- AI 模块为冻结上游件（默认不装配）；如需启用，先过 D-11 决策（docs/02 PEND-007）。 -->
 <!--        <module>zszj-module-ai</module>-->
     </modules>
 
     <name>${project.artifactId}</name>
     <description>众墅之家项目基础脚手架</description>
-    <url>https://github.com/YunaiV/ruoyi-vue-pro</url>
 
     <properties>
         <revision>2026.08-SNAPSHOT</revision>
