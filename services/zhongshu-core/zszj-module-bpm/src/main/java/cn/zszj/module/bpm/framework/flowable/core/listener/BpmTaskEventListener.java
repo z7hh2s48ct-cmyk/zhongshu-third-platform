@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.zszj.framework.common.util.number.NumberUtils;
 import cn.zszj.module.bpm.enums.definition.BpmBoundaryEventTypeEnum;
+import cn.zszj.module.bpm.firstchain.FlowableFirstChainProcessAdapter;
 import cn.zszj.module.bpm.framework.flowable.core.enums.BpmnModelConstants;
 import cn.zszj.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.zszj.module.bpm.framework.flowable.core.util.FlowableUtils;
@@ -61,23 +62,35 @@ public class BpmTaskEventListener extends AbstractFlowableEngineEventListener {
     @Override
     protected void taskCreated(FlowableEngineEntityEvent event) {
         Task entity = (Task) event.getEntity();
+        if (isFirstChain(event, entity)) {
+            return; // 首链流程不走上游模型管理监听（其扩展表在 PG 基线不存在）
+        }
         FlowableUtils.execute(entity.getTenantId(), () -> taskService.processTaskCreated(entity));
     }
 
     @Override
     protected void taskAssigned(FlowableEngineEntityEvent event) {
         Task entity = (Task) event.getEntity();
+        if (isFirstChain(event, entity)) {
+            return; // 首链流程不走上游模型管理监听（其扩展表在 PG 基线不存在）
+        }
         FlowableUtils.execute(entity.getTenantId(), () -> taskService.processTaskAssigned(entity));
     }
 
     @Override
     protected void taskCompleted(FlowableEngineEntityEvent event) {
         Task entity = (Task) event.getEntity();
+        if (isFirstChain(event, entity)) {
+            return; // 首链流程不走上游模型管理监听（其扩展表在 PG 基线不存在）
+        }
         FlowableUtils.execute(entity.getTenantId(), () -> taskService.processTaskCompleted(entity));
     }
 
     @Override
     protected void activityCancelled(FlowableActivityCancelledEvent event) {
+        if (FlowableFirstChainProcessAdapter.isFirstChainDefinition(event.getProcessDefinitionId())) {
+            return;
+        }
         List<HistoricActivityInstance> activityList = taskService.getHistoricActivityListByExecutionId(event.getExecutionId());
         if (CollUtil.isEmpty(activityList)) {
             log.error("[activityCancelled][使用 executionId({}) 查找不到对应的活动实例]", event.getExecutionId());
@@ -95,6 +108,9 @@ public class BpmTaskEventListener extends AbstractFlowableEngineEventListener {
     @Override
     @SuppressWarnings("PatternVariableCanBeUsed")
     protected void timerFired(FlowableEngineEntityEvent event) {
+        if (FlowableFirstChainProcessAdapter.isFirstChainDefinition(event.getProcessDefinitionId())) {
+            return;
+        }
         // 1.1 只处理 BoundaryEvent 边界计时时间
         String processDefinitionId = event.getProcessDefinitionId();
         BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(processDefinitionId);
@@ -142,6 +158,14 @@ public class BpmTaskEventListener extends AbstractFlowableEngineEventListener {
             String taskKey = boundaryEvent.getAttachedToRefId();
             taskService.processChildProcessTimeout(event.getProcessInstanceId(), taskKey);
         }
+    }
+
+    /**
+     * 是否首链流程：真实引擎的实体事件不携带流程定义编号，编号取自实体（Task#getProcessDefinitionId），事件编号作兜底。
+     */
+    private static boolean isFirstChain(FlowableEngineEntityEvent event, Task task) {
+        return FlowableFirstChainProcessAdapter.isFirstChainDefinition(task.getProcessDefinitionId())
+                || FlowableFirstChainProcessAdapter.isFirstChainDefinition(event.getProcessDefinitionId());
     }
 
 }

@@ -33,6 +33,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import javax.sql.DataSource;
 import java.util.concurrent.atomic.AtomicReference;
 
+import java.util.Set;
+
 import static cn.zszj.framework.test.core.util.AssertUtils.assertServiceException;
 import static cn.zszj.module.firstchain.enums.ErrorCodeConstants.FIRSTCHAIN_EMPLOYEE_ACTOR_NOT_LEADER;
 import static cn.zszj.module.firstchain.enums.ErrorCodeConstants.FIRSTCHAIN_TENANT_REQUIRED;
@@ -141,6 +143,8 @@ class FirstchainEmployeeServiceTest extends BaseDbUnitTest {
         assertThat(membership.getUserId()).isEqualTo(NEW_EMPLOYEE_USER_ID);
         assertThat(membership.getOrganizationId()).isEqualTo(FRANCHISEE_ORG_ID);
         assertThat(membership.getRoleIds()).containsExactly(ROLE_MEMBER_ID);
+        // 用户→角色绑定（权限引擎的权威来源 system_user_role）：员工须被授予员工模板角色，否则登录后零权限
+        verify(permissionService).assignUserRole(NEW_EMPLOYEE_USER_ID, Set.of(ROLE_MEMBER_ID));
         // 审计 SUCCESS（授权变化有审计）；密码明文不落审计（detail 仅账号名与组织）
         Long auditCount = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM audit_event WHERE event_type = 'OBJECT_CREATED' AND action = 'CREATE_EMPLOYEE' "

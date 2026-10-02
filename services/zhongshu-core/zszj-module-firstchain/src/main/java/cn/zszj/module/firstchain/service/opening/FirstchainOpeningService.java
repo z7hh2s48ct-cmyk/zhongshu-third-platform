@@ -22,6 +22,7 @@ import cn.zszj.module.system.enums.membership.MembershipStatusEnum;
 import cn.zszj.module.system.enums.organization.OrganizationTypeEnum;
 import cn.zszj.module.system.service.membership.MembershipService;
 import cn.zszj.module.system.service.organization.OrganizationService;
+import cn.zszj.module.system.service.permission.PermissionService;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
@@ -120,6 +121,9 @@ public class FirstchainOpeningService {
 
     @Resource
     private FirstchainDefaultRoleRegistry defaultRoleRegistry;
+
+    @Resource
+    private PermissionService permissionService;
 
     @Resource
     private FirstchainNotifyWiringService notifyWiringService;
@@ -312,6 +316,9 @@ public class FirstchainOpeningService {
         membership.setOrganizationId(organizationId);
         membership.setRoleIds(Set.of(leaderRoleId, memberRoleId));
         membershipService.createMembership(membership, operatorUserId);
+        // 用户→角色绑定：权限引擎（hasAnyPermissions/菜单树）只读 system_user_role，不读 membership.role_ids；
+        // 仅写任职角色集时负责人登录后零权限（所有首链接口 403），真实 server E2E 暴露。同事务 fail-closed。
+        permissionService.assignUserRole(leaderAccount.userId(), Set.of(leaderRoleId, memberRoleId));
         log.info("[openFranchisee][加盟商开通完成：appKey={} organizationId={} leaderUserId={} roles={}/{}]",
                 appKey, organizationId, leaderAccount.userId(), ROLE_CODE_LEADER, ROLE_CODE_MEMBER);
         return new FranchiseeOpening(organizationId, leaderAccount);

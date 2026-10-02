@@ -1,7 +1,9 @@
 /**
  * ZS-OPS-001.D：B06 双端技术联调门禁（G15）。
  *
- * 自举夹具 → 跑 CLIENT-005.B E2E 套件（登录/导航/文件/待办 + 首链申请域五域 21 用例，真实接口/PG）→ 清理。
+ * 自举夹具 → 跑 CLIENT-005.B E2E 套件（登录/导航/文件/待办 + 首链申请域五域 21 用例，真实接口/PG）
+ *           → 同夹具再跑首链全链 E2E（scripts/firstchain/run-firstchain-e2e.mjs，35 用例：申请→真实流程→审批开通→
+ *             负责人/员工→线索全链→三视角/D-12→跨组织隔离→停用失权→通知待办审计）→ 清理。
  * 「界面操作和接口一致」由 SYS-001.B 页面走查报告（scripts/sys001/web-walkthrough-report.md）
  * 与本套件共用同一真实服务端边界承载；「跳过必测场景不得放行」由本门禁非零退出语义承载。
  *
@@ -92,6 +94,21 @@ try {
     stdio: 'inherit',
   });
   e2eCode = r.status ?? 1;
+  // 首链全链 E2E：同夹具；需 PG 容器名做平台任职种子与 DB 断言（自举模式取自夹具输出；长驻联验环境须显式提供 E2E_PG_CONTAINER）
+  const pgContainer = process.env.E2E_PG_CONTAINER ?? containerNames.find((n) => /^zszj-sys001-pg-/.test(n));
+  if (!pgContainer) {
+    console.error('[b06-gate] 未取得夹具 PG 容器名（E2E_PG_CONTAINER）：首链全链 E2E 不得静默跳过');
+    e2eCode = e2eCode || 3;
+  } else {
+    const fc = spawnSync(process.execPath, ['scripts/firstchain/run-firstchain-e2e.mjs'], {
+      cwd: root,
+      env: { ...process.env, E2E_BASE_URL: apiBase, E2E_PG_CONTAINER: pgContainer, E2E_ADMIN_USER: process.env.E2E_ADMIN_USER ?? 'admin', E2E_ADMIN_PASS: process.env.E2E_ADMIN_PASS ?? 'Sys001Pass' },
+      encoding: 'utf8',
+      timeout: 600_000,
+      stdio: 'inherit',
+    });
+    if ((fc.status ?? 1) !== 0) e2eCode = e2eCode || (fc.status ?? 1);
+  }
 } finally {
   if (process.env.B06_GATE_KEEP === '1') {
     console.log('[b06-gate] B06_GATE_KEEP=1：夹具保留（调试）');
@@ -100,5 +117,5 @@ try {
   }
 }
 
-if (e2eCode !== 0) fail(e2eCode, '[b06-gate] E2E 套件存在 FAIL——B06 联调门禁不放行');
-console.log('[b06-gate] G15 双端技术联调门禁 PASS（21 用例）');
+if (e2eCode !== 0) fail(e2eCode, '[b06-gate] E2E 套件存在 FAIL（双端或首链全链）——B06 联调门禁不放行');
+console.log('[b06-gate] G15 双端技术联调门禁 PASS（双端 E2E 21 用例 + 首链全链 E2E 35 用例）');

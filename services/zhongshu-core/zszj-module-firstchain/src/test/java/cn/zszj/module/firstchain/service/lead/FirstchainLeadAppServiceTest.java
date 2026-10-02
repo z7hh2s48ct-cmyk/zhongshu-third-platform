@@ -361,6 +361,32 @@ class FirstchainLeadAppServiceTest {
     }
 
     @Test
+    void getLead_jdbcRowTimestampsFromPgDriver_mappedWithoutClassCast() {
+        // 真实 PG：JdbcTemplate.queryForList 的 timestamp 列是 java.sql.Timestamp（H2 返回 LocalDateTime，单测因此一直通过）；
+        // 出口 VO 映射若硬转 LocalDateTime，线索详情/分页在真实 server 全部 ClassCastException → 500（首链 E2E 暴露）
+        Map<String, Object> row = leadRow(FRANCHISEE_ORG_ID, LEADER_USER_ID);
+        row.put("create_time", java.sql.Timestamp.valueOf(LocalDateTime.of(2026, 10, 2, 9, 30, 0)));
+        row.put("update_time", java.sql.Timestamp.valueOf(LocalDateTime.of(2026, 10, 2, 10, 45, 30)));
+        when(leadService.getLead(LEAD_ID)).thenReturn(row);
+        when(fieldLevelScopeResolver.resolveMaxLevel(FRANCHISEE_ORG_ID)).thenReturn(FieldLevel.F2);
+
+        LeadRespVO view = appService.getLead(LEAD_ID);
+
+        assertThat(view.getCreateTime()).isEqualTo(LocalDateTime.of(2026, 10, 2, 9, 30, 0));
+        assertThat(view.getUpdateTime()).isEqualTo(LocalDateTime.of(2026, 10, 2, 10, 45, 30));
+    }
+
+    @Test
+    void getLead_jdbcRowTimestampsFromH2_stillMapped() {
+        Map<String, Object> row = leadRow(FRANCHISEE_ORG_ID, LEADER_USER_ID);
+        row.put("create_time", LocalDateTime.of(2026, 10, 2, 9, 30, 0));
+        when(leadService.getLead(LEAD_ID)).thenReturn(row);
+        when(fieldLevelScopeResolver.resolveMaxLevel(FRANCHISEE_ORG_ID)).thenReturn(FieldLevel.F2);
+
+        assertThat(appService.getLead(LEAD_ID).getCreateTime()).isEqualTo(LocalDateTime.of(2026, 10, 2, 9, 30, 0));
+    }
+
+    @Test
     void getLead_crossScopeVisibilityDenied() {
         when(fieldLevelScopeResolver.resolveMaxLevel(any())).thenReturn(FieldLevel.F2);
 

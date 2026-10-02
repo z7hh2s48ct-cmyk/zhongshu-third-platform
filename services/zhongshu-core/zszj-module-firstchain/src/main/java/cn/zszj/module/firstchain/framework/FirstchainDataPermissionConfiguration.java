@@ -4,6 +4,7 @@ import cn.zszj.framework.datapermission.core.rule.org.OrgDataPermissionRuleCusto
 import cn.zszj.module.firstchain.service.FirstchainLeadService;
 import cn.zszj.module.firstchain.service.FirstchainUserOrgChecker;
 import cn.zszj.module.system.api.user.AdminUserApi;
+import cn.zszj.module.system.service.membership.MembershipService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
  * （B08 放行报告 §6.1 移交项在本卡闭合）——循环启动依赖断开：规则 Bean 由
  * {@code ZszjOrgDataPermissionAutoConfiguration}（Customizer 存在性装配）创建，本类只提供注册方；
  * ②线索域动作/字段授权 Provider（D-12 A 类目录编目接入）；③对象级资格校验生产实现
- * （{@link FirstchainUserOrgChecker}，经 system 用户 API 实时判定，不缓存结论）。
+ * （{@link FirstchainUserOrgChecker}，经 system 用户 API + 有效任职实时判定，不缓存结论）。
  *
  * @author ZS-FC-002
  */
@@ -32,8 +33,9 @@ public class FirstchainDataPermissionConfiguration {
     }
 
     @Bean
-    public FirstchainLeadService.UserOrgChecker firstchainUserOrgChecker(AdminUserApi adminUserApi) {
-        return new FirstchainUserOrgChecker(adminUserApi);
+    public FirstchainLeadService.UserOrgChecker firstchainUserOrgChecker(AdminUserApi adminUserApi,
+                                                                          MembershipService membershipService) {
+        return new FirstchainUserOrgChecker(adminUserApi, membershipService);
     }
 
 }

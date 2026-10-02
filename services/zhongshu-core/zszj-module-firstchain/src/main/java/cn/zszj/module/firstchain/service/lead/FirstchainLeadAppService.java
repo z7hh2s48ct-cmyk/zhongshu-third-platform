@@ -350,12 +350,32 @@ public class FirstchainLeadAppService {
                 ? null : ((Number) row.get("assignee_user_id")).longValue());
         respVO.setStatus((String) row.get("status"));
         respVO.setVersion(row.get("version") == null ? null : ((Number) row.get("version")).longValue());
-        respVO.setCreateTime((LocalDateTime) row.get("create_time"));
-        respVO.setUpdateTime((LocalDateTime) row.get("update_time"));
+        respVO.setCreateTime(toLocalDateTime(row.get("create_time")));
+        respVO.setUpdateTime(toLocalDateTime(row.get("update_time")));
         respVO.setCreator((String) row.get("creator"));
         respVO.setUpdater((String) row.get("updater"));
         applyFieldScope(respVO);
         return respVO;
+    }
+
+    /**
+     * JDBC 时间列 → LocalDateTime：PG 驱动经 JdbcTemplate.queryForList 返回 {@link java.sql.Timestamp}，H2 返回
+     * LocalDateTime——硬转 LocalDateTime 会使线索详情/分页在真实 PG 上 ClassCastException（首链 E2E 暴露）。
+     */
+    static LocalDateTime toLocalDateTime(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDateTime localDateTime) {
+            return localDateTime;
+        }
+        if (value instanceof java.sql.Timestamp timestamp) {
+            return timestamp.toLocalDateTime();
+        }
+        if (value instanceof java.util.Date date) {
+            return new java.sql.Timestamp(date.getTime()).toLocalDateTime();
+        }
+        throw new IllegalStateException("不支持的时间列类型：" + value.getClass().getName());
     }
 
     private void applyFieldScope(LeadRespVO respVO) {

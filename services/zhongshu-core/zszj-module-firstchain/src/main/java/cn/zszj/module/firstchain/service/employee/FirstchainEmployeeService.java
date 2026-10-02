@@ -22,6 +22,7 @@ import cn.zszj.module.system.enums.organization.OrganizationTypeEnum;
 import cn.zszj.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.zszj.module.system.service.membership.MembershipService;
 import cn.zszj.module.system.service.organization.OrganizationService;
+import cn.zszj.module.system.service.permission.PermissionService;
 import cn.zszj.module.system.service.user.AdminUserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
@@ -82,6 +83,9 @@ public class FirstchainEmployeeService {
     private FirstchainDefaultRoleRegistry defaultRoleRegistry;
 
     @Resource
+    private PermissionService permissionService;
+
+    @Resource
     private AuditPort auditPort;
 
     @Resource
@@ -123,6 +127,8 @@ public class FirstchainEmployeeService {
         membership.setOrganizationId(organization.getId());
         membership.setRoleIds(Set.of(memberRoleId));
         membershipService.createMembership(membership, operatorUserId);
+        // 用户→角色绑定（权限引擎只读 system_user_role，见 FirstchainOpeningService 同处注释）：否则员工登录后零权限
+        permissionService.assignUserRole(userId, Set.of(memberRoleId));
         // ⑤ 审计 SUCCESS 随事务（授权变化有审计——验收条款；密码明文禁落审计，只记账号与组织）
         auditPort.record(AuditEventMessage.builder()
                 .eventType(AuditEventTypes.OBJECT_CREATED)

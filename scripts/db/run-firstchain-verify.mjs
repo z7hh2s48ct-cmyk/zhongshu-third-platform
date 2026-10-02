@@ -212,6 +212,20 @@ function finish() {
     console.log(`[firstchain] 已应用基线迁移 ${migrations.length} 个（含首链五表与 V20261001.001/.002 种子）`);
   }
 
+  {
+    // S3 种子数据形态：首链通知模板 params 须为 JSON 数组（NotifyTemplateDO.params 由 JacksonTypeHandler 按 JSON 读取）。
+    // V20261001.002 曾把它写成逗号分隔文本，任何首链通知派发一查模板即抛 JsonParseException（真实 server E2E 暴露；
+    // H2 单测 mock 模板服务、本套件此前不触达模板读取）。V20261002.002 订正；此处守住终态。
+    const r = spawnSync('docker', ['exec', '-e', 'PGPASSWORD=fcpg', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-d', 'zhongshu', '-At', '-c',
+      "SELECT count(*) FROM system_notify_template WHERE code LIKE 'firstchain\_%' AND deleted = 0 AND (params IS NULL OR params NOT LIKE '[%')"],
+      { encoding: 'utf8' });
+    const bad = (r.stdout ?? '').trim();
+    const total = spawnSync('docker', ['exec', '-e', 'PGPASSWORD=fcpg', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-d', 'zhongshu', '-At', '-c',
+      "SELECT count(*) FROM system_notify_template WHERE code LIKE 'firstchain\_%' AND deleted = 0"], { encoding: 'utf8' }).stdout?.trim();
+    record('S3 首链通知模板种子 params 终态为 JSON 数组（7 个模板）', r.status === 0 && bad === '0' && total === '7',
+      `非 JSON 数组=${bad} 模板总数=${total}`);
+  }
+
   console.log('[firstchain] mvn install 依赖模块（BOM+system/infra/bpm 及依赖链，跳过测试编译）…');
   const install = await runAsync(
     mvnArgv(['-B', '-pl', 'zszj-dependencies,zszj-module-system,zszj-module-infra,zszj-module-bpm', '-am', 'install', '-Dmaven.test.skip=true']),

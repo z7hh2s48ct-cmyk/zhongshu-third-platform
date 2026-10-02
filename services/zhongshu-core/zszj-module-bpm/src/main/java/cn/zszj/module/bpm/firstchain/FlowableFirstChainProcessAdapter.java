@@ -44,7 +44,52 @@ public class FlowableFirstChainProcessAdapter implements FirstChainProcessPort {
 
     private final TaskService taskService;
 
-    /** 已完成（按租户）幂等部署的租户标记（引擎定义按 key+tenant 查找，部署须同租户） */
+    /** 流程定义编号 → 是否首链（编号为 UUID，数量极少；缓存避免重复回查）。 */
+    private static final java.util.Map<String, Boolean> FIRST_CHAIN_DEFINITION_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 是否首链审批流程定义。供 BPM 全局事件监听器豁免首链流程：上游模型管理监听器会查询
+     * {@code bpm_process_definition_info} 等本产品 PG 基线不存在的扩展表，首链自有领域状态机/绑定/通知接线，不依赖它们。
+     *
+     * <p><b>不能只按编号前缀判定</b>：Flowable 生成定义编号为 {@code key:version:uuid}，超过 64 字符时退化为纯 UUID
+     * （首链 key 29 字符 + 36 位 UUID 必然超长），真实编号恒为裸 UUID。故①短编号保留前缀快路径；
+     * ②否则经 Flowable 定义缓存（{@code ProcessDefinitionUtil}，需引擎命令上下文——监听器在引擎命令内同步触发）
+     * 回查 key 并按编号缓存；无命令上下文（非引擎调用路径）按「非首链」处理。
+     */
+    public static boolean isFirstChainDefinition(String processDefinitionId) {
+        if (processDefinitionId == null) {
+            return false;
+        }
+        if (processDefinitionId.startsWith(PROCESS_KEY + ":")) {
+            return true;
+        }
+        Boolean cached = FIRST_CHAIN_DEFINITION_CACHE.get(processDefinitionId);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            org.flowable.engine.repository.ProcessDefinition definition =
+                    org.flowable.engine.impl.util.ProcessDefinitionUtil.getProcessDefinition(processDefinitionId);
+            boolean firstChain = definition != null && PROCESS_KEY.equals(definition.getKey());
+            FIRST_CHAIN_DEFINITION_CACHE.put(processDefinitionId, firstChain);
+            return firstChain;
+        } catch (RuntimeException noEngineContextOrNotFound) {
+            return false;
+        }
+    }
+
+    /** 是否首链流程（实例直接带 key，无需回查）。 */
+    public static boolean isFirstChainInstance(org.flowable.engine.runtime.ProcessInstance instance) {
+        return instance != null && (PROCESS_KEY.equals(instance.getProcessDefinitionKey())
+                || isFirstChainDefinition(instance.getProcessDefinitionId()));
+    }
+
+    /**
+     * 已完成（按租户）幂等部署的租户标记（引擎定义按 key+tenant 查找，部署须同租户）。
+     * <b>只在部署事务提交后才记录</b>（见 {@link #markDeployed}）：部署发生在调用方事务内，回滚则定义随之消失，
+     * 若提前记录会使其后每次提交都跳过部署并报「流程定义未找到」直到重启。
+     */
     private final java.util.Set<String> deployedTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public FlowableFirstChainProcessAdapter(RepositoryService repositoryService, RuntimeService runtimeService,
@@ -138,9 +183,31 @@ public class FlowableFirstChainProcessAdapter implements FirstChainProcessPort {
                         .tenantId(tenantId)
                         .addBpmnModel(PROCESS_KEY + ".bpmn20.xml", buildModel())
                         .name("首链加盟商申请审批（ZS-BPM-003）")
+                        // 模型由代码生成（BpmnModel→XML 再解析），XSD 校验冗余；且打包成 fat jar（java -jar）后
+                        // BPMN20.xsd 位于 jar:nested: 路径，其相对 schemaLocation 无法解析，校验必败
+                        // （src-resolve: 无法将名称 'extension' 解析为 element declaration），申请提交 500。
+                        // mvn test 的类路径方式不暴露此问题，故此前所有单测/PG 套件均未发现。
+                        .disableSchemaValidation()
                         .deploy();
                 log.info("[ensureDeployed][首链审批流程已部署：key={} tenant={}]", PROCESS_KEY, tenantId);
             }
+            markDeployed(tenantId);
+        }
+    }
+
+    /**
+     * 记录「该租户已部署」：存在事务同步时延后到<b>提交后</b>（回滚则不记录，下次提交重新部署）；无事务立即记录。
+     */
+    private void markDeployed(String tenantId) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            deployedTenants.add(tenantId);
+                        }
+                    });
+        } else {
             deployedTenants.add(tenantId);
         }
     }

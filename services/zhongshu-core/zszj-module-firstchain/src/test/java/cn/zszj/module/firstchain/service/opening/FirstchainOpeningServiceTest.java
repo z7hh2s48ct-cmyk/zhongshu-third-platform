@@ -39,6 +39,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import javax.sql.DataSource;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -191,6 +192,9 @@ class FirstchainOpeningServiceTest extends BaseDbUnitTest {
         assertThat(membership.getUserId()).isEqualTo(LEADER_USER_ID);
         assertThat(membership.getOrganizationId()).isEqualTo(OPENED_ORG_ID);
         assertThat(membership.getRoleIds()).containsExactlyInAnyOrder(ROLE_LEADER_ID, ROLE_MEMBER_ID);
+        // 用户→角色绑定（权限引擎的权威来源 system_user_role；仅写 membership.role_ids 时负责人登录后零权限——
+        // 真实 server E2E 暴露：所有首链接口 403）：负责人须同时被授予负责人 + 员工两个默认角色
+        verify(permissionService).assignUserRole(LEADER_USER_ID, Set.of(ROLE_LEADER_ID, ROLE_MEMBER_ID));
         // 默认角色 create ×2 + 默认菜单面绑定 ×2（FirstchainMenus 编号合同，空绑定即补绑）
         verify(roleService, times(2)).createRole(any(), any());
         verify(permissionService, times(2)).assignRoleMenu(any(), anySet());

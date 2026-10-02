@@ -22,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -420,17 +421,31 @@ public class FirstchainLeadService {
     public PageResult<Map<String, Object>> page(Long orgId, Long assigneeUserId, String status,
                                                 long pageNo, long pageSize) {
         Long tenantId = requireTenantId();
+        // 可选过滤按需拼接条件，不用「(? IS NULL OR col = ?)」：PG 对未定型的空参数报 42P18（could not determine
+        // data type of parameter），H2 不报——真实 server 线索分页 500（首链 E2E 暴露），见 PgDialectSqlGuardTest
+        StringBuilder where = new StringBuilder("WHERE tenant_id = ? AND deleted = FALSE");
+        List<Object> args = new ArrayList<>();
+        args.add(tenantId);
+        if (orgId != null) {
+            where.append(" AND org_id = ?");
+            args.add(orgId);
+        }
+        if (assigneeUserId != null) {
+            where.append(" AND assignee_user_id = ?");
+            args.add(assigneeUserId);
+        }
+        if (status != null) {
+            where.append(" AND status = ?");
+            args.add(status);
+        }
         Long total = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM bpm_first_chain_lead WHERE tenant_id = ? AND deleted = FALSE "
-                        + "AND (? IS NULL OR org_id = ?) AND (? IS NULL OR assignee_user_id = ?) "
-                        + "AND (? IS NULL OR status = ?)",
-                Long.class, tenantId, orgId, orgId, assigneeUserId, assigneeUserId, status, status);
+                "SELECT COUNT(*) FROM bpm_first_chain_lead " + where, Long.class, args.toArray());
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pageSize);
+        pageArgs.add((pageNo - 1) * pageSize);
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT * FROM bpm_first_chain_lead WHERE tenant_id = ? AND deleted = FALSE "
-                        + "AND (? IS NULL OR org_id = ?) AND (? IS NULL OR assignee_user_id = ?) "
-                        + "AND (? IS NULL OR status = ?) ORDER BY id DESC LIMIT ? OFFSET ?",
-                tenantId, orgId, orgId, assigneeUserId, assigneeUserId, status, status,
-                pageSize, (pageNo - 1) * pageSize);
+                "SELECT * FROM bpm_first_chain_lead " + where + " ORDER BY id DESC LIMIT ? OFFSET ?",
+                pageArgs.toArray());
         return new PageResult<>(rows, total == null ? 0L : total);
     }
 
